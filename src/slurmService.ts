@@ -321,4 +321,135 @@ export class SlurmService {
             return false;
         }
     }
+
+    /**
+     * Fetch job history using sacct
+     * Shows recently completed/failed/cancelled jobs
+     */
+    async getJobHistory(days: number = 7): Promise<HistoryJob[]> {
+        try {
+            // Calculate start date (N days ago)
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - days);
+            const startDateStr = startDate.toISOString().split('T')[0];
+
+            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList
+            const { stdout } = await execAsync(
+                `sacct -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`
+            );
+
+            const jobs: HistoryJob[] = [];
+            const lines = stdout.trim().split('\n');
+
+            for (const line of lines) {
+                if (!line.trim()) {
+                    continue;
+                }
+
+                const parts = line.split('|');
+                if (parts.length >= 9) {
+                    const jobId = parts[0].trim();
+
+                    // Skip job steps (they contain a dot, like "12345.batch" or "12345.0")
+                    if (jobId.includes('.')) {
+                        continue;
+                    }
+
+                    const state = parts[2].trim();
+
+                    // Skip jobs that are still running or pending
+                    if (state === 'RUNNING' || state === 'PENDING') {
+                        continue;
+                    }
+
+                    const exitCodeParts = parts[3].trim().split(':');
+                    const exitCode = parseInt(exitCodeParts[0], 10) || 0;
+
+                    jobs.push({
+                        jobId: jobId,
+                        name: parts[1].trim() || 'N/A',
+                        state: state,
+                        exitCode: exitCode,
+                        startTime: parts[4].trim() || 'N/A',
+                        endTime: parts[5].trim() || 'N/A',
+                        elapsed: parts[6].trim() || 'N/A',
+                        partition: parts[7].trim() || 'N/A',
+                        nodes: parts[8].trim() || 'N/A',
+                        cpus: parts[9]?.trim() || 'N/A',
+                        maxMemory: parts[10]?.trim() || 'N/A',
+                    });
+                }
+            }
+
+            // Sort by end time (most recent first)
+            jobs.sort((a, b) => {
+                if (a.endTime === 'N/A') return 1;
+                if (b.endTime === 'N/A') return -1;
+                return new Date(b.endTime).getTime() - new Date(a.endTime).getTime();
+            });
+
+            return jobs;
+        } catch (error) {
+            console.error('Failed to fetch job history:', error);
+            return [];
+        }
+    }
+}
+
+/**
+ * Represents a completed SLURM job from sacct
+ */
+export interface HistoryJob {
+    jobId: string;
+    name: string;
+    state: string;
+    exitCode: number;
+    startTime: string;
+    endTime: string;
+    elapsed: string;
+    partition: string;
+    nodes: string;
+    cpus: string;
+    maxMemory: string;
+}
+
+/**
+ * Get icon and color for job history state
+ */
+export function getHistoryStateInfo(state: string, exitCode: number): { icon: string; color: string; description: string } {
+    // Handle states that indicate success
+    if (state === 'COMPLETED' && exitCode === 0) {
+        return { icon: 'check', color: 'charts.green', description: 'Completed Successfully' };
+    }
+
+    // Handle states that indicate failure
+    if (state === 'COMPLETED' && exitCode !== 0) {
+        return { icon: 'error', color: 'charts.red', description: `Failed (exit code ${exitCode})` };
+    }
+
+    if (state === 'FAILED') {
+        return { icon: 'error', color: 'charts.red', description: 'Failed' };
+    }
+
+    if (state === 'TIMEOUT') {
+        return { icon: 'clock', color: 'charts.orange', description: 'Timeout' };
+    }
+
+    if (state === 'CANCELLED' || state.startsWith('CANCELLED')) {
+        return { icon: 'circle-slash', color: 'charts.orange', description: 'Cancelled' };
+    }
+
+    if (state === 'NODE_FAIL') {
+        return { icon: 'error', color: 'charts.red', description: 'Node Failure' };
+    }
+
+    if (state === 'OUT_OF_MEMORY' || state === 'OUT_OF_ME+') {
+        return { icon: 'warning', color: 'charts.red', description: 'Out of Memory' };
+    }
+
+    if (state === 'PREEMPTED') {
+        return { icon: 'debug-pause', color: 'charts.yellow', description: 'Preempted' };
+    }
+
+    return { icon: 'circle-outline', color: 'foreground', description: state };
 }

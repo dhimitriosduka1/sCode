@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SlurmJobProvider } from './slurmJobProvider';
+import { JobHistoryProvider } from './jobHistoryProvider';
 import * as fs from 'fs';
-import * as path from 'path';
 
 /**
  * Extension activation
@@ -13,15 +13,29 @@ export function activate(context: vscode.ExtensionContext) {
     // Create the job provider
     const slurmJobProvider = new SlurmJobProvider();
 
-    // Register the TreeView
+    // Create the history provider
+    const jobHistoryProvider = new JobHistoryProvider();
+
+    // Register the Jobs TreeView
     const treeView = vscode.window.createTreeView('slurmJobs', {
         treeDataProvider: slurmJobProvider,
+        showCollapseAll: true,
+    });
+
+    // Register the History TreeView
+    const historyTreeView = vscode.window.createTreeView('slurmHistory', {
+        treeDataProvider: jobHistoryProvider,
         showCollapseAll: true,
     });
 
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
         slurmJobProvider.refresh();
+    });
+
+    // Register the refresh history command
+    const refreshHistoryCommand = vscode.commands.registerCommand('slurmHistory.refresh', () => {
+        jobHistoryProvider.refresh();
     });
 
     // Register command to open output files
@@ -34,10 +48,6 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             // Check if file exists
             if (!fs.existsSync(filePath)) {
-                // Try to find the file with common variations
-                const dir = path.dirname(filePath);
-                const basename = path.basename(filePath);
-
                 // For pending jobs, the file might not exist yet
                 vscode.window.showWarningMessage(`File not found: ${filePath}. The file may not exist yet if the job hasn't started.`);
                 return;
@@ -95,7 +105,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Add disposables to context
     context.subscriptions.push(treeView);
+    context.subscriptions.push(historyTreeView);
     context.subscriptions.push(refreshCommand);
+    context.subscriptions.push(refreshHistoryCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openStdoutCommand);
     context.subscriptions.push(openStderrCommand);

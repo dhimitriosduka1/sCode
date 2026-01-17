@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "publisher": "dhimitriosduka",
   "engines": {
     "vscode": "^1.85.0"
@@ -11,7 +11,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:slurmJobs"
+    "onView:slurmJobs",
+    "onView:slurmHistory"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -28,9 +29,15 @@
       "slurm-explorer": [
         {
           "id": "slurmJobs",
-          "name": "Jobs",
+          "name": "Active Jobs",
           "icon": "$(tasklist)",
-          "contextualTitle": "SLURM Jobs"
+          "contextualTitle": "SLURM Active Jobs"
+        },
+        {
+          "id": "slurmHistory",
+          "name": "Job History",
+          "icon": "$(history)",
+          "contextualTitle": "SLURM Job History"
         }
       ]
     },
@@ -38,6 +45,11 @@
       {
         "command": "slurmJobs.refresh",
         "title": "Refresh Jobs",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmHistory.refresh",
+        "title": "Refresh History",
         "icon": "$(refresh)"
       },
       {
@@ -56,12 +68,12 @@
       },
       {
         "command": "slurmJobs.openStdout",
-        "title": "Open Stdout File",
+        "title": "Open Stdout",
         "icon": "$(output)"
       },
       {
         "command": "slurmJobs.openStderr",
-        "title": "Open Stderr File",
+        "title": "Open Stderr",
         "icon": "$(warning)"
       }
     ],
@@ -81,6 +93,11 @@
           "command": "slurmJobs.clearSearch",
           "when": "view == slurmJobs",
           "group": "navigation@3"
+        },
+        {
+          "command": "slurmHistory.refresh",
+          "when": "view == slurmHistory",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
