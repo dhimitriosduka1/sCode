@@ -157,7 +157,7 @@ export class OutputFileItem extends vscode.TreeItem {
     ) {
         super(label, vscode.TreeItemCollapsibleState.None);
 
-        this.tooltip = filePath;
+        this.tooltip = `Click to open: ${filePath}`;
         this.iconPath = new vscode.ThemeIcon(fileType === 'stdout' ? 'output' : 'warning');
         this.contextValue = 'outputFile';
 
@@ -211,6 +211,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private slurmService: SlurmService;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
+    private searchFilter: string = '';
 
     constructor() {
         this.slurmService = new SlurmService();
@@ -222,6 +223,43 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     refresh(): void {
         this.cachedJobs = [];
         this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Set search filter and refresh
+     */
+    setSearchFilter(filter: string): void {
+        this.searchFilter = filter.toLowerCase();
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Clear search filter
+     */
+    clearSearchFilter(): void {
+        this.searchFilter = '';
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Get current search filter
+     */
+    getSearchFilter(): string {
+        return this.searchFilter;
+    }
+
+    /**
+     * Get filtered jobs based on search
+     */
+    private getFilteredJobs(): SlurmJob[] {
+        if (!this.searchFilter) {
+            return this.cachedJobs;
+        }
+
+        return this.cachedJobs.filter(job =>
+            job.name.toLowerCase().includes(this.searchFilter) ||
+            job.jobId.toLowerCase().includes(this.searchFilter)
+        );
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -253,11 +291,19 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 return [new MessageItem('SLURM not available on this system', 'warning')];
             }
 
-            // Fetch and cache jobs
-            this.cachedJobs = await this.slurmService.getJobs();
+            // Fetch and cache jobs only if cache is empty
+            if (this.cachedJobs.length === 0) {
+                this.cachedJobs = await this.slurmService.getJobs();
+            }
+
+            const filteredJobs = this.getFilteredJobs();
 
             if (this.cachedJobs.length === 0) {
                 return [new MessageItem('No jobs found', 'info')];
+            }
+
+            if (filteredJobs.length === 0 && this.searchFilter) {
+                return [new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search')];
             }
 
             // Create category items
@@ -265,7 +311,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
                 const info = CATEGORIES[categoryKey];
-                const jobCount = this.cachedJobs.filter(job =>
+                const jobCount = filteredJobs.filter(job =>
                     info.states.includes(job.state)
                 ).length;
 
@@ -285,7 +331,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private getCategoryChildren(category: StatusCategory): vscode.TreeItem[] {
         const info = CATEGORIES[category];
-        const jobs = this.cachedJobs.filter(job => info.states.includes(job.state));
+        const filteredJobs = this.getFilteredJobs();
+        const jobs = filteredJobs.filter(job => info.states.includes(job.state));
 
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
@@ -312,6 +359,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         if (job.state === 'PD') {
             const startTime = formatStartTime(job.startTime);
             children.push(new JobDetailItem('Est. Start', startTime, 'calendar'));
+        }
+
+        // Add submit script link
+        if (job.submitScript && job.submitScript !== 'N/A') {
+            children.push(new OutputFileItem('Submit Script', job.submitScript, 'stdout'));
         }
 
         // Add output file links

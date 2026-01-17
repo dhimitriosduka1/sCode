@@ -18,6 +18,7 @@ export interface SlurmJob {
     timeLimit: string;
     startTime: string;
     workDir: string;
+    submitScript: string;
 }
 
 /**
@@ -74,9 +75,9 @@ export function parseTimeToSeconds(timeStr: string): number {
     }
 
     const parts = timePart.split(':').map(p => parseInt(p, 10) || 0);
-    
+
     let hours = 0, minutes = 0, seconds = 0;
-    
+
     if (parts.length === 3) {
         [hours, minutes, seconds] = parts;
     } else if (parts.length === 2) {
@@ -113,8 +114,13 @@ export function generateProgressBar(progress: number, width: number = 10): strin
 
     const filled = Math.round((progress / 100) * width);
     const empty = width - filled;
-    
-    return '▓'.repeat(filled) + '░'.repeat(empty) + ` ${progress}%`;
+
+    // Use circle characters for clean visual
+    const filledChar = '●';  // Filled circle
+    const emptyChar = '○';   // Empty circle
+    const progressBar = filledChar.repeat(filled) + emptyChar.repeat(empty);
+
+    return `${progressBar} ${progress}%`;
 }
 
 /**
@@ -133,7 +139,7 @@ export function formatStartTime(startTime: string): string {
 
         const now = new Date();
         const isToday = date.toDateString() === now.toDateString();
-        
+
         if (isToday) {
             return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         } else {
@@ -142,6 +148,72 @@ export function formatStartTime(startTime: string): string {
     } catch {
         return startTime;
     }
+}
+
+/**
+ * Expand any remaining SLURM path placeholders
+ * scontrol may return unexpanded placeholders for pending jobs or job arrays
+ */
+export function expandPathPlaceholders(
+    path: string,
+    jobId: string,
+    jobName: string,
+    nodes: string
+): string {
+    if (!path || path === 'N/A') {
+        return path;
+    }
+
+    let expanded = path;
+
+    // Common SLURM filename patterns:
+    // %j - job ID
+    // %x - job name
+    // %u - username (we'll get from os)
+    // %N - first node name
+    // %A - job array master ID
+    // %a - job array index
+    // %t - task ID
+
+    expanded = expanded.replace(/%j/g, jobId);
+    expanded = expanded.replace(/%x/g, jobName);
+
+    // Get username
+    try {
+        const username = require('os').userInfo().username;
+        expanded = expanded.replace(/%u/g, username);
+    } catch {
+        expanded = expanded.replace(/%u/g, 'user');
+    }
+
+    // Node name - use first node if available, otherwise use placeholder
+    if (nodes && nodes !== 'N/A') {
+        expanded = expanded.replace(/%N/g, nodes.split(',')[0].split('[')[0]);
+    } else {
+        // For pending jobs, we can't know the node yet - mark as pending
+        if (expanded.includes('%N')) {
+            expanded = expanded.replace(/%N/g, 'PENDING_NODE');
+        }
+    }
+
+    // Job array placeholders
+    const arrayParts = jobId.split('_');
+    expanded = expanded.replace(/%A/g, arrayParts[0]); // Master job ID
+    expanded = expanded.replace(/%a/g, arrayParts.length > 1 ? arrayParts[1] : '0'); // Array index
+    expanded = expanded.replace(/%t/g, '0'); // Task ID
+    expanded = expanded.replace(/%%/g, '%'); // Escaped percent
+
+    return expanded;
+}
+
+/**
+ * Job details fetched from scontrol
+ */
+interface JobDetails {
+    stdoutPath: string;
+    stderrPath: string;
+    submitScript: string;
+    workDir: string;
 }
 
 /**
@@ -154,9 +226,9 @@ export class SlurmService {
      */
     async getJobs(): Promise<SlurmJob[]> {
         try {
-            // Format: JobID|Name|State|Time|Partition|NodeList|StdOut|StdErr|TimeLimit|StartTime|WorkDir
+            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime
             const { stdout } = await execAsync(
-                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%o|%e|%l|%S|%Z"'
+                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S"'
             );
 
             const jobs: SlurmJob[] = [];
@@ -168,22 +240,37 @@ export class SlurmService {
                 }
 
                 const parts = line.split('|');
-                if (parts.length >= 11) {
-                    jobs.push({
-                        jobId: parts[0].trim(),
+                if (parts.length >= 8) {
+                    const jobId = parts[0].trim();
+                    const job: SlurmJob = {
+                        jobId: jobId,
                         name: parts[1].trim(),
                         state: parts[2].trim(),
                         time: parts[3].trim(),
                         partition: parts[4].trim(),
                         nodes: parts[5].trim() || 'N/A',
-                        stdoutPath: parts[6].trim() || 'N/A',
-                        stderrPath: parts[7].trim() || 'N/A',
-                        timeLimit: parts[8].trim() || 'N/A',
-                        startTime: parts[9].trim() || 'N/A',
-                        workDir: parts[10].trim() || 'N/A',
-                    });
+                        timeLimit: parts[6].trim() || 'N/A',
+                        startTime: parts[7].trim() || 'N/A',
+                        // These will be fetched from scontrol
+                        stdoutPath: 'N/A',
+                        stderrPath: 'N/A',
+                        submitScript: 'N/A',
+                        workDir: 'N/A',
+                    };
+
+                    jobs.push(job);
                 }
             }
+
+            // Fetch detailed info (stdout, stderr, command) from scontrol for all jobs in parallel
+            await Promise.all(jobs.map(async (job) => {
+                const details = await this.getJobDetails(job.jobId);
+                // Expand any remaining placeholders in paths
+                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes);
+                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes);
+                job.submitScript = details.submitScript;
+                job.workDir = details.workDir;
+            }));
 
             return jobs;
         } catch (error) {
@@ -191,6 +278,35 @@ export class SlurmService {
             // This allows the extension to work gracefully when not on a cluster
             console.error('Failed to fetch SLURM jobs:', error);
             return [];
+        }
+    }
+
+    /**
+     * Get detailed job info from scontrol (stdout, stderr, command paths)
+     */
+    async getJobDetails(jobId: string): Promise<JobDetails> {
+        try {
+            const { stdout } = await execAsync(`scontrol show job ${jobId}`);
+
+            // Parse fields from scontrol output
+            const stdoutMatch = stdout.match(/StdOut=([^\s]+)/);
+            const stderrMatch = stdout.match(/StdErr=([^\s]+)/);
+            const commandMatch = stdout.match(/Command=([^\s]+)/);
+            const workDirMatch = stdout.match(/WorkDir=([^\s]+)/);
+
+            return {
+                stdoutPath: stdoutMatch?.[1] || 'N/A',
+                stderrPath: stderrMatch?.[1] || 'N/A',
+                submitScript: commandMatch?.[1] || 'N/A',
+                workDir: workDirMatch?.[1] || 'N/A',
+            };
+        } catch {
+            return {
+                stdoutPath: 'N/A',
+                stderrPath: 'N/A',
+                submitScript: 'N/A',
+                workDir: 'N/A',
+            };
         }
     }
 

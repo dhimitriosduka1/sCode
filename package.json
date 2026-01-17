@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "publisher": "dhimitriosduka",
   "engines": {
     "vscode": "^1.85.0"
@@ -41,6 +41,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "slurmJobs.search",
+        "title": "Search Jobs",
+        "icon": "$(search)"
+      },
+      {
+        "command": "slurmJobs.clearSearch",
+        "title": "Clear Search",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "slurmJobs.openFile",
         "title": "Open File"
       },
@@ -60,7 +70,17 @@
         {
           "command": "slurmJobs.refresh",
           "when": "view == slurmJobs",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "slurmJobs.search",
+          "when": "view == slurmJobs",
+          "group": "navigation@2"
+        },
+        {
+          "command": "slurmJobs.clearSearch",
+          "when": "view == slurmJobs",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [

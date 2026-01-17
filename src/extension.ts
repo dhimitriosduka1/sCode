@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { SlurmJobProvider } from './slurmJobProvider';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Extension activation
@@ -30,11 +32,23 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         try {
+            // Check if file exists
+            if (!fs.existsSync(filePath)) {
+                // Try to find the file with common variations
+                const dir = path.dirname(filePath);
+                const basename = path.basename(filePath);
+
+                // For pending jobs, the file might not exist yet
+                vscode.window.showWarningMessage(`File not found: ${filePath}. The file may not exist yet if the job hasn't started.`);
+                return;
+            }
+
             const uri = vscode.Uri.file(filePath);
             const doc = await vscode.workspace.openTextDocument(uri);
             await vscode.window.showTextDocument(doc, { preview: true });
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`Failed to open file: ${filePath}\n${errorMessage}`);
             console.error('Error opening file:', error);
         }
     });
@@ -53,12 +67,40 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register search command
+    const searchCommand = vscode.commands.registerCommand('slurmJobs.search', async () => {
+        const currentFilter = slurmJobProvider.getSearchFilter();
+        const searchTerm = await vscode.window.showInputBox({
+            prompt: 'Search jobs by name or Job ID',
+            placeHolder: 'Enter search term...',
+            value: currentFilter,
+        });
+
+        if (searchTerm !== undefined) {
+            if (searchTerm === '') {
+                slurmJobProvider.clearSearchFilter();
+                vscode.window.showInformationMessage('Search filter cleared');
+            } else {
+                slurmJobProvider.setSearchFilter(searchTerm);
+                vscode.window.showInformationMessage(`Filtering jobs: "${searchTerm}"`);
+            }
+        }
+    });
+
+    // Register clear search command
+    const clearSearchCommand = vscode.commands.registerCommand('slurmJobs.clearSearch', () => {
+        slurmJobProvider.clearSearchFilter();
+        vscode.window.showInformationMessage('Search filter cleared');
+    });
+
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(refreshCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openStdoutCommand);
     context.subscriptions.push(openStderrCommand);
+    context.subscriptions.push(searchCommand);
+    context.subscriptions.push(clearSearchCommand);
 
     // Show welcome message on first activation
     vscode.window.showInformationMessage('SLURM Cluster Manager activated. View your jobs in the sidebar.');
