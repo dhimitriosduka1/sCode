@@ -1,0 +1,69 @@
+{
+  "name": "slurm-cluster-manager",
+  "displayName": "SLURM Cluster Manager",
+  "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
+  "version": "0.1.0",
+  "publisher": "dhimitriosduka",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:slurmJobs"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "slurm-explorer",
+          "title": "SLURM Cluster",
+          "icon": "$(server)"
+        }
+      ]
+    },
+    "views": {
+      "slurm-explorer": [
+        {
+          "id": "slurmJobs",
+          "name": "Jobs",
+          "icon": "$(tasklist)",
+          "contextualTitle": "SLURM Jobs"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "slurmJobs.refresh",
+        "title": "Refresh Jobs",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "slurmJobs.refresh",
+          "when": "view == slurmJobs",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  }
+}
