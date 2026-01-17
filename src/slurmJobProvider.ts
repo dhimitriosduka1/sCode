@@ -1,5 +1,58 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getStateDescription } from './slurmService';
+import { SlurmJob, SlurmService, getStateDescription, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
+
+/**
+ * Status categories for grouping jobs
+ */
+type StatusCategory = 'running' | 'pending' | 'completing' | 'other';
+
+interface CategoryInfo {
+    label: string;
+    icon: vscode.ThemeIcon;
+    states: string[];
+}
+
+const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
+    running: {
+        label: 'Running',
+        icon: new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green')),
+        states: ['R'],
+    },
+    pending: {
+        label: 'Pending',
+        icon: new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow')),
+        states: ['PD'],
+    },
+    completing: {
+        label: 'Completing',
+        icon: new vscode.ThemeIcon('sync', new vscode.ThemeColor('charts.blue')),
+        states: ['CG'],
+    },
+    other: {
+        label: 'Other',
+        icon: new vscode.ThemeIcon('circle-outline'),
+        states: ['CD', 'F', 'TO', 'CA', 'NF', 'PR', 'S'],
+    },
+};
+
+/**
+ * Category item representing a group of jobs by status
+ */
+export class StatusCategoryItem extends vscode.TreeItem {
+    constructor(
+        public readonly category: StatusCategory,
+        public readonly jobCount: number,
+    ) {
+        const info = CATEGORIES[category];
+        super(
+            `${info.label} (${jobCount})`,
+            jobCount > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed
+        );
+
+        this.iconPath = info.icon;
+        this.contextValue = 'statusCategory';
+    }
+}
 
 /**
  * Tree item representing a SLURM job in the TreeView
@@ -8,12 +61,34 @@ export class SlurmJobItem extends vscode.TreeItem {
     constructor(
         public readonly job: SlurmJob,
     ) {
-        super(job.name, vscode.TreeItemCollapsibleState.None);
+        super(job.name, vscode.TreeItemCollapsibleState.Collapsed);
 
-        this.description = `${job.jobId} • ${getStateDescription(job.state)}`;
+        this.description = this.createDescription();
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         this.contextValue = 'slurmJob';
+    }
+
+    private createDescription(): string {
+        const parts: string[] = [this.job.jobId];
+
+        if (this.job.state === 'R') {
+            // Running: show progress
+            const progress = calculateProgress(this.job.time, this.job.timeLimit);
+            if (progress >= 0) {
+                parts.push(generateProgressBar(progress, 8));
+            } else {
+                parts.push(this.job.time);
+            }
+        } else if (this.job.state === 'PD') {
+            // Pending: show estimated start time
+            const startStr = formatStartTime(this.job.startTime);
+            parts.push(`Starts: ~${startStr}`);
+        } else {
+            parts.push(getStateDescription(this.job.state));
+        }
+
+        return parts.join(' • ');
     }
 
     private createTooltip(): vscode.MarkdownString {
@@ -23,9 +98,27 @@ export class SlurmJobItem extends vscode.TreeItem {
         md.appendMarkdown(`|----------|-------|\n`);
         md.appendMarkdown(`| Job ID | ${this.job.jobId} |\n`);
         md.appendMarkdown(`| State | ${getStateDescription(this.job.state)} |\n`);
-        md.appendMarkdown(`| Time | ${this.job.time} |\n`);
+        md.appendMarkdown(`| Elapsed | ${this.job.time} |\n`);
+        md.appendMarkdown(`| Time Limit | ${this.job.timeLimit} |\n`);
         md.appendMarkdown(`| Partition | ${this.job.partition} |\n`);
         md.appendMarkdown(`| Nodes | ${this.job.nodes} |\n`);
+
+        if (this.job.state === 'PD') {
+            md.appendMarkdown(`| Est. Start | ${formatStartTime(this.job.startTime)} |\n`);
+        }
+
+        if (this.job.state === 'R') {
+            const progress = calculateProgress(this.job.time, this.job.timeLimit);
+            if (progress >= 0) {
+                md.appendMarkdown(`| Progress | ${progress}% |\n`);
+            }
+        }
+
+        md.appendMarkdown(`\n---\n`);
+        md.appendMarkdown(`**Output Files:**\n`);
+        md.appendMarkdown(`- stdout: \`${this.job.stdoutPath}\`\n`);
+        md.appendMarkdown(`- stderr: \`${this.job.stderrPath}\`\n`);
+
         return md;
     }
 
@@ -54,6 +147,47 @@ export class SlurmJobItem extends vscode.TreeItem {
 }
 
 /**
+ * Tree item for output file links
+ */
+export class OutputFileItem extends vscode.TreeItem {
+    constructor(
+        public readonly label: string,
+        public readonly filePath: string,
+        public readonly fileType: 'stdout' | 'stderr',
+    ) {
+        super(label, vscode.TreeItemCollapsibleState.None);
+
+        this.tooltip = filePath;
+        this.iconPath = new vscode.ThemeIcon(fileType === 'stdout' ? 'output' : 'warning');
+        this.contextValue = 'outputFile';
+
+        // Make the item clickable to open the file
+        this.command = {
+            command: 'slurmJobs.openFile',
+            title: 'Open File',
+            arguments: [filePath],
+        };
+
+        this.description = filePath;
+    }
+}
+
+/**
+ * Tree item for job detail info
+ */
+export class JobDetailItem extends vscode.TreeItem {
+    constructor(
+        label: string,
+        value: string,
+        icon?: string,
+    ) {
+        super(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
+        this.iconPath = icon ? new vscode.ThemeIcon(icon) : undefined;
+        this.contextValue = 'jobDetail';
+    }
+}
+
+/**
  * Message item shown when no jobs are found or SLURM is unavailable
  */
 class MessageItem extends vscode.TreeItem {
@@ -76,6 +210,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private slurmService: SlurmService;
     private isLoading: boolean = false;
+    private cachedJobs: SlurmJob[] = [];
 
     constructor() {
         this.slurmService = new SlurmService();
@@ -85,6 +220,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      * Refresh the job list
      */
     refresh(): void {
+        this.cachedJobs = [];
         this._onDidChangeTreeData.fire();
     }
 
@@ -93,11 +229,21 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-        // Only show items at root level
-        if (element) {
-            return [];
+        // Handle job children (output files and details)
+        if (element instanceof SlurmJobItem) {
+            return this.getJobChildren(element.job);
         }
 
+        // Handle category children (jobs in that category)
+        if (element instanceof StatusCategoryItem) {
+            return this.getCategoryChildren(element.category);
+        }
+
+        // Root level: show categories
+        return this.getRootItems();
+    }
+
+    private async getRootItems(): Promise<vscode.TreeItem[]> {
         this.isLoading = true;
 
         try {
@@ -107,27 +253,75 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 return [new MessageItem('SLURM not available on this system', 'warning')];
             }
 
-            // Fetch jobs
-            const jobs = await this.slurmService.getJobs();
+            // Fetch and cache jobs
+            this.cachedJobs = await this.slurmService.getJobs();
 
-            if (jobs.length === 0) {
+            if (this.cachedJobs.length === 0) {
                 return [new MessageItem('No jobs found', 'info')];
             }
 
-            // Sort jobs: Running first, then Pending, then others
-            const sortOrder: Record<string, number> = { 'R': 0, 'PD': 1, 'CG': 2 };
-            jobs.sort((a, b) => {
-                const orderA = sortOrder[a.state] ?? 99;
-                const orderB = sortOrder[b.state] ?? 99;
-                return orderA - orderB;
-            });
+            // Create category items
+            const categories: StatusCategoryItem[] = [];
 
-            return jobs.map(job => new SlurmJobItem(job));
+            for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
+                const info = CATEGORIES[categoryKey];
+                const jobCount = this.cachedJobs.filter(job =>
+                    info.states.includes(job.state)
+                ).length;
+
+                if (jobCount > 0) {
+                    categories.push(new StatusCategoryItem(categoryKey, jobCount));
+                }
+            }
+
+            return categories;
         } catch (error) {
             console.error('Error fetching SLURM jobs:', error);
             return [new MessageItem('Error fetching jobs', 'error')];
         } finally {
             this.isLoading = false;
         }
+    }
+
+    private getCategoryChildren(category: StatusCategory): vscode.TreeItem[] {
+        const info = CATEGORIES[category];
+        const jobs = this.cachedJobs.filter(job => info.states.includes(job.state));
+
+        // Sort jobs by job ID (descending - newest first)
+        jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
+
+        return jobs.map(job => new SlurmJobItem(job));
+    }
+
+    private getJobChildren(job: SlurmJob): vscode.TreeItem[] {
+        const children: vscode.TreeItem[] = [];
+
+        // Add job details
+        children.push(new JobDetailItem('Partition', job.partition, 'server'));
+        children.push(new JobDetailItem('Nodes', job.nodes, 'vm'));
+        children.push(new JobDetailItem('Elapsed', job.time, 'watch'));
+        children.push(new JobDetailItem('Time Limit', job.timeLimit, 'clock'));
+
+        if (job.state === 'R') {
+            const progress = calculateProgress(job.time, job.timeLimit);
+            if (progress >= 0) {
+                children.push(new JobDetailItem('Progress', `${progress}%`, 'pie-chart'));
+            }
+        }
+
+        if (job.state === 'PD') {
+            const startTime = formatStartTime(job.startTime);
+            children.push(new JobDetailItem('Est. Start', startTime, 'calendar'));
+        }
+
+        // Add output file links
+        if (job.stdoutPath && job.stdoutPath !== 'N/A') {
+            children.push(new OutputFileItem('stdout', job.stdoutPath, 'stdout'));
+        }
+        if (job.stderrPath && job.stderrPath !== 'N/A') {
+            children.push(new OutputFileItem('stderr', job.stderrPath, 'stderr'));
+        }
+
+        return children;
     }
 }

@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "dhimitriosduka",
   "engines": {
     "vscode": "^1.85.0"
@@ -39,6 +39,20 @@
         "command": "slurmJobs.refresh",
         "title": "Refresh Jobs",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmJobs.openFile",
+        "title": "Open File"
+      },
+      {
+        "command": "slurmJobs.openStdout",
+        "title": "Open Stdout File",
+        "icon": "$(output)"
+      },
+      {
+        "command": "slurmJobs.openStderr",
+        "title": "Open Stderr File",
+        "icon": "$(warning)"
       }
     ],
     "menus": {
@@ -47,6 +61,28 @@
           "command": "slurmJobs.refresh",
           "when": "view == slurmJobs",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "inline@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "output@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "output@2"
         }
       ]
     }
