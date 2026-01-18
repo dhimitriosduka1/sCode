@@ -323,6 +323,22 @@ export class SlurmService {
     }
 
     /**
+     * Cancel a SLURM job using scancel
+     * @param jobId The job ID to cancel
+     * @returns Object with success status and optional error message
+     */
+    async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {
+        try {
+            await execAsync(`scancel ${jobId}`);
+            return { success: true, message: `Job ${jobId} cancelled successfully` };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to cancel job ${jobId}:`, error);
+            return { success: false, message: `Failed to cancel job ${jobId}: ${errorMessage}` };
+        }
+    }
+
+    /**
      * Fetch job history using sacct
      * Shows recently completed/failed/cancelled jobs
      */

@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "dhimitriosduka",
   "engines": {
     "vscode": "^1.85.0"
@@ -75,6 +75,20 @@
         "command": "slurmJobs.openStderr",
         "title": "Open Stderr",
         "icon": "$(warning)"
+      },
+      {
+        "command": "slurmJobs.toggleAutoRefresh",
+        "title": "Toggle Auto Refresh",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "slurmJobs.setAutoRefreshInterval",
+        "title": "Set Auto Refresh Interval"
+      },
+      {
+        "command": "slurmJobs.cancelJob",
+        "title": "Cancel Job",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -93,6 +107,11 @@
           "command": "slurmJobs.clearSearch",
           "when": "view == slurmJobs",
           "group": "navigation@3"
+        },
+        {
+          "command": "slurmJobs.toggleAutoRefresh",
+          "when": "view == slurmJobs",
+          "group": "navigation@4"
         },
         {
           "command": "slurmHistory.refresh",
@@ -120,8 +139,40 @@
           "command": "slurmJobs.openStderr",
           "when": "view == slurmJobs && viewItem == slurmJob",
           "group": "output@2"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "inline@3"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "actions@1"
         }
       ]
+    },
+    "configuration": {
+      "title": "SLURM Cluster Manager",
+      "properties": {
+        "slurmClusterManager.autoRefreshInterval": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 3600,
+          "description": "Auto refresh interval in seconds (5-3600)"
+        },
+        "slurmClusterManager.autoRefreshEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable auto refresh of job lists"
+        },
+        "slurmClusterManager.confirmCancelJob": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation dialog before cancelling a job"
+        }
+      }
     }
   },
   "scripts": {
