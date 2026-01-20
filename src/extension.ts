@@ -181,6 +181,42 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Search filter cleared');
     });
 
+    // Register history search command
+    const searchHistoryCommand = vscode.commands.registerCommand('slurmHistory.search', async () => {
+        const currentFilter = jobHistoryProvider.getSearchFilter();
+        const searchTerm = await vscode.window.showInputBox({
+            prompt: 'Search job history by name or Job ID',
+            placeHolder: 'Enter search term...',
+            value: currentFilter,
+        });
+
+        if (searchTerm !== undefined) {
+            if (searchTerm === '') {
+                jobHistoryProvider.clearSearchFilter();
+                vscode.window.showInformationMessage('History search filter cleared');
+            } else {
+                jobHistoryProvider.setSearchFilter(searchTerm);
+                vscode.window.showInformationMessage(`Filtering history: "${searchTerm}"`);
+            }
+        }
+    });
+
+    // Register clear history search command
+    const clearSearchHistoryCommand = vscode.commands.registerCommand('slurmHistory.clearSearch', () => {
+        jobHistoryProvider.clearSearchFilter();
+        vscode.window.showInformationMessage('History search filter cleared');
+    });
+
+    // Register next page command
+    const nextPageCommand = vscode.commands.registerCommand('slurmHistory.nextPage', () => {
+        jobHistoryProvider.nextPage();
+    });
+
+    // Register previous page command
+    const previousPageCommand = vscode.commands.registerCommand('slurmHistory.previousPage', () => {
+        jobHistoryProvider.previousPage();
+    });
+
     // Register toggle autorefresh command
     const toggleAutoRefreshCommand = vscode.commands.registerCommand('slurmJobs.toggleAutoRefresh', async () => {
         const config = vscode.workspace.getConfiguration('slurmClusterManager');
@@ -274,6 +310,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(openStderrCommand);
     context.subscriptions.push(searchCommand);
     context.subscriptions.push(clearSearchCommand);
+    context.subscriptions.push(searchHistoryCommand);
+    context.subscriptions.push(clearSearchHistoryCommand);
+    context.subscriptions.push(nextPageCommand);
+    context.subscriptions.push(previousPageCommand);
     context.subscriptions.push(toggleAutoRefreshCommand);
     context.subscriptions.push(setAutoRefreshIntervalCommand);
     context.subscriptions.push(configChangeListener);

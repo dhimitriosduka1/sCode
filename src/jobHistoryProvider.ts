@@ -96,6 +96,19 @@ class HistoryMessageItem extends vscode.TreeItem {
 }
 
 /**
+ * Pagination control item for the history view
+ */
+class PaginationControlItem extends vscode.TreeItem {
+    constructor(message: string, icon?: string) {
+        super(message, vscode.TreeItemCollapsibleState.None);
+        if (icon) {
+            this.iconPath = new vscode.ThemeIcon(icon);
+        }
+        this.contextValue = 'paginationControl';
+    }
+}
+
+/**
  * TreeDataProvider for job history
  */
 export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -108,6 +121,10 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private slurmService: SlurmService;
     private cachedJobs: HistoryJob[] = [];
     private historyDays: number = 7;
+    private searchFilter: string = '';
+    private currentPage: number = 0;
+    private itemsPerPage: number = 20;
+    private totalFilteredJobs: number = 0;
 
     constructor(slurmService: SlurmService) {
         this.slurmService = slurmService;
@@ -127,6 +144,52 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     setHistoryDays(days: number): void {
         this.historyDays = days;
         this.refresh();
+    }
+
+    /**
+     * Set search filter for job names
+     */
+    setSearchFilter(filter: string): void {
+        this.searchFilter = filter;
+        this.currentPage = 0; // Reset to first page when filtering
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Clear search filter
+     */
+    clearSearchFilter(): void {
+        this.searchFilter = '';
+        this.currentPage = 0;
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Get current search filter
+     */
+    getSearchFilter(): string {
+        return this.searchFilter;
+    }
+
+    /**
+     * Navigate to next page
+     */
+    nextPage(): void {
+        const maxPage = Math.max(0, Math.ceil(this.totalFilteredJobs / this.itemsPerPage) - 1);
+        if (this.currentPage < maxPage) {
+            this.currentPage++;
+            this._onDidChangeTreeData.fire();
+        }
+    }
+
+    /**
+     * Navigate to previous page
+     */
+    previousPage(): void {
+        if (this.currentPage > 0) {
+            this.currentPage--;
+            this._onDidChangeTreeData.fire();
+        }
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -158,7 +221,43 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 return [new HistoryMessageItem(`No jobs in the last ${this.historyDays} days`, 'info')];
             }
 
-            return this.cachedJobs.map(job => new HistoryJobItem(job));
+            // Apply search filter
+            let filteredJobs = this.cachedJobs;
+            if (this.searchFilter) {
+                const filterLower = this.searchFilter.toLowerCase();
+                filteredJobs = this.cachedJobs.filter(job =>
+                    job.name.toLowerCase().includes(filterLower) ||
+                    job.jobId.includes(this.searchFilter)
+                );
+
+                if (filteredJobs.length === 0) {
+                    return [new HistoryMessageItem(`No jobs match "${this.searchFilter}"`, 'search')];
+                }
+            }
+
+            this.totalFilteredJobs = filteredJobs.length;
+
+            // Calculate pagination
+            const totalPages = Math.ceil(this.totalFilteredJobs / this.itemsPerPage);
+            const startIndex = this.currentPage * this.itemsPerPage;
+            const endIndex = Math.min(startIndex + this.itemsPerPage, this.totalFilteredJobs);
+            const pageJobs = filteredJobs.slice(startIndex, endIndex);
+
+            const items: vscode.TreeItem[] = [];
+
+            // Add pagination info at the top if there are multiple pages
+            if (totalPages > 1) {
+                const pageInfo = new PaginationControlItem(
+                    `Page ${this.currentPage + 1} of ${totalPages} (${this.totalFilteredJobs} jobs${this.searchFilter ? ' filtered' : ''})`,
+                    'list-ordered'
+                );
+                items.push(pageInfo);
+            }
+
+            // Add job items
+            items.push(...pageJobs.map(job => new HistoryJobItem(job)));
+
+            return items;
         } catch (error) {
             console.error('Error fetching job history:', error);
             return [new HistoryMessageItem('Error fetching history', 'error')];

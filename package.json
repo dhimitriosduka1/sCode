@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "publisher": "dhimitriosduka",
   "engines": {
     "vscode": "^1.85.0"
@@ -89,6 +89,26 @@
         "command": "slurmJobs.cancelJob",
         "title": "Cancel Job",
         "icon": "$(trash)"
+      },
+      {
+        "command": "slurmHistory.search",
+        "title": "Search History",
+        "icon": "$(search)"
+      },
+      {
+        "command": "slurmHistory.clearSearch",
+        "title": "Clear History Search",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "slurmHistory.nextPage",
+        "title": "Next Page",
+        "icon": "$(chevron-right)"
+      },
+      {
+        "command": "slurmHistory.previousPage",
+        "title": "Previous Page",
+        "icon": "$(chevron-left)"
       }
     ],
     "menus": {
@@ -117,6 +137,26 @@
           "command": "slurmHistory.refresh",
           "when": "view == slurmHistory",
           "group": "navigation@1"
+        },
+        {
+          "command": "slurmHistory.search",
+          "when": "view == slurmHistory",
+          "group": "navigation@2"
+        },
+        {
+          "command": "slurmHistory.clearSearch",
+          "when": "view == slurmHistory",
+          "group": "navigation@3"
+        },
+        {
+          "command": "slurmHistory.previousPage",
+          "when": "view == slurmHistory",
+          "group": "navigation@4"
+        },
+        {
+          "command": "slurmHistory.nextPage",
+          "when": "view == slurmHistory",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
