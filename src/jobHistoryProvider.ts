@@ -62,6 +62,30 @@ export class HistoryDetailItem extends vscode.TreeItem {
 }
 
 /**
+ * Tree item for history job file paths (stdout/stderr) - clickable
+ */
+export class HistoryFileItem extends vscode.TreeItem {
+    constructor(
+        label: string,
+        public readonly filePath: string,
+        icon: string,
+        public readonly job: HistoryJob,
+    ) {
+        super(`${label}: ${filePath}`, vscode.TreeItemCollapsibleState.None);
+        this.iconPath = new vscode.ThemeIcon(icon);
+        this.contextValue = label === 'Stdout' ? 'historyStdout' : 'historyStderr';
+        this.tooltip = `Click to open: ${filePath}`;
+
+        // Make it clickable
+        this.command = {
+            command: 'slurmJobs.openFile',
+            title: 'Open File',
+            arguments: [filePath],
+        };
+    }
+}
+
+/**
  * Message item for the history view
  */
 class HistoryMessageItem extends vscode.TreeItem {
@@ -85,8 +109,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private cachedJobs: HistoryJob[] = [];
     private historyDays: number = 7;
 
-    constructor() {
-        this.slurmService = new SlurmService();
+    constructor(slurmService: SlurmService) {
+        this.slurmService = slurmService;
     }
 
     /**
@@ -161,6 +185,14 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
         children.push(new HistoryDetailItem('Started', job.startTime, 'calendar'));
         children.push(new HistoryDetailItem('Ended', job.endTime, 'calendar'));
+
+        // Add stdout/stderr paths if available (clickable)
+        if (job.stdoutPath && job.stdoutPath !== 'N/A') {
+            children.push(new HistoryFileItem('Stdout', job.stdoutPath, 'file', job));
+        }
+        if (job.stderrPath && job.stderrPath !== 'N/A') {
+            children.push(new HistoryFileItem('Stderr', job.stderrPath, 'warning', job));
+        }
 
         return children;
     }

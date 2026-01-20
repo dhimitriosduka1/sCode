@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SlurmJobProvider } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { SlurmService } from './slurmService';
+import { JobPathCache } from './jobPathCache';
 import * as fs from 'fs';
 
 // Auto-refresh timer
@@ -77,11 +78,17 @@ function stopAutoRefresh(): void {
 export function activate(context: vscode.ExtensionContext) {
     console.log('SLURM Cluster Manager is now active');
 
-    // Create the job provider
-    const slurmJobProvider = new SlurmJobProvider();
+    // Create the job path cache (persistent storage)
+    const jobPathCache = new JobPathCache(context);
 
-    // Create the history provider
-    const jobHistoryProvider = new JobHistoryProvider();
+    // Create shared SlurmService with cache
+    const slurmService = new SlurmService(jobPathCache);
+
+    // Create the job provider with shared service
+    const slurmJobProvider = new SlurmJobProvider(slurmService);
+
+    // Create the history provider with shared service
+    const jobHistoryProvider = new JobHistoryProvider(slurmService);
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -220,10 +227,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Create SlurmService for job operations
-    const slurmService = new SlurmService();
-
-    // Register cancel job command
+    // Register cancel job command (uses the shared slurmService created above)
     const cancelJobCommand = vscode.commands.registerCommand('slurmJobs.cancelJob', async (item: any) => {
         if (!item?.job?.jobId) {
             vscode.window.showWarningMessage('No job selected');

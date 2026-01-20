@@ -213,8 +213,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
 
-    constructor() {
-        this.slurmService = new SlurmService();
+    constructor(slurmService: SlurmService) {
+        this.slurmService = slurmService;
     }
 
     /**

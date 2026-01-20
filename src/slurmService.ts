@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { JobPathCache } from './jobPathCache';
 
 const execAsync = promisify(exec);
 
@@ -220,6 +221,12 @@ interface JobDetails {
  * Service for interacting with SLURM cluster
  */
 export class SlurmService {
+    private pathCache?: JobPathCache;
+
+    constructor(pathCache?: JobPathCache) {
+        this.pathCache = pathCache;
+    }
+
     /**
      * Fetch current user's jobs from SLURM
      * Uses squeue command with custom format for parsing
@@ -270,6 +277,11 @@ export class SlurmService {
                 job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes);
                 job.submitScript = details.submitScript;
                 job.workDir = details.workDir;
+
+                // Cache the paths for later use in history
+                if (this.pathCache) {
+                    await this.pathCache.set(job.jobId, job.stdoutPath, job.stderrPath);
+                }
             }));
 
             return jobs;
@@ -349,7 +361,7 @@ export class SlurmService {
             startDate.setDate(startDate.getDate() - days);
             const startDateStr = startDate.toISOString().split('T')[0];
 
-            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList
+            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
             const { stdout } = await execAsync(
                 `sacct -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`
             );
@@ -393,6 +405,8 @@ export class SlurmService {
                         nodes: parts[8].trim() || 'N/A',
                         cpus: parts[9]?.trim() || 'N/A',
                         maxMemory: parts[10]?.trim() || 'N/A',
+                        stdoutPath: 'N/A',
+                        stderrPath: 'N/A',
                     });
                 }
             }
@@ -404,11 +418,65 @@ export class SlurmService {
                 return new Date(b.endTime).getTime() - new Date(a.endTime).getTime();
             });
 
+            // Fetch stdout/stderr paths for all jobs in parallel
+            await Promise.all(jobs.map(async (job) => {
+                const details = await this.getHistoryJobPaths(job.jobId);
+                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes);
+                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes);
+            }));
+
             return jobs;
         } catch (error) {
             console.error('Failed to fetch job history:', error);
             return [];
         }
+    }
+
+    /**
+     * Get stdout and stderr paths for a historical job
+     * Tries: 1) local cache, 2) scontrol, 3) returns N/A
+     */
+    async getHistoryJobPaths(jobId: string): Promise<{ stdoutPath: string; stderrPath: string }> {
+        // First, check the local cache
+        if (this.pathCache) {
+            const cached = this.pathCache.get(jobId);
+            if (cached) {
+                return {
+                    stdoutPath: cached.stdoutPath,
+                    stderrPath: cached.stderrPath,
+                };
+            }
+        }
+
+        // Try scontrol (works for recent jobs still in the controller's memory)
+        try {
+            const { stdout } = await execAsync(`scontrol show job ${jobId} 2>/dev/null`);
+
+            const stdoutMatch = stdout.match(/StdOut=([^\s]+)/);
+            const stderrMatch = stdout.match(/StdErr=([^\s]+)/);
+
+            if (stdoutMatch || stderrMatch) {
+                const paths = {
+                    stdoutPath: stdoutMatch?.[1] || 'N/A',
+                    stderrPath: stderrMatch?.[1] || 'N/A',
+                };
+
+                // Cache these for future use
+                if (this.pathCache) {
+                    await this.pathCache.set(jobId, paths.stdoutPath, paths.stderrPath);
+                }
+
+                return paths;
+            }
+        } catch {
+            // scontrol failed, job may be too old
+        }
+
+        // No cached data available
+        return {
+            stdoutPath: 'N/A',
+            stderrPath: 'N/A',
+        };
     }
 }
 
@@ -427,6 +495,8 @@ export interface HistoryJob {
     nodes: string;
     cpus: string;
     maxMemory: string;
+    stdoutPath: string;
+    stderrPath: string;
 }
 
 /**
