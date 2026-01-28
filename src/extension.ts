@@ -275,10 +275,75 @@ export function activate(context: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('slurmClusterManager');
         const confirmCancel = config.get<boolean>('confirmCancelJob', true);
 
+        // Check if this is a job array (contains underscore)
+        const isJobArray = jobId.includes('_');
+        let jobIdToCancel = jobId;
+
+        if (isJobArray) {
+            // Extract base job ID (the part before the underscore)
+            const baseJobId = jobId.split('_')[0];
+
+            // Present options to the user
+            const cancelOption = await vscode.window.showQuickPick(
+                [
+                    {
+                        label: '$(trash) Cancel entire job array',
+                        description: `Cancel all jobs in array ${baseJobId}`,
+                        value: 'entire'
+                    },
+                    {
+                        label: '$(edit) Cancel specific job',
+                        description: `Cancel a specific job within array ${baseJobId}`,
+                        value: 'specific'
+                    }
+                ],
+                {
+                    placeHolder: 'This is a job array. How would you like to cancel?',
+                    title: `Cancel Job Array: ${jobName}`
+                }
+            );
+
+            if (!cancelOption) {
+                return; // User cancelled the selection
+            }
+
+            if (cancelOption.value === 'entire') {
+                // Cancel the entire job array using the base ID
+                jobIdToCancel = baseJobId;
+            } else {
+                // Ask for specific job index
+                const specificJobId = await vscode.window.showInputBox({
+                    prompt: 'Enter the specific job ID to cancel',
+                    placeHolder: `${baseJobId}_0`,
+                    value: `${baseJobId}_`,
+                    validateInput: (value) => {
+                        if (!value.startsWith(`${baseJobId}_`)) {
+                            return `Job ID must start with ${baseJobId}_`;
+                        }
+                        const index = value.substring(baseJobId.length + 1);
+                        if (!index || !/^\d+$/.test(index)) {
+                            return 'Please enter a valid job array index (e.g., 0, 1, 2, ...)';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!specificJobId) {
+                    return; // User cancelled the input
+                }
+
+                jobIdToCancel = specificJobId;
+            }
+        }
+
         // Show confirmation dialog if enabled
         if (confirmCancel) {
+            const confirmMessage = isJobArray && jobIdToCancel === jobId.split('_')[0]
+                ? `Are you sure you want to cancel the ENTIRE job array "${jobName}" (${jobIdToCancel})?`
+                : `Are you sure you want to cancel job "${jobName}" (${jobIdToCancel})?`;
+
             const confirmation = await vscode.window.showWarningMessage(
-                `Are you sure you want to cancel job "${jobName}" (${jobId})?`,
+                confirmMessage,
                 { modal: true },
                 'Cancel Job'
             );
@@ -289,7 +354,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Cancel the job
-        const result = await slurmService.cancelJob(jobId);
+        const result = await slurmService.cancelJob(jobIdToCancel);
 
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
