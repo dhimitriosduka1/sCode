@@ -231,6 +231,19 @@ class MessageItem extends vscode.TreeItem {
 }
 
 /**
+ * Fun item showing the user with the most running jobs
+ */
+class JobHogItem extends vscode.TreeItem {
+    constructor(username: string, jobCount: number) {
+        const funTitles = ['🐷 Job Hog', '👑 Resource King', '🔥 Cluster Dominator'];
+        const title = funTitles[Math.floor(Math.random() * funTitles.length)];
+        super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
+        this.tooltip = `${username} is currently hogging the cluster with ${jobCount} running jobs!`;
+        this.contextValue = 'jobHog';
+    }
+}
+
+/**
  * TreeDataProvider for SLURM jobs
  * Provides data for the SLURM Jobs TreeView in the sidebar
  */
@@ -342,7 +355,13 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             }
 
             // Create category items
-            const categories: StatusCategoryItem[] = [];
+            const categories: vscode.TreeItem[] = [];
+
+            // Add the "job hog" at the top for fun
+            const topHog = await this.slurmService.getTopJobHog();
+            if (topHog && topHog.jobCount > 1) {
+                categories.push(new JobHogItem(topHog.username, topHog.jobCount));
+            }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
                 const info = CATEGORIES[categoryKey];

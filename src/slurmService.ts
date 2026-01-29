@@ -345,6 +345,47 @@ export class SlurmService {
     }
 
     /**
+     * Get the user with the most running jobs on the cluster (for fun!)
+     * @returns Object with username and job count, or null if unavailable
+     */
+    async getTopJobHog(): Promise<{ username: string; jobCount: number } | null> {
+        try {
+            // Get all running jobs on the cluster with their usernames
+            const { stdout } = await execAsync(
+                'squeue --noheader --state=R --format="%u"'
+            );
+
+            const users = stdout.trim().split('\n').filter(u => u.trim());
+
+            if (users.length === 0) {
+                return null;
+            }
+
+            // Count jobs per user
+            const jobCounts = new Map<string, number>();
+            for (const user of users) {
+                const trimmedUser = user.trim();
+                jobCounts.set(trimmedUser, (jobCounts.get(trimmedUser) || 0) + 1);
+            }
+
+            // Find the user with most jobs
+            let topUser = '';
+            let maxJobs = 0;
+            jobCounts.forEach((count, user) => {
+                if (count > maxJobs) {
+                    maxJobs = count;
+                    topUser = user;
+                }
+            });
+
+            return { username: topUser, jobCount: maxJobs };
+        } catch (error) {
+            console.error('Failed to get top job hog:', error);
+            return null;
+        }
+    }
+
+    /**
      * Cancel a SLURM job using scancel
      * @param jobId The job ID to cancel
      * @returns Object with success status and optional error message
