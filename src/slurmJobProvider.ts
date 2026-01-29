@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SlurmJob, SlurmService, getStateDescription, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
+import { SubmitScriptCache } from './submitScriptCache';
 
 /**
  * Status categories for grouping jobs
@@ -188,6 +189,38 @@ export class JobDetailItem extends vscode.TreeItem {
 }
 
 /**
+ * Tree item for submit script links (current vs cached)
+ */
+class SubmitScriptItem extends vscode.TreeItem {
+    constructor(
+        public readonly label: string,
+        public readonly filePath: string,
+        public readonly isCached: boolean,
+        public readonly cachedAt?: string,
+    ) {
+        super(label, vscode.TreeItemCollapsibleState.None);
+
+        if (isCached) {
+            this.tooltip = `Cached at: ${cachedAt}\nClick to open the script as it was at submission time`;
+            this.iconPath = new vscode.ThemeIcon('archive', new vscode.ThemeColor('charts.blue'));
+        } else {
+            this.tooltip = `Current file: ${filePath}\nClick to open the current version of the script`;
+            this.iconPath = new vscode.ThemeIcon('file-code');
+        }
+
+        this.contextValue = 'submitScript';
+        this.description = isCached ? '(cached at submission)' : filePath;
+
+        // Make the item clickable to open the file
+        this.command = {
+            command: 'slurmJobs.openFile',
+            title: 'Open File',
+            arguments: [filePath],
+        };
+    }
+}
+
+/**
  * Message item shown when no jobs are found or SLURM is unavailable
  */
 class MessageItem extends vscode.TreeItem {
@@ -209,12 +242,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.event;
 
     private slurmService: SlurmService;
+    private scriptCache?: SubmitScriptCache;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
 
-    constructor(slurmService: SlurmService) {
+    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache) {
         this.slurmService = slurmService;
+        this.scriptCache = scriptCache;
     }
 
     /**
@@ -361,9 +396,28 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             children.push(new JobDetailItem('Est. Start', startTime, 'calendar'));
         }
 
-        // Add submit script link
+        // Add submit script links
         if (job.submitScript && job.submitScript !== 'N/A') {
-            children.push(new OutputFileItem('Submit Script', job.submitScript, 'stdout'));
+            // Current version of the script
+            children.push(new SubmitScriptItem(
+                'Submit Script (current)',
+                job.submitScript,
+                false
+            ));
+
+            // Cached version (if available)
+            if (this.scriptCache && this.scriptCache.has(job.jobId)) {
+                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId);
+                const cachedAt = this.scriptCache.formatCacheTime(job.jobId);
+                if (cachedPath) {
+                    children.push(new SubmitScriptItem(
+                        'Submit Script (cached)',
+                        cachedPath,
+                        true,
+                        cachedAt
+                    ));
+                }
+            }
         }
 
         // Add output file links

@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { JobPathCache } from './jobPathCache';
+import { SubmitScriptCache } from './submitScriptCache';
 
 const execAsync = promisify(exec);
 
@@ -20,6 +21,8 @@ export interface SlurmJob {
     startTime: string;
     workDir: string;
     submitScript: string;
+    /** Path to the cached copy of the submit script (at submission time) */
+    cachedSubmitScript?: string;
 }
 
 /**
@@ -222,9 +225,11 @@ interface JobDetails {
  */
 export class SlurmService {
     private pathCache?: JobPathCache;
+    private scriptCache?: SubmitScriptCache;
 
-    constructor(pathCache?: JobPathCache) {
+    constructor(pathCache?: JobPathCache, scriptCache?: SubmitScriptCache) {
         this.pathCache = pathCache;
+        this.scriptCache = scriptCache;
     }
 
     /**
@@ -281,6 +286,11 @@ export class SlurmService {
                 // Cache the paths for later use in history
                 if (this.pathCache) {
                     await this.pathCache.set(job.jobId, job.stdoutPath, job.stderrPath);
+                }
+
+                // Cache the submit script if not already cached
+                if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
+                    job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
                 }
             }));
 

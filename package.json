@@ -2,17 +2,13 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.17",
-  "publisher": "dhimitriosduka",
+  "version": "0.2.23",
+  "publisher": "DhimitriosDuka",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
-  ],
-  "activationEvents": [
-    "onView:slurmJobs",
-    "onView:slurmHistory"
   ],
   "main": "./out/extension.js",
   "contributes": {

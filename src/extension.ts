@@ -3,6 +3,7 @@ import { SlurmJobProvider } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
+import { SubmitScriptCache } from './submitScriptCache';
 import * as fs from 'fs';
 
 // Auto-refresh timer
@@ -81,11 +82,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Create the job path cache (persistent storage)
     const jobPathCache = new JobPathCache(context);
 
-    // Create shared SlurmService with cache
-    const slurmService = new SlurmService(jobPathCache);
+    // Create the submit script cache (persistent storage)
+    const submitScriptCache = new SubmitScriptCache(context);
 
-    // Create the job provider with shared service
-    const slurmJobProvider = new SlurmJobProvider(slurmService);
+    // Create shared SlurmService with caches
+    const slurmService = new SlurmService(jobPathCache, submitScriptCache);
+
+    // Create the job provider with shared service and script cache
+    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache);
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
