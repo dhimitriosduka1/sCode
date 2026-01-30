@@ -23,6 +23,16 @@ export interface SlurmJob {
     submitScript: string;
     /** Path to the cached copy of the submit script (at submission time) */
     cachedSubmitScript?: string;
+    /** GPU name (if available) */
+    gpuName?: string;
+    /** GPU memory (if available) */
+    gpuMemory?: string;
+    /** Number of GPUs allocated to this job */
+    gpuCount?: number;
+    /** GPU type (e.g., H200, A100) */
+    gpuType?: string;
+    /** Allocated memory (e.g., 500G) */
+    memory?: string;
 }
 
 /**
@@ -282,6 +292,9 @@ export class SlurmService {
                 job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes);
                 job.submitScript = details.submitScript;
                 job.workDir = details.workDir;
+                job.gpuCount = details.gpuCount;
+                job.gpuType = details.gpuType;
+                job.memory = details.memory;
 
                 // Cache the paths for later use in history
                 if (this.pathCache) {
@@ -293,6 +306,18 @@ export class SlurmService {
                     job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
                 }
             }));
+
+            // Fetch GPU info once (for running jobs on this node)
+            const gpuInfo = await this.getGpuInfo();
+            if (gpuInfo) {
+                // Apply GPU info to running jobs
+                for (const job of jobs) {
+                    if (job.state === 'R') {
+                        job.gpuName = gpuInfo.gpuName;
+                        job.gpuMemory = gpuInfo.gpuMemory;
+                    }
+                }
+            }
 
             return jobs;
         } catch (error) {
@@ -306,7 +331,7 @@ export class SlurmService {
     /**
      * Get detailed job info from scontrol (stdout, stderr, command paths)
      */
-    async getJobDetails(jobId: string): Promise<JobDetails> {
+    async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string }> {
         try {
             const { stdout } = await execAsync(`scontrol show job ${jobId}`);
 
@@ -316,11 +341,76 @@ export class SlurmService {
             const commandMatch = stdout.match(/Command=([^\s]+)/);
             const workDirMatch = stdout.match(/WorkDir=([^\s]+)/);
 
+            // Parse GPU count and type from various SLURM fields
+            // Formats: TresPerNode=gres/gpu:h200:2, AllocTRES=...gres/gpu=2..., Gres=gpu:2
+            let gpuCount: number | undefined;
+            let gpuType: string | undefined;
+
+            // Try TresPerNode first (e.g., "gres/gpu:h200:2" -> type=h200, count=2)
+            const tresPerNodeMatch = stdout.match(/TresPerNode=gres\/gpu:([^:]+):(\d+)/);
+            if (tresPerNodeMatch) {
+                gpuType = tresPerNodeMatch[1].toUpperCase();
+                gpuCount = parseInt(tresPerNodeMatch[2], 10);
+            }
+
+            // Fallback to AllocTRES for GPU type (e.g., "gres/gpu:h200=2")
+            if (!gpuType) {
+                const allocTresTypeMatch = stdout.match(/AllocTRES=.*gres\/gpu:([^=]+)=(\d+)/);
+                if (allocTresTypeMatch) {
+                    gpuType = allocTresTypeMatch[1].toUpperCase();
+                    gpuCount = parseInt(allocTresTypeMatch[2], 10);
+                }
+            }
+
+            // Fallback to AllocTRES for count only (e.g., "gres/gpu=2")
+            if (!gpuCount) {
+                const allocTresMatch = stdout.match(/AllocTRES=.*gres\/gpu=(\d+)/);
+                if (allocTresMatch) {
+                    gpuCount = parseInt(allocTresMatch[1], 10);
+                }
+            }
+
+            // Fallback to Gres field (e.g., "Gres=gpu:4" or "Gres=gpu:a100:2")
+            if (!gpuCount) {
+                const gresMatch = stdout.match(/Gres=([^\s]+)/);
+                if (gresMatch && gresMatch[1] !== '(null)') {
+                    // Try to get type and count (e.g., "gpu:a100:2")
+                    const gpuTypeCountMatch = gresMatch[1].match(/gpu:([^:]+):(\d+)/);
+                    if (gpuTypeCountMatch) {
+                        gpuType = gpuTypeCountMatch[1].toUpperCase();
+                        gpuCount = parseInt(gpuTypeCountMatch[2], 10);
+                    } else {
+                        // Just count (e.g., "gpu:4")
+                        const gpuCountMatch = gresMatch[1].match(/gpu:(\d+)/);
+                        if (gpuCountMatch) {
+                            gpuCount = parseInt(gpuCountMatch[1], 10);
+                        }
+                    }
+                }
+            }
+
+            // Parse memory from AllocTRES (e.g., "mem=500000M")
+            let memory: string | undefined;
+            const memMatch = stdout.match(/AllocTRES=.*mem=(\d+)([KMGT])?/);
+            if (memMatch) {
+                const value = parseInt(memMatch[1], 10);
+                const unit = memMatch[2] || 'M';
+                // Convert to human-readable format
+                if (unit === 'M' && value >= 1000) {
+                    memory = `${Math.round(value / 1000)}G`;
+                } else {
+                    memory = `${value}${unit}`;
+                }
+            }
+
             return {
                 stdoutPath: stdoutMatch?.[1] || 'N/A',
                 stderrPath: stderrMatch?.[1] || 'N/A',
                 submitScript: commandMatch?.[1] || 'N/A',
                 workDir: workDirMatch?.[1] || 'N/A',
+                gpuCount,
+                gpuType,
+                memory,
             };
         } catch {
             return {
@@ -341,6 +431,28 @@ export class SlurmService {
             return true;
         } catch {
             return false;
+        }
+    }
+
+    /**
+     * Get GPU information using nvidia-smi
+     * @returns Object with GPU name and memory, or null if unavailable
+     */
+    async getGpuInfo(): Promise<{ gpuName: string; gpuMemory: string } | null> {
+        try {
+            // Run both nvidia-smi commands in parallel
+            const [nameResult, memoryResult] = await Promise.all([
+                execAsync('nvidia-smi --query-gpu=name --format=csv,noheader'),
+                execAsync('nvidia-smi --query-gpu=memory.total --format=csv,noheader'),
+            ]);
+
+            const gpuName = nameResult.stdout.trim().split('\n')[0] || 'Unknown';
+            const gpuMemory = memoryResult.stdout.trim().split('\n')[0] || 'Unknown';
+
+            return { gpuName, gpuMemory };
+        } catch {
+            // nvidia-smi not available or failed
+            return null;
         }
     }
 

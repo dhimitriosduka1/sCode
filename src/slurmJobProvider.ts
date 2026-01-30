@@ -235,7 +235,7 @@ class MessageItem extends vscode.TreeItem {
  */
 class JobHogItem extends vscode.TreeItem {
     constructor(username: string, jobCount: number) {
-        const funTitles = ['🐷 Job Hog', '👑 Resource King', '🔥 Cluster Dominator'];
+        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator'];
         const title = funTitles[Math.floor(Math.random() * funTitles.length)];
         super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
         this.tooltip = `${username} is currently hogging the cluster with ${jobCount} running jobs!`;
@@ -408,6 +408,20 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (progress >= 0) {
                 children.push(new JobDetailItem('Progress', `${progress}%`, 'pie-chart'));
             }
+        }
+
+        // Show GPU info for any job that requested GPUs
+        if (job.gpuCount && job.gpuCount > 0) {
+            if (job.gpuType) {
+                children.push(new JobDetailItem('GPU', `${job.gpuCount}x ${job.gpuType}`, 'circuit-board'));
+            } else {
+                children.push(new JobDetailItem('GPUs', `${job.gpuCount}`, 'circuit-board'));
+            }
+        }
+
+        // Show allocated memory
+        if (job.memory) {
+            children.push(new JobDetailItem('Memory', job.memory, 'database'));
         }
 
         if (job.state === 'PD') {
