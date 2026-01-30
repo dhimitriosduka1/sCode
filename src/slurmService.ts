@@ -620,13 +620,6 @@ export class SlurmService {
                 return new Date(b.endTime).getTime() - new Date(a.endTime).getTime();
             });
 
-            // Fetch stdout/stderr paths for all jobs in parallel
-            await Promise.all(jobs.map(async (job) => {
-                const details = await this.getHistoryJobPaths(job.jobId);
-                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes);
-                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes);
-            }));
-
             return jobs;
         } catch (error) {
             console.error('Failed to fetch job history:', error);

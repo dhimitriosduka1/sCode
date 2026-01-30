@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { HistoryJob, SlurmService, getHistoryStateInfo } from './slurmService';
+import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 
 /**
  * Tree item representing a job from history
@@ -120,6 +120,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
     private slurmService: SlurmService;
     private cachedJobs: HistoryJob[] = [];
+    private cachedSlurmAvailable: boolean | null = null;
     private historyDays: number = 7;
     private searchFilter: string = '';
     private currentPage: number = 0;
@@ -131,10 +132,18 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     }
 
     /**
-     * Refresh the history
+     * Refresh the history (forces re-fetch from sacct)
      */
     refresh(): void {
         this.cachedJobs = [];
+        this.cachedSlurmAvailable = null;
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Fire tree change event to update UI without re-fetching
+     */
+    private updateView(): void {
         this._onDidChangeTreeData.fire();
     }
 
@@ -197,9 +206,9 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-        // Handle job children (details)
+        // Handle job children (details) - fetch paths lazily here
         if (element instanceof HistoryJobItem) {
-            return this.getJobChildren(element.job);
+            return await this.getJobChildren(element.job);
         }
 
         // Root level: show jobs
@@ -208,14 +217,19 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
-            // Check if SLURM is available
-            const isAvailable = await this.slurmService.isAvailable();
-            if (!isAvailable) {
-                return [new HistoryMessageItem('SLURM not available', 'warning')];
-            }
+            // Skip availability check if we already have cached jobs
+            if (this.cachedJobs.length === 0) {
+                // Check if SLURM is available (cache the result)
+                if (this.cachedSlurmAvailable === null) {
+                    this.cachedSlurmAvailable = await this.slurmService.isAvailable();
+                }
+                if (!this.cachedSlurmAvailable) {
+                    return [new HistoryMessageItem('SLURM not available', 'warning')];
+                }
 
-            // Fetch history
-            this.cachedJobs = await this.slurmService.getJobHistory(this.historyDays);
+                // Fetch history
+                this.cachedJobs = await this.slurmService.getJobHistory(this.historyDays);
+            }
 
             if (this.cachedJobs.length === 0) {
                 return [new HistoryMessageItem(`No jobs in the last ${this.historyDays} days`, 'info')];
@@ -264,7 +278,10 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         }
     }
 
-    private getJobChildren(job: HistoryJob): vscode.TreeItem[] {
+    /**
+     * Get children for a job item - fetches paths lazily
+     */
+    private async getJobChildren(job: HistoryJob): Promise<vscode.TreeItem[]> {
         const children: vscode.TreeItem[] = [];
         const stateInfo = getHistoryStateInfo(job.state, job.exitCode);
 
@@ -284,6 +301,14 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
         children.push(new HistoryDetailItem('Started', job.startTime, 'calendar'));
         children.push(new HistoryDetailItem('Ended', job.endTime, 'calendar'));
+
+        // Lazy-load stdout/stderr paths only when the job is expanded
+        if (job.stdoutPath === 'N/A' && job.stderrPath === 'N/A') {
+            // Paths not yet fetched - fetch them now
+            const paths = await this.slurmService.getHistoryJobPaths(job.jobId);
+            job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes);
+            job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes);
+        }
 
         // Add stdout/stderr paths if available (clickable)
         if (job.stdoutPath && job.stdoutPath !== 'N/A') {
