@@ -4,6 +4,7 @@ import { JobHistoryProvider } from './jobHistoryProvider';
 import { SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
+import { PinnedJobsCache } from './pinnedJobsCache';
 import * as fs from 'fs';
 
 // Auto-refresh timer
@@ -85,11 +86,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Create the submit script cache (persistent storage)
     const submitScriptCache = new SubmitScriptCache(context);
 
+    // Create the pinned jobs cache (persistent storage)
+    const pinnedJobsCache = new PinnedJobsCache(context);
+
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(jobPathCache, submitScriptCache);
 
-    // Create the job provider with shared service and script cache
-    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache);
+    // Create the job provider with shared service and caches
+    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, pinnedJobsCache);
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
@@ -447,6 +451,30 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register pin job command
+    const pinJobCommand = vscode.commands.registerCommand('slurmJobs.pinJob', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        await pinnedJobsCache.pin(item.job.jobId);
+        slurmJobProvider.refresh();
+        vscode.window.showInformationMessage(`Pinned job: ${item.job.name}`);
+    });
+
+    // Register unpin job command
+    const unpinJobCommand = vscode.commands.registerCommand('slurmJobs.unpinJob', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        await pinnedJobsCache.unpin(item.job.jobId);
+        slurmJobProvider.refresh();
+        vscode.window.showInformationMessage(`Unpinned job: ${item.job.name}`);
+    });
+
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
@@ -466,6 +494,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(submitJobCommand);
+    context.subscriptions.push(pinJobCommand);
+    context.subscriptions.push(unpinJobCommand);
 
     // Initialize autorefresh based on saved settings
     startAutoRefresh(slurmJobProvider, jobHistoryProvider);

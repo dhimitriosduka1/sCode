@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.35",
+  "version": "0.2.36",
   "publisher": "DhimitriosDuka",
   "engines": {
     "vscode": "^1.85.0"
@@ -110,6 +110,16 @@
         "command": "slurmJobs.submitJob",
         "title": "Submit Job",
         "icon": "$(play)"
+      },
+      {
+        "command": "slurmJobs.pinJob",
+        "title": "Pin Job",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "slurmJobs.unpinJob",
+        "title": "Unpin Job",
+        "icon": "$(pinned)"
       }
     ],
     "menus": {
@@ -192,9 +202,59 @@
           "group": "inline@3"
         },
         {
+          "command": "slurmJobs.pinJob",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "inline@4"
+        },
+        {
           "command": "slurmJobs.cancelJob",
           "when": "view == slurmJobs && viewItem == slurmJob",
           "group": "actions@1"
+        },
+        {
+          "command": "slurmJobs.pinJob",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "inline@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "inline@3"
+        },
+        {
+          "command": "slurmJobs.unpinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "inline@4"
+        },
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "output@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "output@2"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "actions@1"
+        },
+        {
+          "command": "slurmJobs.unpinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "actions@2"
         }
       ]
     },

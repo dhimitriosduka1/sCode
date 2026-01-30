@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { SlurmJob, SlurmService, getStateDescription, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
 import { SubmitScriptCache } from './submitScriptCache';
+import { PinnedJobsCache } from './pinnedJobsCache';
 
 /**
  * Status categories for grouping jobs
  */
-type StatusCategory = 'running' | 'pending' | 'completing' | 'other';
+type StatusCategory = 'pinned' | 'running' | 'pending' | 'completing' | 'other';
 
 interface CategoryInfo {
     label: string;
@@ -14,6 +15,11 @@ interface CategoryInfo {
 }
 
 const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
+    pinned: {
+        label: 'Pinned',
+        icon: new vscode.ThemeIcon('pinned', new vscode.ThemeColor('charts.blue')),
+        states: [], // Pinned is not state-based
+    },
     running: {
         label: 'Running',
         icon: new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green')),
@@ -61,13 +67,14 @@ export class StatusCategoryItem extends vscode.TreeItem {
 export class SlurmJobItem extends vscode.TreeItem {
     constructor(
         public readonly job: SlurmJob,
+        public readonly isPinned: boolean = false,
     ) {
         super(job.name, vscode.TreeItemCollapsibleState.Collapsed);
 
         this.description = this.createDescription();
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
-        this.contextValue = 'slurmJob';
+        this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
     }
 
     private createDescription(): string {
@@ -124,6 +131,11 @@ export class SlurmJobItem extends vscode.TreeItem {
     }
 
     private getStateIcon(): vscode.ThemeIcon {
+        // Pinned jobs get a special icon
+        if (this.isPinned) {
+            return new vscode.ThemeIcon('pinned', new vscode.ThemeColor('charts.blue'));
+        }
+
         switch (this.job.state) {
             case 'R':  // Running
                 return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green'));
@@ -256,13 +268,15 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private slurmService: SlurmService;
     private scriptCache?: SubmitScriptCache;
+    private pinnedCache?: PinnedJobsCache;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
 
-    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache) {
+    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
+        this.pinnedCache = pinnedCache;
     }
 
     /**
@@ -342,6 +356,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Fetch and cache jobs only if cache is empty
             if (this.cachedJobs.length === 0) {
                 this.cachedJobs = await this.slurmService.getJobs();
+
+                // Clean up stale pinned jobs
+                if (this.pinnedCache) {
+                    const activeJobIds = new Set(this.cachedJobs.map(j => j.jobId));
+                    await this.pinnedCache.cleanupStaleJobs(activeJobIds);
+                }
             }
 
             const filteredJobs = this.getFilteredJobs();
@@ -361,6 +381,17 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             const topHog = await this.slurmService.getTopJobHog();
             if (topHog && topHog.jobCount > 1) {
                 categories.push(new JobHogItem(topHog.username, topHog.jobCount));
+            }
+
+            // Add Pinned category first if there are pinned jobs
+            if (this.pinnedCache) {
+                const pinnedCount = filteredJobs.filter(job =>
+                    this.pinnedCache!.isPinned(job.jobId)
+                ).length;
+
+                if (pinnedCount > 0) {
+                    categories.push(new StatusCategoryItem('pinned', pinnedCount));
+                }
             }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
@@ -384,14 +415,26 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     private getCategoryChildren(category: StatusCategory): vscode.TreeItem[] {
-        const info = CATEGORIES[category];
         const filteredJobs = this.getFilteredJobs();
+
+        // Handle pinned category specially
+        if (category === 'pinned') {
+            const pinnedJobs = filteredJobs.filter(job =>
+                this.pinnedCache?.isPinned(job.jobId)
+            );
+            // Sort by job ID (descending - newest first)
+            pinnedJobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
+            return pinnedJobs.map(job => new SlurmJobItem(job, true));
+        }
+
+        const info = CATEGORIES[category];
         const jobs = filteredJobs.filter(job => info.states.includes(job.state));
 
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
 
-        return jobs.map(job => new SlurmJobItem(job));
+        // Check if each job is pinned
+        return jobs.map(job => new SlurmJobItem(job, this.pinnedCache?.isPinned(job.jobId) ?? false));
     }
 
     private getJobChildren(job: SlurmJob): vscode.TreeItem[] {
