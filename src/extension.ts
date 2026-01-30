@@ -369,6 +369,84 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register submit job command
+    const submitJobCommand = vscode.commands.registerCommand('slurmJobs.submitJob', async () => {
+        // Check if workspace is open
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showWarningMessage('Please open a workspace folder to submit jobs.');
+            return;
+        }
+
+        // Find all potential SLURM script files in the workspace
+        const scriptFiles = await vscode.workspace.findFiles(
+            '**/*.{sh,slurm,sbatch}',
+            '**/node_modules/**'
+        );
+
+        if (scriptFiles.length === 0) {
+            vscode.window.showWarningMessage('No script files (.sh, .slurm, .sbatch) found in workspace.');
+            return;
+        }
+
+        // Filter to only files containing #SBATCH directives (actual SLURM scripts)
+        // Read files in parallel for speed
+        const checkResults = await Promise.all(
+            scriptFiles.map(async (uri) => {
+                try {
+                    const content = await fs.promises.readFile(uri.fsPath, 'utf8');
+                    // Check first 2KB for #SBATCH to avoid reading huge files
+                    const header = content.slice(0, 2048);
+                    if (header.includes('#SBATCH')) {
+                        return uri.fsPath;
+                    }
+                } catch {
+                    // Skip files that can't be read
+                }
+                return null;
+            })
+        );
+
+        const slurmScripts = checkResults.filter((path): path is string => path !== null);
+
+        if (slurmScripts.length === 0) {
+            vscode.window.showWarningMessage('No SLURM scripts (containing #SBATCH) found in workspace.');
+            return;
+        }
+
+        // Sort by full path alphabetically and create QuickPick items
+        slurmScripts.sort((a, b) => a.localeCompare(b));
+
+        const items = slurmScripts.map(filePath => ({
+            label: filePath,
+            description: '',
+        }));
+
+        // Show QuickPick
+        const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select a SLURM script to submit',
+            title: 'Submit SLURM Job',
+        });
+
+        if (!selected) {
+            return; // User cancelled
+        }
+
+        const scriptPath = selected.label;
+
+        // Submit the job
+        const result = await slurmService.submitJob(scriptPath);
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            // Refresh the job list to show the new job
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
@@ -387,6 +465,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(setAutoRefreshIntervalCommand);
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
+    context.subscriptions.push(submitJobCommand);
 
     // Initialize autorefresh based on saved settings
     startAutoRefresh(slurmJobProvider, jobHistoryProvider);

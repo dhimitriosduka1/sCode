@@ -402,6 +402,45 @@ export class SlurmService {
     }
 
     /**
+     * Submit a SLURM job using sbatch
+     * @param scriptPath Path to the submit script
+     * @param workDir Optional working directory (defaults to script's parent directory)
+     * @returns Object with success status, job ID (if successful), and message
+     */
+    async submitJob(scriptPath: string, workDir?: string): Promise<{ success: boolean; jobId?: string; message: string }> {
+        try {
+            // Use the script's directory as working directory if not specified
+            const cwd = workDir || require('path').dirname(scriptPath);
+
+            const { stdout, stderr } = await execAsync(`sbatch "${scriptPath}"`, { cwd });
+
+            // sbatch typically outputs: "Submitted batch job <jobId>"
+            const match = stdout.match(/Submitted batch job (\d+)/);
+            if (match) {
+                const jobId = match[1];
+                return {
+                    success: true,
+                    jobId,
+                    message: `Job submitted successfully with ID: ${jobId}`
+                };
+            }
+
+            // If we got here, submission succeeded but couldn't parse job ID
+            return {
+                success: true,
+                message: `Job submitted but couldn't parse job ID. Output: ${stdout}`
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to submit job from ${scriptPath}:`, error);
+            return {
+                success: false,
+                message: `Failed to submit job: ${errorMessage}`
+            };
+        }
+    }
+
+    /**
      * Fetch job history using sacct
      * Shows recently completed/failed/cancelled jobs
      */

@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "0.2.24",
+  "version": "0.2.29",
   "publisher": "DhimitriosDuka",
   "engines": {
     "vscode": "^1.85.0"
@@ -105,6 +105,11 @@
         "command": "slurmHistory.previousPage",
         "title": "Previous Page",
         "icon": "$(chevron-left)"
+      },
+      {
+        "command": "slurmJobs.submitJob",
+        "title": "Submit Job",
+        "icon": "$(play)"
       }
     ],
     "menus": {
@@ -128,6 +133,11 @@
           "command": "slurmJobs.toggleAutoRefresh",
           "when": "view == slurmJobs",
           "group": "navigation@4"
+        },
+        {
+          "command": "slurmJobs.submitJob",
+          "when": "view == slurmJobs",
+          "group": "navigation@5"
         },
         {
           "command": "slurmHistory.refresh",
