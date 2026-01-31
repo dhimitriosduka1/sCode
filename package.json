@@ -3,7 +3,26 @@
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
   "version": "0.2.36",
+  "icon": "icon.png",
   "publisher": "DhimitriosDuka",
+  "license": "MIT",
+  "keywords": [
+    "slurm",
+    "hpc",
+    "cluster",
+    "jobs",
+    "batch",
+    "scheduler",
+    "supercomputer"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dhimitriosduka1/sCode"
+  },
+  "homepage": "https://github.com/dhimitriosduka1/sCode#readme",
+  "bugs": {
+    "url": "https://github.com/dhimitriosduka1/sCode/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
