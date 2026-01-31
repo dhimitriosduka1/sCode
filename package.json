@@ -13,7 +13,10 @@
     "jobs",
     "batch",
     "scheduler",
-    "supercomputer"
+    "gpu",
+    "compute",
+    "queue",
+    "workload"
   ],
   "repository": {
     "type": "git",
@@ -27,6 +30,8 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Data Science",
+    "Machine Learning",
     "Other"
   ],
   "main": "./out/extension.js",
