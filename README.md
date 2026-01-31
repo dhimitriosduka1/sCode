@@ -1,63 +1,50 @@
 # SLURM Cluster Manager
 
-A VS Code extension for managing SLURM jobs without leaving your editor.
+**Manage, monitor, and submit SLURM jobs directly from VS Code.**
 
-If you've ever gotten tired of switching between your code and a terminal just to check if your job is still running, or to find where SLURM dumped your stdout file this time — this is for you.
+This extension bridges the gap between your editor and your compute cluster. Visualise job progress, inspect output files on the fly, and manage your workflow without context switching to a terminal.
 
-## Features
+![Extension Icon](icon.png)
 
-### Active Jobs View
-See all your running and pending jobs in the sidebar. Each job shows:
-- Job name, state, and partition
-- Time elapsed vs. time limit (with a progress bar)
-- GPU and memory allocation
-- Start time
+## Key Features
 
-Right-click any job to open its stdout/stderr files or cancel it.
+### 🚀 Active Job Management
+- **Real-time Monitoring**: View all your jobs (Running, Pending, Held) in a dedicated sidebar.
+- **Visual Progress**: Smart progress bars show time usage at a glance (`Elapsed / Time Limit`).
+- **Resource Stats**: See allocated CPUs, memory, and nodes.
+- **GPU Visibility**: Integrates with `nvidia-smi` to show GPU memory and utilization where available.
+- **One-Click Actions**: Cancel, hold, or pin jobs directly from the UI.
 
-### Job History
-Browse your recently completed jobs (last 7 days by default). Search through them, paginate if you have a lot, and quickly access output files from finished jobs.
+### 📜 Job History & Logs
+- **Integrated History**: Browsable history of your completed, failed, or cancelled jobs (default: last 7 days).
+- **Instant Log Access**: Right-click any job (active or historical) to immediately open its `stdout` or `stderr` files.
+- **Smart Path Resolution**: automatically detects output log paths from `scontrol` and `sbatch` definitions.
 
-### Pin Jobs
-Keep track of important jobs by pinning them. Pinned jobs stay visible at the top even as your other jobs come and go.
+### 🔌 Seamless Workflow
+- **Pinning**: "Pin" critical long-running jobs to keep them in view, even if you filter or sort the list.
+- **Search & Filter**: Quickly find specific jobs by name.
 
-### Submit Jobs
-Submit batch scripts directly from the explorer. Right-click on a `.sh` file or use the submit button in the jobs view.
+## Configuration
 
-### Auto-Refresh
-Enable auto-refresh to keep your job list updated without manual refreshing. Configurable interval (5s to 1 hour).
+Customize the extension in VS Code Settings (`Cmd+,`):
+
+| Setting | Default | Description |
+|:--------|:--------|:------------|
+| `autoRefreshInterval` | `30` | Refresh frequency in seconds (5s - 1h). |
+| `autoRefreshEnabled` | `false` | specific whether to auto-start refreshing on window load. |
+| `confirmCancelJob` | `true` | Prevent accidental cancellations with a confirmation prompt. |
 
 ## Requirements
 
-- VS Code 1.85.0 or later
-- Access to a SLURM cluster (the extension needs `squeue`, `scontrol`, `sacct`, and `sbatch` commands)
+This extension assumes it is running in an environment with access to standard SLURM commands:
+- `squeue`
+- `scontrol`
+- `sacct`
+- `sbatch`
+- `scancel`
 
-## Installation
-
-Install from the VS Code Marketplace, or:
-
-```bash
-code --install-extension slurm-cluster-manager-x.x.x.vsix
-```
-
-## Extension Settings
-
-- `slurmClusterManager.autoRefreshInterval`: How often to refresh (in seconds, default: 30)
-- `slurmClusterManager.autoRefreshEnabled`: Start with auto-refresh on/off (default: off)
-- `slurmClusterManager.confirmCancelJob`: Ask before cancelling jobs (default: on)
-
-## Usage
-
-1. Open the SLURM Cluster panel from the activity bar (server icon)
-2. Your active jobs appear automatically
-3. Click the refresh button or enable auto-refresh
-4. Use the search icon to filter jobs by name
-5. Right-click jobs for actions (open output, cancel, pin)
-
-## Contributing
-
-Found a bug? Have a feature idea? Open an issue on GitHub.
+> **Note:** If you are using VS Code Remote - SSH, install this extension on the **Remote** target, not locally.
 
 ## License
 
-MIT
+[MIT](LICENSE)
