@@ -2,49 +2,103 @@
 
 **Manage, monitor, and submit SLURM jobs directly from VS Code.**
 
-This extension bridges the gap between your editor and your compute cluster. Visualise job progress, inspect output files on the fly, and manage your workflow without context switching to a terminal.
+SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, and take common actions (cancel/hold/pin) without context-switching to a terminal.
 
 ![Extension Icon](icon.png)
 
-## Key Features
+---
 
-### 🚀 Active Job Management
-- **Real-time Monitoring**: View all your jobs (Running, Pending, Held) in a dedicated sidebar.
-- **Visual Progress**: Smart progress bars show time usage at a glance (`Elapsed / Time Limit`).
-- **Resource Stats**: See allocated CPUs, memory, and nodes.
-- **GPU Visibility**: Integrates with `nvidia-smi` to show GPU memory and utilization where available.
+## ✨ Highlights
+
+- **Live job monitoring** in a dedicated sidebar (Running / Pending / Held)
+- **Visual progress bars** for time usage (`Elapsed / Time Limit`)
+- **Resource overview** (CPUs, memory, nodes)
+- **GPU stats** via `nvidia-smi` (when available)
+- **One-click actions**: cancel, hold, pin
+- **Job history** for recent completed/failed/cancelled jobs
+- **Instant log access** for `stdout` / `stderr`
+
+---
+
+## 🚀 Features
+
+### Active Job Management
+- **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Held).
+- **Time Awareness**: Smart progress bars show elapsed vs. requested wall time.
+- **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
+- **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
 - **One-Click Actions**: Cancel, hold, or pin jobs directly from the UI.
 
-### 📜 Job History & Logs
-- **Integrated History**: Browsable history of your completed, failed, or cancelled jobs (default: last 7 days).
-- **Instant Log Access**: Right-click any job (active or historical) to immediately open its `stdout` or `stderr` files.
-- **Smart Path Resolution**: automatically detects output log paths from `scontrol` and `sbatch` definitions.
+### Job History & Logs
+- **Integrated History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
+- **Instant Log Access**: Right-click any job (active or historical) to open its `stdout` / `stderr`.
+- **Smart Path Resolution**: Automatically resolves log locations from `sbatch` directives and `scontrol` metadata.
 
-### 🔌 Seamless Workflow
-- **Pinning**: "Pin" critical long-running jobs to keep them in view, even if you filter or sort the list.
-- **Search & Filter**: Quickly find specific jobs by name.
+### Workflow Integrations
+- **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
+- **Search & Filter**: Quickly find jobs by name.
 
-## Configuration
+---
 
-Customize the extension in VS Code Settings (`Cmd+,`):
+## ⚙️ Configuration
+
+Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on Windows/Linux):
 
 | Setting | Default | Description |
-|:--------|:--------|:------------|
-| `autoRefreshInterval` | `30` | Refresh frequency in seconds (5s - 1h). |
-| `autoRefreshEnabled` | `false` | specific whether to auto-start refreshing on window load. |
-| `confirmCancelJob` | `true` | Prevent accidental cancellations with a confirmation prompt. |
+|---|---:|---|
+| `autoRefreshInterval` | `30` | Refresh frequency (in seconds). Range: **5s → 1h** |
+| `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
+| `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
 
-## Requirements
+> Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
 
-This extension assumes it is running in an environment with access to standard SLURM commands:
+---
+
+## ✅ Requirements
+
+This extension **must run on a machine with direct access to SLURM commands**.  
+In practice, that means you should install it **only on the cluster side** (e.g., a login node / head node / SLURM-accessible node — whichever your site provides), not on your local computer.
+
+Required commands:
 - `squeue`
 - `scontrol`
 - `sacct`
 - `sbatch`
 - `scancel`
 
-> **Note:** If you are using VS Code Remote - SSH, install this extension on the **Remote** target, not locally.
+### Important: No Remote Connection (Yet)
+At the moment, the extension **cannot connect to a remote cluster by itself**.
+It does **not** SSH into a server, tunnel commands, or forward SLURM calls.
 
-## License
+✅ **Supported setup:** Run VS Code *on the SLURM-accessible node* (or use **VS Code Remote - SSH** to open a remote VS Code session on that node) and install the extension **on the Remote target**.
 
-[MIT](LICENSE)
+🚧 **Remote connection support is work-in-progress (WIP)** and will be added in a future release.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome — bug fixes, documentation improvements, and feature requests.
+
+- Report issues / request features: https://github.com/dhimitriosduka1/sCode/issues  
+- Pull requests are welcome!
+
+If you’re opening a PR, please include:
+- A short description of the change and why it helps
+- Screenshots/GIFs for UI updates (when applicable)
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  If this extension helps you, consider giving it a ⭐ on <a href="https://github.com/dhimitriosduka1/sCode">GitHub</a>!
+</p>
+
+<p align="center">
+  Made with ❤️ by <a href="https://github.com/dhimitriosduka1">Dhimitrios Duka</a> with <b>Google Antigravity</b>
+</p>
