@@ -529,6 +529,37 @@ export class SlurmService {
     }
 
     /**
+     * Get job array information from SLURM
+     * @param jobId The base job ID (without array index)
+     * @returns Object with min/max array indices, or null if not a job array or not found
+     */
+    async getJobArrayInfo(jobId: string): Promise<{ minIndex: number; maxIndex: number } | null> {
+        try {
+            const { stdout } = await execAsync(`scontrol show job ${jobId}`);
+
+            // Parse ArrayTaskId field (format: "0-99" or "0-99%10" for throttled arrays)
+            const arrayMatch = stdout.match(/ArrayTaskId=(\d+)-(\d+)/);
+            if (arrayMatch) {
+                return {
+                    minIndex: parseInt(arrayMatch[1], 10),
+                    maxIndex: parseInt(arrayMatch[2], 10)
+                };
+            }
+
+            // Single element array or specific index
+            const singleMatch = stdout.match(/ArrayTaskId=(\d+)/);
+            if (singleMatch) {
+                const index = parseInt(singleMatch[1], 10);
+                return { minIndex: index, maxIndex: index };
+            }
+
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Submit a SLURM job using sbatch
      * @param scriptPath Path to the submit script
      * @param workDir Optional working directory (defaults to script's parent directory)

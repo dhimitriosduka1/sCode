@@ -300,6 +300,11 @@ export function activate(context: vscode.ExtensionContext) {
                         value: 'entire'
                     },
                     {
+                        label: '$(list-ordered) Cancel range of jobs',
+                        description: `Cancel a range of job indices within array ${baseJobId}`,
+                        value: 'range'
+                    },
+                    {
                         label: '$(edit) Cancel specific job',
                         description: `Cancel a specific job within array ${baseJobId}`,
                         value: 'specific'
@@ -318,6 +323,118 @@ export function activate(context: vscode.ExtensionContext) {
             if (cancelOption.value === 'entire') {
                 // Cancel the entire job array using the base ID
                 jobIdToCancel = baseJobId;
+            } else if (cancelOption.value === 'range') {
+                // Get job array info for upper bound validation
+                const arrayInfo = await slurmService.getJobArrayInfo(baseJobId);
+                const maxArrayIndex = arrayInfo?.maxIndex;
+                const minArrayIndex = arrayInfo?.minIndex ?? 0;
+
+                // Ask for range of job indices with comprehensive validation
+                const rangeInput = await vscode.window.showInputBox({
+                    prompt: `Enter indices to cancel. Formats: range (0-5), step (0-10:2), or list (1,3,5)${maxArrayIndex !== undefined ? ` [Array range: ${minArrayIndex}-${maxArrayIndex}]` : ''}`,
+                    placeHolder: '0-10 or 0-20:2 or 1,3,5,7',
+                    validateInput: (value) => {
+                        // Check for comma-separated indices format: 1,3,5,7
+                        const commaPattern = /^(\d+)(,\d+)*$/;
+                        if (commaPattern.test(value)) {
+                            const indices = value.split(',').map(n => parseInt(n, 10));
+
+                            // Check for duplicates
+                            const uniqueIndices = new Set(indices);
+                            if (uniqueIndices.size !== indices.length) {
+                                return 'Duplicate indices detected';
+                            }
+
+                            // Check upper bound
+                            if (maxArrayIndex !== undefined) {
+                                const outOfBounds = indices.filter(i => i < minArrayIndex || i > maxArrayIndex);
+                                if (outOfBounds.length > 0) {
+                                    return `Indices out of range (valid: ${minArrayIndex}-${maxArrayIndex}): ${outOfBounds.join(', ')}`;
+                                }
+                            }
+
+                            // Check max count warning threshold
+                            if (indices.length > 100) {
+                                return `Warning: This will cancel ${indices.length} jobs. Consider using a range instead.`;
+                            }
+
+                            return null;
+                        }
+
+                        // Check for range with optional step format: start-end or start-end:step
+                        const rangeMatch = value.match(/^(\d+)-(\d+)(?::(\d+))?$/);
+                        if (!rangeMatch) {
+                            return 'Invalid format. Use: range (0-5), step (0-10:2), or list (1,3,5)';
+                        }
+
+                        const start = parseInt(rangeMatch[1], 10);
+                        const end = parseInt(rangeMatch[2], 10);
+                        const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+
+                        // Validate start <= end
+                        if (start > end) {
+                            return 'Start index must be less than or equal to end index';
+                        }
+
+                        // Validate step > 0
+                        if (step <= 0) {
+                            return 'Step must be a positive number';
+                        }
+
+                        // Check upper bound against actual array
+                        if (maxArrayIndex !== undefined) {
+                            if (start < minArrayIndex) {
+                                return `Start index ${start} is below array minimum (${minArrayIndex})`;
+                            }
+                            if (end > maxArrayIndex) {
+                                return `End index ${end} exceeds array maximum (${maxArrayIndex})`;
+                            }
+                        }
+
+                        // Calculate how many jobs this will cancel
+                        const jobCount = Math.floor((end - start) / step) + 1;
+
+                        // Warn if cancelling many jobs
+                        if (jobCount > 100) {
+                            return `This will cancel ${jobCount} jobs. Are you sure? Re-enter to confirm.`;
+                        }
+
+                        return null;
+                    }
+                });
+
+                if (!rangeInput) {
+                    return; // User cancelled the input
+                }
+
+                // Large range warning - show additional confirmation for >100 jobs
+                const commaPattern = /^(\d+)(,\d+)*$/;
+                let jobCount = 0;
+                if (commaPattern.test(rangeInput)) {
+                    jobCount = rangeInput.split(',').length;
+                } else {
+                    const rangeMatch = rangeInput.match(/^(\d+)-(\d+)(?::(\d+))?$/);
+                    if (rangeMatch) {
+                        const start = parseInt(rangeMatch[1], 10);
+                        const end = parseInt(rangeMatch[2], 10);
+                        const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+                        jobCount = Math.floor((end - start) / step) + 1;
+                    }
+                }
+
+                if (jobCount > 100) {
+                    const largeRangeConfirm = await vscode.window.showWarningMessage(
+                        `You are about to cancel ${jobCount} jobs. Are you sure?`,
+                        { modal: true },
+                        'Yes, Cancel All'
+                    );
+                    if (largeRangeConfirm !== 'Yes, Cancel All') {
+                        return;
+                    }
+                }
+
+                // Use SLURM's native syntax: jobId_[start-end] or jobId_[start-end:step] or jobId_[1,3,5]
+                jobIdToCancel = `${baseJobId}_[${rangeInput}]`;
             } else {
                 // Ask for specific job index
                 const specificJobId = await vscode.window.showInputBox({
@@ -346,9 +463,14 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Show confirmation dialog if enabled
         if (confirmCancel) {
-            const confirmMessage = isJobArray && jobIdToCancel === jobId.split('_')[0]
-                ? `Are you sure you want to cancel the ENTIRE job array "${jobName}" (${jobIdToCancel})?`
-                : `Are you sure you want to cancel job "${jobName}" (${jobIdToCancel})?`;
+            let confirmMessage: string;
+            if (isJobArray && jobIdToCancel === jobId.split('_')[0]) {
+                confirmMessage = `Are you sure you want to cancel the ENTIRE job array "${jobName}" (${jobIdToCancel})?`;
+            } else if (isJobArray && jobIdToCancel.includes('[')) {
+                confirmMessage = `Are you sure you want to cancel jobs "${jobName}" in range ${jobIdToCancel}?`;
+            } else {
+                confirmMessage = `Are you sure you want to cancel job "${jobName}" (${jobIdToCancel})?`;
+            }
 
             const confirmation = await vscode.window.showWarningMessage(
                 confirmMessage,
