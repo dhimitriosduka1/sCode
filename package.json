@@ -111,6 +111,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "slurmJobs.cancelAllJobs",
+        "title": "Cancel All Jobs",
+        "icon": "$(trash)"
+      },
+      {
         "command": "slurmHistory.search",
         "title": "Search History",
         "icon": "$(search)"
@@ -172,6 +177,11 @@
           "command": "slurmJobs.submitJob",
           "when": "view == slurmJobs",
           "group": "navigation@5"
+        },
+        {
+          "command": "slurmJobs.cancelAllJobs",
+          "when": "view == slurmJobs",
+          "group": "navigation@6"
         },
         {
           "command": "slurmHistory.refresh",

@@ -514,6 +514,21 @@ export class SlurmService {
     }
 
     /**
+     * Cancel all SLURM jobs for the current user
+     * @returns Object with success status and message
+     */
+    async cancelAllJobs(): Promise<{ success: boolean; message: string }> {
+        try {
+            await execAsync('scancel -u $USER');
+            return { success: true, message: 'All jobs cancelled successfully' };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('Failed to cancel all jobs:', error);
+            return { success: false, message: `Failed to cancel all jobs: ${errorMessage}` };
+        }
+    }
+
+    /**
      * Submit a SLURM job using sbatch
      * @param scriptPath Path to the submit script
      * @param workDir Optional working directory (defaults to script's parent directory)

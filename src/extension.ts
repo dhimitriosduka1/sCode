@@ -373,6 +373,32 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register cancel all jobs command
+    const cancelAllJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllJobs', async () => {
+        // Show confirmation dialog
+        const confirmation = await vscode.window.showWarningMessage(
+            'Are you sure you want to cancel ALL your active jobs? This action cannot be undone.',
+            { modal: true },
+            'Cancel All Jobs'
+        );
+
+        if (confirmation !== 'Cancel All Jobs') {
+            return; // User cancelled the dialog
+        }
+
+        // Cancel all jobs
+        const result = await slurmService.cancelAllJobs();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            // Refresh the job list to reflect the change
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register submit job command
     const submitJobCommand = vscode.commands.registerCommand('slurmJobs.submitJob', async () => {
         // Check if workspace is open
@@ -493,6 +519,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(setAutoRefreshIntervalCommand);
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
+    context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
