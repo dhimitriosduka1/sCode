@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",

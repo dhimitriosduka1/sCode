@@ -28,6 +28,16 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
 - **One-Click Actions**: Cancel, hold, or pin jobs directly from the UI.
+- **Cancel All Jobs**: Quickly cancel all your active jobs with a single click (with confirmation prompt).
+
+### Job Array Management
+Smart handling of SLURM job arrays with flexible cancellation options:
+- **Cancel entire array**: Remove all jobs in the array at once
+- **Cancel by range**: Use `0-10` syntax to cancel indices 0 through 10 (inclusive)
+- **Cancel with step**: Use `0-20:2` to cancel every 2nd job (0, 2, 4, ..., 20)
+- **Cancel specific indices**: Use `1,3,5,7` to cancel non-contiguous jobs
+- **Bounds validation**: Automatically validates against actual array range
+- **Safety warnings**: Extra confirmation when cancelling >100 jobs
 
 ### Job History & Logs
 - **Integrated History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
