@@ -247,7 +247,7 @@ class MessageItem extends vscode.TreeItem {
  */
 class JobHogItem extends vscode.TreeItem {
     constructor(username: string, jobCount: number) {
-        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator'];
+        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator', '🤗 CUDA Cuddler', '😋 Node Nom-Nom', '🧛 VRAMpire'];
         const title = funTitles[Math.floor(Math.random() * funTitles.length)];
         super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
         this.tooltip = `${username} is currently hogging the cluster with ${jobCount} running jobs!`;
