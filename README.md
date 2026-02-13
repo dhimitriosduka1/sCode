@@ -33,9 +33,11 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 ### Job Array Management
 Smart handling of SLURM job arrays with flexible cancellation options:
 - **Cancel entire array**: Remove all jobs in the array at once
-- **Cancel by range**: Use `0-10` syntax to cancel indices 0 through 10 (inclusive)
-- **Cancel with step**: Use `0-20:2` to cancel every 2nd job (0, 2, 4, ..., 20)
-- **Cancel specific indices**: Use `1,3,5,7` to cancel non-contiguous jobs
+- **Cancel specific job(s)**: Flexible input supporting:
+  - Single index: `3`
+  - Range: `0-10` (indices 0 through 10 inclusive)
+  - Step: `0-20:2` (every 2nd job: 0, 2, 4, ..., 20)
+  - List: `1,3,5,7` (non-contiguous jobs)
 - **Bounds validation**: Automatically validates against actual array range
 - **Safety warnings**: Extra confirmation when cancelling >100 jobs
 
@@ -47,6 +49,7 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 ### Workflow Integrations
 - **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
 - **Search & Filter**: Quickly find jobs by name.
+- **Cluster Dominator**: See who's hogging the cluster — always displayed at the top of your job list with a fun rotating title.
 
 ---
 

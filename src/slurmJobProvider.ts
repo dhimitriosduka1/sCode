@@ -366,21 +366,36 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             const filteredJobs = this.getFilteredJobs();
 
+            // Always fetch and show the cluster dominator (it's a cluster-wide stat)
+            const topHog = await this.slurmService.getTopJobHog();
+            const hogItem = topHog && topHog.jobCount > 1
+                ? new JobHogItem(topHog.username, topHog.jobCount)
+                : null;
+
             if (this.cachedJobs.length === 0) {
-                return [new MessageItem('No jobs found', 'info')];
+                const items: vscode.TreeItem[] = [];
+                if (hogItem) {
+                    items.push(hogItem);
+                }
+                items.push(new MessageItem('No jobs found', 'info'));
+                return items;
             }
 
             if (filteredJobs.length === 0 && this.searchFilter) {
-                return [new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search')];
+                const items: vscode.TreeItem[] = [];
+                if (hogItem) {
+                    items.push(hogItem);
+                }
+                items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
+                return items;
             }
 
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
-            // Add the "job hog" at the top for fun
-            const topHog = await this.slurmService.getTopJobHog();
-            if (topHog && topHog.jobCount > 1) {
-                categories.push(new JobHogItem(topHog.username, topHog.jobCount));
+            // Add the cluster dominator at the top
+            if (hogItem) {
+                categories.push(hogItem);
             }
 
             // Add Pinned category first if there are pinned jobs
