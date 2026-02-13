@@ -18,7 +18,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
   - Detects duplicate indices in comma-separated lists
   - Warns when cancelling >100 jobs at once
   - Shows actual array range in the input prompt
-- **Cluster Dominator**: The fun "Cluster Dominator" status is now always visible at the top of the job list, even when you have no active jobs
+- **Fun Job Titles**: The fun status at the top of the job list now randomly picks from five titles — 🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom, and 🧛 VRAMpire — and is always visible, even when you have no active jobs
 
 ## [1.0.0] - 2026-01-31
 

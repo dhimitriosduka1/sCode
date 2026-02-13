@@ -49,7 +49,7 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 ### Workflow Integrations
 - **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
 - **Search & Filter**: Quickly find jobs by name.
-- **Cluster Dominator**: See who's hogging the cluster — always displayed at the top of your job list with a fun rotating title.
+- **Fun Job Titles**: See who's hogging the cluster — always displayed at the top of your job list with a randomly rotating title: 🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom, or 🧛 VRAMpire.
 
 ---
 
