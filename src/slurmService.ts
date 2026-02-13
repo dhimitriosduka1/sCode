@@ -504,7 +504,7 @@ export class SlurmService {
      */
     async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {
         try {
-            await execAsync(`scancel ${jobId}`);
+            await execAsync(`scancel '${jobId}'`);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -537,20 +537,41 @@ export class SlurmService {
         try {
             const { stdout } = await execAsync(`scontrol show job ${jobId}`);
 
-            // Parse ArrayTaskId field (format: "0-99" or "0-99%10" for throttled arrays)
-            const arrayMatch = stdout.match(/ArrayTaskId=(\d+)-(\d+)/);
-            if (arrayMatch) {
-                return {
-                    minIndex: parseInt(arrayMatch[1], 10),
-                    maxIndex: parseInt(arrayMatch[2], 10)
-                };
+            // Parse the full ArrayTaskId value
+            // Possible formats: "0-99", "0-99%10", "0,2,4,6-10", "1,3,5", "0-10:2", etc.
+            const arrayFieldMatch = stdout.match(/ArrayTaskId=([^\s]+)/);
+            if (!arrayFieldMatch) {
+                return null;
             }
 
-            // Single element array or specific index
-            const singleMatch = stdout.match(/ArrayTaskId=(\d+)/);
-            if (singleMatch) {
-                const index = parseInt(singleMatch[1], 10);
-                return { minIndex: index, maxIndex: index };
+            // Strip throttle suffix (e.g., "%10") if present
+            const rawValue = arrayFieldMatch[1].replace(/%\d+$/, '');
+
+            let globalMin = Infinity;
+            let globalMax = -Infinity;
+
+            // Split by comma and process each component
+            const components = rawValue.split(',');
+            for (const component of components) {
+                // Match range with optional step: "0-10" or "0-10:2"
+                const rangeMatch = component.match(/^(\d+)-(\d+)(?::(\d+))?$/);
+                if (rangeMatch) {
+                    const start = parseInt(rangeMatch[1], 10);
+                    const end = parseInt(rangeMatch[2], 10);
+                    globalMin = Math.min(globalMin, start);
+                    globalMax = Math.max(globalMax, end);
+                } else {
+                    // Single index: "5"
+                    const index = parseInt(component, 10);
+                    if (!isNaN(index)) {
+                        globalMin = Math.min(globalMin, index);
+                        globalMax = Math.max(globalMax, index);
+                    }
+                }
+            }
+
+            if (globalMin !== Infinity && globalMax !== -Infinity) {
+                return { minIndex: globalMin, maxIndex: globalMax };
             }
 
             return null;

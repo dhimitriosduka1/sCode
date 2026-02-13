@@ -300,13 +300,8 @@ export function activate(context: vscode.ExtensionContext) {
                         value: 'entire'
                     },
                     {
-                        label: '$(list-ordered) Cancel range of jobs',
-                        description: `Cancel a range of job indices within array ${baseJobId}`,
-                        value: 'range'
-                    },
-                    {
-                        label: '$(edit) Cancel specific job',
-                        description: `Cancel a specific job within array ${baseJobId}`,
+                        label: '$(edit) Cancel specific job(s)',
+                        description: `Cancel specific jobs within array ${baseJobId}`,
                         value: 'specific'
                     }
                 ],
@@ -323,19 +318,28 @@ export function activate(context: vscode.ExtensionContext) {
             if (cancelOption.value === 'entire') {
                 // Cancel the entire job array using the base ID
                 jobIdToCancel = baseJobId;
-            } else if (cancelOption.value === 'range') {
+            } else {
                 // Get job array info for upper bound validation
                 const arrayInfo = await slurmService.getJobArrayInfo(baseJobId);
                 const maxArrayIndex = arrayInfo?.maxIndex;
                 const minArrayIndex = arrayInfo?.minIndex ?? 0;
 
-                // Ask for range of job indices with comprehensive validation
+                // Ask for job indices with comprehensive validation
                 const rangeInput = await vscode.window.showInputBox({
-                    prompt: `Enter indices to cancel. Formats: range (0-5), step (0-10:2), or list (1,3,5)${maxArrayIndex !== undefined ? ` [Array range: ${minArrayIndex}-${maxArrayIndex}]` : ''}`,
-                    placeHolder: '0-10 or 0-20:2 or 1,3,5,7',
+                    prompt: `Enter indices to cancel. Formats: single (3), range (0-5), step (0-10:2), or list (1,3,5)${maxArrayIndex !== undefined ? ` [Array range: ${minArrayIndex}-${maxArrayIndex}]` : ''}`,
+                    placeHolder: '3 or 0-10 or 0-20:2 or 1,3,5,7',
                     validateInput: (value) => {
+                        // Check for single index: just a number
+                        if (/^\d+$/.test(value)) {
+                            const index = parseInt(value, 10);
+                            if (maxArrayIndex !== undefined && (index < minArrayIndex || index > maxArrayIndex)) {
+                                return `Index out of range (valid: ${minArrayIndex}-${maxArrayIndex})`;
+                            }
+                            return null;
+                        }
+
                         // Check for comma-separated indices format: 1,3,5,7
-                        const commaPattern = /^(\d+)(,\d+)*$/;
+                        const commaPattern = /^(\d+)(,\d+)+$/;
                         if (commaPattern.test(value)) {
                             const indices = value.split(',').map(n => parseInt(n, 10));
 
@@ -364,7 +368,7 @@ export function activate(context: vscode.ExtensionContext) {
                         // Check for range with optional step format: start-end or start-end:step
                         const rangeMatch = value.match(/^(\d+)-(\d+)(?::(\d+))?$/);
                         if (!rangeMatch) {
-                            return 'Invalid format. Use: range (0-5), step (0-10:2), or list (1,3,5)';
+                            return 'Invalid format. Use: single (3), range (0-5), step (0-10:2), or list (1,3,5)';
                         }
 
                         const start = parseInt(rangeMatch[1], 10);
@@ -407,57 +411,53 @@ export function activate(context: vscode.ExtensionContext) {
                     return; // User cancelled the input
                 }
 
-                // Large range warning - show additional confirmation for >100 jobs
-                const commaPattern = /^(\d+)(,\d+)*$/;
-                let jobCount = 0;
-                if (commaPattern.test(rangeInput)) {
-                    jobCount = rangeInput.split(',').length;
+                // Check if it's a single index (no brackets needed)
+                if (/^\d+$/.test(rangeInput)) {
+                    jobIdToCancel = `${baseJobId}_${rangeInput}`;
                 } else {
-                    const rangeMatch = rangeInput.match(/^(\d+)-(\d+)(?::(\d+))?$/);
-                    if (rangeMatch) {
-                        const start = parseInt(rangeMatch[1], 10);
-                        const end = parseInt(rangeMatch[2], 10);
-                        const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
-                        jobCount = Math.floor((end - start) / step) + 1;
-                    }
-                }
-
-                if (jobCount > 100) {
-                    const largeRangeConfirm = await vscode.window.showWarningMessage(
-                        `You are about to cancel ${jobCount} jobs. Are you sure?`,
-                        { modal: true },
-                        'Yes, Cancel All'
-                    );
-                    if (largeRangeConfirm !== 'Yes, Cancel All') {
-                        return;
-                    }
-                }
-
-                // Use SLURM's native syntax: jobId_[start-end] or jobId_[start-end:step] or jobId_[1,3,5]
-                jobIdToCancel = `${baseJobId}_[${rangeInput}]`;
-            } else {
-                // Ask for specific job index
-                const specificJobId = await vscode.window.showInputBox({
-                    prompt: 'Enter the specific job ID to cancel',
-                    placeHolder: `${baseJobId}_0`,
-                    value: `${baseJobId}_`,
-                    validateInput: (value) => {
-                        if (!value.startsWith(`${baseJobId}_`)) {
-                            return `Job ID must start with ${baseJobId}_`;
+                    // Large range warning - show additional confirmation for >100 jobs
+                    const commaPattern = /^(\d+)(,\d+)+$/;
+                    let jobCount = 0;
+                    if (commaPattern.test(rangeInput)) {
+                        jobCount = rangeInput.split(',').length;
+                    } else {
+                        const rangeMatch = rangeInput.match(/^(\d+)-(\d+)(?::(\d+))?$/);
+                        if (rangeMatch) {
+                            const start = parseInt(rangeMatch[1], 10);
+                            const end = parseInt(rangeMatch[2], 10);
+                            const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+                            jobCount = Math.floor((end - start) / step) + 1;
                         }
-                        const index = value.substring(baseJobId.length + 1);
-                        if (!index || !/^\d+$/.test(index)) {
-                            return 'Please enter a valid job array index (e.g., 0, 1, 2, ...)';
-                        }
-                        return null;
                     }
-                });
 
-                if (!specificJobId) {
-                    return; // User cancelled the input
+                    if (jobCount > 100) {
+                        const largeRangeConfirm = await vscode.window.showWarningMessage(
+                            `You are about to cancel ${jobCount} jobs. Are you sure?`,
+                            { modal: true },
+                            'Yes, Cancel All'
+                        );
+                        if (largeRangeConfirm !== 'Yes, Cancel All') {
+                            return;
+                        }
+                    }
+
+                    // scancel uses bracket syntax: jobId_[start-end] or jobId_[1,3,5]
+                    // However, scancel does NOT support step notation (e.g., 0-10:2),
+                    // so we expand stepped ranges into comma-separated indices
+                    let scancelRange = rangeInput;
+                    const stepMatch = rangeInput.match(/^(\d+)-(\d+):(\d+)$/);
+                    if (stepMatch) {
+                        const start = parseInt(stepMatch[1], 10);
+                        const end = parseInt(stepMatch[2], 10);
+                        const step = parseInt(stepMatch[3], 10);
+                        const indices: number[] = [];
+                        for (let i = start; i <= end; i += step) {
+                            indices.push(i);
+                        }
+                        scancelRange = indices.join(',');
+                    }
+                    jobIdToCancel = `${baseJobId}_[${scancelRange}]`;
                 }
-
-                jobIdToCancel = specificJobId;
             }
         }
 
