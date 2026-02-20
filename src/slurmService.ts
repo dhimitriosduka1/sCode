@@ -514,6 +514,23 @@ export class SlurmService {
     }
 
     /**
+     * Cancel a SLURM job filtering by state (e.g., only pending jobs)
+     * @param jobId The job ID to cancel
+     * @param state The job state to filter by (e.g., 'PENDING')
+     * @returns Object with success status and optional error message
+     */
+    async cancelJobByState(jobId: string, state: string): Promise<{ success: boolean; message: string }> {
+        try {
+            await execAsync(`scancel --state=${state} '${jobId}'`);
+            return { success: true, message: `${state} jobs in ${jobId} cancelled successfully` };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to cancel ${state} jobs in ${jobId}:`, error);
+            return { success: false, message: `Failed to cancel ${state} jobs in ${jobId}: ${errorMessage}` };
+        }
+    }
+
+    /**
      * Cancel all SLURM jobs for the current user
      * @returns Object with success status and message
      */

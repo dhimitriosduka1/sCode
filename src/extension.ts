@@ -300,6 +300,11 @@ export function activate(context: vscode.ExtensionContext) {
                         value: 'entire'
                     },
                     {
+                        label: '$(clock) Cancel only pending jobs',
+                        description: `Cancel pending jobs in array ${baseJobId}, keep running ones`,
+                        value: 'pending'
+                    },
+                    {
                         label: '$(edit) Cancel specific job(s)',
                         description: `Cancel specific jobs within array ${baseJobId}`,
                         value: 'specific'
@@ -318,6 +323,29 @@ export function activate(context: vscode.ExtensionContext) {
             if (cancelOption.value === 'entire') {
                 // Cancel the entire job array using the base ID
                 jobIdToCancel = baseJobId;
+            } else if (cancelOption.value === 'pending') {
+                // Cancel only pending jobs in the array
+                if (confirmCancel) {
+                    const confirmation = await vscode.window.showWarningMessage(
+                        `Are you sure you want to cancel all PENDING jobs in array "${jobName}" (${baseJobId})? Running jobs will not be affected.`,
+                        { modal: true },
+                        'Cancel Pending'
+                    );
+
+                    if (confirmation !== 'Cancel Pending') {
+                        return;
+                    }
+                }
+
+                const result = await slurmService.cancelJobByState(baseJobId, 'PENDING');
+
+                if (result.success) {
+                    vscode.window.showInformationMessage(result.message);
+                    slurmJobProvider.refresh();
+                } else {
+                    vscode.window.showErrorMessage(result.message);
+                }
+                return; // Early return since we handled everything
             } else {
                 // Get job array info for upper bound validation
                 const arrayInfo = await slurmService.getJobArrayInfo(baseJobId);
