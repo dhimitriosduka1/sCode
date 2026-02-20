@@ -75,6 +75,7 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
+        this.checkboxState = vscode.TreeItemCheckboxState.Unchecked;
     }
 
     private createDescription(): string {

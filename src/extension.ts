@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJobProvider } from './slurmJobProvider';
+import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
@@ -106,6 +106,23 @@ export function activate(context: vscode.ExtensionContext) {
     const treeView = vscode.window.createTreeView('slurmJobs', {
         treeDataProvider: slurmJobProvider,
         showCollapseAll: true,
+        manageCheckboxStateManually: true,
+    });
+
+    // Track checked (selected) jobs for batch cancellation
+    const checkedJobIds = new Set<string>();
+
+    treeView.onDidChangeCheckboxState((e) => {
+        for (const [item, state] of e.items) {
+            if (item instanceof SlurmJobItem) {
+                if (state === vscode.TreeItemCheckboxState.Checked) {
+                    checkedJobIds.add(item.job.jobId);
+                } else {
+                    checkedJobIds.delete(item.job.jobId);
+                }
+            }
+        }
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
     });
 
     // Register the History TreeView
@@ -117,6 +134,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
         slurmJobProvider.refresh();
+        checkedJobIds.clear();
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
     });
 
     // Register the refresh history command
@@ -549,6 +568,45 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register cancel selected jobs command (batch cancel checked jobs)
+    const cancelSelectedJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelSelectedJobs', async () => {
+        if (checkedJobIds.size === 0) {
+            vscode.window.showInformationMessage('No jobs selected. Use the checkboxes to select jobs to cancel.');
+            return;
+        }
+
+        const jobCount = checkedJobIds.size;
+        const confirmation = await vscode.window.showWarningMessage(
+            `Are you sure you want to cancel ${jobCount} selected job${jobCount > 1 ? 's' : ''}? This action cannot be undone.`,
+            { modal: true },
+            'Cancel Selected'
+        );
+
+        if (confirmation !== 'Cancel Selected') {
+            return;
+        }
+
+        const results = await Promise.all(
+            Array.from(checkedJobIds).map(jobId => slurmService.cancelJob(jobId))
+        );
+
+        const succeeded = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+
+        if (failed === 0) {
+            vscode.window.showInformationMessage(`Successfully cancelled ${succeeded} job${succeeded > 1 ? 's' : ''}.`);
+        } else {
+            vscode.window.showWarningMessage(
+                `Cancelled ${succeeded} job${succeeded > 1 ? 's' : ''}, ${failed} failed. Check the output for details.`
+            );
+        }
+
+        checkedJobIds.clear();
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+        slurmJobProvider.refresh();
+        jobHistoryProvider.refresh();
+    });
+
     // Register submit job command
     const submitJobCommand = vscode.commands.registerCommand('slurmJobs.submitJob', async () => {
         // Check if workspace is open
@@ -670,6 +728,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
+    context.subscriptions.push(cancelSelectedJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);

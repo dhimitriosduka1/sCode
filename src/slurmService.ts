@@ -504,7 +504,12 @@ export class SlurmService {
      */
     async cancelJob(jobId: string): Promise<{ success: boolean; message: string }> {
         try {
-            await execAsync(`scancel '${jobId}'`);
+            // Clean up job ID for scancel compatibility:
+            // squeue may report array IDs with throttle notation (e.g., 12345_[0-100%5])
+            // which scancel does not accept — strip the %N part
+            let cleanId = jobId.replace(/%\d+/, '');
+
+            await execAsync(`scancel '${cleanId}'`);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
