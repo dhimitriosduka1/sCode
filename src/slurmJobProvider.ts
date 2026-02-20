@@ -101,6 +101,10 @@ export class SlurmJobItem extends vscode.TreeItem {
             // Pending: show estimated start time
             const startStr = formatStartTime(this.job.startTime);
             parts.push(`Starts: ~${startStr}`);
+            // Show dependency hint for pending jobs
+            if (this.job.dependency) {
+                parts.push('🔗');
+            }
         } else {
             parts.push(getStateDescription(this.job.state));
         }
@@ -523,6 +527,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         if (job.state === 'PD') {
             const startTime = formatStartTime(job.startTime);
             children.push(new JobDetailItem('Est. Start', startTime, 'calendar'));
+        }
+
+        // Show dependency info for any job that has dependencies
+        if (job.dependency) {
+            children.push(new JobDetailItem('Depends on', job.dependency, 'link'));
         }
 
         // Add submit script links

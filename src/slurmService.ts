@@ -33,6 +33,8 @@ export interface SlurmJob {
     gpuType?: string;
     /** Allocated memory (e.g., 500G) */
     memory?: string;
+    /** Job dependency string (e.g., afterok:12345) */
+    dependency?: string;
 }
 
 /**
@@ -295,6 +297,7 @@ export class SlurmService {
                 job.gpuCount = details.gpuCount;
                 job.gpuType = details.gpuType;
                 job.memory = details.memory;
+                job.dependency = details.dependency;
 
                 // Cache the paths for later use in history
                 if (this.pathCache) {
@@ -331,7 +334,7 @@ export class SlurmService {
     /**
      * Get detailed job info from scontrol (stdout, stderr, command paths)
      */
-    async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string }> {
+    async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }> {
         try {
             const { stdout } = await execAsync(`scontrol show job ${jobId}`);
 
@@ -340,6 +343,7 @@ export class SlurmService {
             const stderrMatch = stdout.match(/StdErr=([^\s]+)/);
             const commandMatch = stdout.match(/Command=([^\s]+)/);
             const workDirMatch = stdout.match(/WorkDir=([^\s]+)/);
+            const dependencyMatch = stdout.match(/Dependency=([^\s]+)/);
 
             // Parse GPU count and type from various SLURM fields
             // Formats: TresPerNode=gres/gpu:h200:2, AllocTRES=...gres/gpu=2..., Gres=gpu:2
@@ -411,6 +415,7 @@ export class SlurmService {
                 gpuCount,
                 gpuType,
                 memory,
+                dependency: dependencyMatch?.[1] && dependencyMatch[1] !== '(null)' ? dependencyMatch[1] : undefined,
             };
         } catch {
             return {
