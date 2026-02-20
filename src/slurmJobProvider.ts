@@ -75,7 +75,12 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.description = this.createDescription();
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
-        this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
+        // Use pending-specific context values so package.json can hide stdout/stderr/pin icons
+        if (job.state === 'PD') {
+            this.contextValue = isPinned ? 'slurmJobPendingPinned' : 'slurmJobPending';
+        } else {
+            this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
+        }
         this.checkboxState = isChecked
             ? vscode.TreeItemCheckboxState.Checked
             : vscode.TreeItemCheckboxState.Unchecked;
@@ -110,10 +115,16 @@ export class SlurmJobItem extends vscode.TreeItem {
         md.appendMarkdown(`|----------|-------|\n`);
         md.appendMarkdown(`| Job ID | ${this.job.jobId} |\n`);
         md.appendMarkdown(`| State | ${getStateDescription(this.job.state)} |\n`);
-        md.appendMarkdown(`| Elapsed | ${this.job.time} |\n`);
+
+        if (this.job.state !== 'PD') {
+            md.appendMarkdown(`| Elapsed | ${this.job.time} |\n`);
+        }
         md.appendMarkdown(`| Time Limit | ${this.job.timeLimit} |\n`);
         md.appendMarkdown(`| Partition | ${this.job.partition} |\n`);
-        md.appendMarkdown(`| Nodes | ${this.job.nodes} |\n`);
+
+        if (this.job.state !== 'PD') {
+            md.appendMarkdown(`| Nodes | ${this.job.nodes} |\n`);
+        }
 
         if (this.job.state === 'PD') {
             md.appendMarkdown(`| Est. Start | ${formatStartTime(this.job.startTime)} |\n`);
@@ -126,10 +137,12 @@ export class SlurmJobItem extends vscode.TreeItem {
             }
         }
 
-        md.appendMarkdown(`\n---\n`);
-        md.appendMarkdown(`**Output Files:**\n`);
-        md.appendMarkdown(`- stdout: \`${this.job.stdoutPath}\`\n`);
-        md.appendMarkdown(`- stderr: \`${this.job.stderrPath}\`\n`);
+        if (this.job.state !== 'PD') {
+            md.appendMarkdown(`\n---\n`);
+            md.appendMarkdown(`**Output Files:**\n`);
+            md.appendMarkdown(`- stdout: \`${this.job.stdoutPath}\`\n`);
+            md.appendMarkdown(`- stderr: \`${this.job.stderrPath}\`\n`);
+        }
 
         return md;
     }
@@ -474,11 +487,16 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private getJobChildren(job: SlurmJob): vscode.TreeItem[] {
         const children: vscode.TreeItem[] = [];
+        const isPending = job.state === 'PD';
 
         // Add job details
         children.push(new JobDetailItem('Partition', job.partition, 'server'));
-        children.push(new JobDetailItem('Nodes', job.nodes, 'vm'));
-        children.push(new JobDetailItem('Elapsed', job.time, 'watch'));
+
+        if (!isPending) {
+            children.push(new JobDetailItem('Nodes', job.nodes, 'vm'));
+            children.push(new JobDetailItem('Elapsed', job.time, 'watch'));
+        }
+
         children.push(new JobDetailItem('Time Limit', job.timeLimit, 'clock'));
 
         if (job.state === 'R') {
@@ -531,11 +549,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             }
         }
 
-        // Add output file links
-        if (job.stdoutPath && job.stdoutPath !== 'N/A') {
+        // Add output file links (not for pending jobs)
+        if (!isPending && job.stdoutPath && job.stdoutPath !== 'N/A') {
             children.push(new OutputFileItem('stdout', job.stdoutPath, 'stdout'));
         }
-        if (job.stderrPath && job.stderrPath !== 'N/A') {
+        if (!isPending && job.stderrPath && job.stderrPath !== 'N/A') {
             children.push(new OutputFileItem('stderr', job.stderrPath, 'stderr'));
         }
 

@@ -734,7 +734,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(unpinJobCommand);
 
     // Initialize autorefresh based on saved settings
-    startAutoRefresh(slurmJobProvider, jobHistoryProvider);
+    startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
 
     // Show welcome message on first activation
     vscode.window.showInformationMessage('SLURM Cluster Manager activated. View your jobs in the sidebar.');
