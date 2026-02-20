@@ -295,11 +295,6 @@ export function activate(context: vscode.ExtensionContext) {
             const cancelOption = await vscode.window.showQuickPick(
                 [
                     {
-                        label: '$(trash) Cancel entire job array',
-                        description: `Cancel all jobs in array ${baseJobId}`,
-                        value: 'entire'
-                    },
-                    {
                         label: '$(clock) Cancel only pending jobs',
                         description: `Cancel pending jobs in array ${baseJobId}, keep running ones`,
                         value: 'pending'
@@ -308,6 +303,11 @@ export function activate(context: vscode.ExtensionContext) {
                         label: '$(edit) Cancel specific job(s)',
                         description: `Cancel specific jobs within array ${baseJobId}`,
                         value: 'specific'
+                    },
+                    {
+                        label: '$(trash) Cancel entire job array',
+                        description: `Cancel all jobs in array ${baseJobId}`,
+                        value: 'entire'
                     }
                 ],
                 {
