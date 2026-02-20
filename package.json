@@ -116,11 +116,6 @@
         "icon": "$(trash)"
       },
       {
-        "command": "slurmJobs.cancelSelectedJobs",
-        "title": "Cancel Selected Jobs",
-        "icon": "$(close-all)"
-      },
-      {
         "command": "slurmHistory.search",
         "title": "Search History",
         "icon": "$(search)"
@@ -187,11 +182,6 @@
           "command": "slurmJobs.cancelAllJobs",
           "when": "view == slurmJobs",
           "group": "navigation@6"
-        },
-        {
-          "command": "slurmJobs.cancelSelectedJobs",
-          "when": "view == slurmJobs && slurmJobs.hasCheckedJobs",
-          "group": "navigation@7"
         },
         {
           "command": "slurmHistory.refresh",
