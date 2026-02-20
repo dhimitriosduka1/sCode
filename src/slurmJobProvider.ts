@@ -68,6 +68,7 @@ export class SlurmJobItem extends vscode.TreeItem {
     constructor(
         public readonly job: SlurmJob,
         public readonly isPinned: boolean = false,
+        isChecked: boolean = false,
     ) {
         super(job.name, vscode.TreeItemCollapsibleState.Collapsed);
 
@@ -75,7 +76,9 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
-        this.checkboxState = vscode.TreeItemCheckboxState.Unchecked;
+        this.checkboxState = isChecked
+            ? vscode.TreeItemCheckboxState.Checked
+            : vscode.TreeItemCheckboxState.Unchecked;
     }
 
     private createDescription(): string {
@@ -270,14 +273,16 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private slurmService: SlurmService;
     private scriptCache?: SubmitScriptCache;
     private pinnedCache?: PinnedJobsCache;
+    private checkedJobIds?: Set<string>;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
 
-    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache) {
+    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache, checkedJobIds?: Set<string>) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.pinnedCache = pinnedCache;
+        this.checkedJobIds = checkedJobIds;
     }
 
     /**
@@ -363,6 +368,16 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     const activeJobIds = new Set(this.cachedJobs.map(j => j.jobId));
                     await this.pinnedCache.cleanupStaleJobs(activeJobIds);
                 }
+
+                // Clean up stale checked jobs (jobs that no longer exist)
+                if (this.checkedJobIds && this.checkedJobIds.size > 0) {
+                    const activeJobIds = new Set(this.cachedJobs.map(j => j.jobId));
+                    for (const checkedId of this.checkedJobIds) {
+                        if (!activeJobIds.has(checkedId)) {
+                            this.checkedJobIds.delete(checkedId);
+                        }
+                    }
+                }
             }
 
             const filteredJobs = this.getFilteredJobs();
@@ -440,7 +455,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             );
             // Sort by job ID (descending - newest first)
             pinnedJobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
-            return pinnedJobs.map(job => new SlurmJobItem(job, true));
+            return pinnedJobs.map(job => new SlurmJobItem(job, true, this.checkedJobIds?.has(job.jobId) ?? false));
         }
 
         const info = CATEGORIES[category];
@@ -449,8 +464,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
 
-        // Check if each job is pinned
-        return jobs.map(job => new SlurmJobItem(job, this.pinnedCache?.isPinned(job.jobId) ?? false));
+        // Check if each job is pinned and/or checked
+        return jobs.map(job => new SlurmJobItem(
+            job,
+            this.pinnedCache?.isPinned(job.jobId) ?? false,
+            this.checkedJobIds?.has(job.jobId) ?? false
+        ));
     }
 
     private getJobChildren(job: SlurmJob): vscode.TreeItem[] {

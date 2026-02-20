@@ -56,10 +56,9 @@ function startAutoRefresh(
         autoRefreshTimer = setInterval(() => {
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
-            // Clear checked state on auto-refresh since tree items are rebuilt
+            // Update context key after refresh (provider prunes stale checked IDs)
             if (checkedJobIds) {
-                checkedJobIds.clear();
-                vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+                vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
             }
         }, interval * 1000);
 
@@ -98,8 +97,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(jobPathCache, submitScriptCache);
 
+    // Track checked (selected) jobs for batch cancellation
+    const checkedJobIds = new Set<string>();
+
     // Create the job provider with shared service and caches
-    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, pinnedJobsCache);
+    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, pinnedJobsCache, checkedJobIds);
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
@@ -114,9 +116,6 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
         manageCheckboxStateManually: true,
     });
-
-    // Track checked (selected) jobs for batch cancellation
-    const checkedJobIds = new Set<string>();
 
     treeView.onDidChangeCheckboxState((e) => {
         for (const [item, state] of e.items) {
@@ -140,8 +139,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
         slurmJobProvider.refresh();
-        checkedJobIds.clear();
-        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+        // Update context key after refresh (provider prunes stale checked IDs)
+        // Use setTimeout to let the tree data provider finish its async work
+        setTimeout(() => {
+            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
+        }, 500);
     });
 
     // Register the refresh history command
