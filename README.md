@@ -28,11 +28,14 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
 - **One-Click Actions**: Cancel, hold, or pin jobs directly from the UI.
-- **Cancel All Jobs**: Quickly cancel all your active jobs with a single click (with confirmation prompt).
+- **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
+- **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show estimated start time and dependency indicators (🔗).
+- **Job Dependencies**: View dependency info (e.g., `afterok:12345`) in the expanded job details.
 
 ### Job Array Management
 Smart handling of SLURM job arrays with flexible cancellation options:
 - **Cancel entire array**: Remove all jobs in the array at once
+- **Cancel pending jobs**: Cancel only pending jobs, keep running ones
 - **Cancel specific job(s)**: Flexible input supporting:
   - Single index: `3`
   - Range: `0-10` (indices 0 through 10 inclusive)
@@ -40,6 +43,8 @@ Smart handling of SLURM job arrays with flexible cancellation options:
   - List: `1,3,5,7` (non-contiguous jobs)
 - **Bounds validation**: Automatically validates against actual array range
 - **Safety warnings**: Extra confirmation when cancelling >100 jobs
+
+> **Note:** Array-level cancel options only appear for pending jobs. Running array tasks are cancelled directly like any individual job.
 
 ### Job History & Logs
 - **Integrated History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
@@ -49,7 +54,14 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 ### Workflow Integrations
 - **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
 - **Search & Filter**: Quickly find jobs by name.
-- **Fun Job Titles**: See who's hogging the cluster — always displayed at the top of your job list with a randomly rotating title: 🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom, or 🧛 VRAMpire.
+- **Cluster Hog Indicators**: Two fun indicators at the top of your job list:
+  - **Job Hog**: The user with the most running jobs (🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom)
+  - **GPU Hog**: The user hoarding the most GPUs (🧛 VRAMpire, 🎮 GPU Gobbler, ⚡ Watt Wizard, 🏋️ Tensor Titan)
+
+### Hall of Shame
+- **Cluster Leaderboard**: A dedicated sidebar view ranking all users by GPU allocation and running job count.
+- **Manual refresh only** — no background polling, so it won't add load to your cluster.
+- Top 3 hogs get shame emojis: 💀 🔥 👹
 
 ---
 

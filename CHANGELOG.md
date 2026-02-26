@@ -2,6 +2,18 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [1.2.0] - 2026-02-26
+
+### Added
+- **Hall of Shame**: New sidebar leaderboard showing the top cluster resource hogs, ranked by GPU allocation and running job count. Only fetches data on manual refresh — no background polling.
+- **GPU Hog Tracking**: A separate "VRAMpire" indicator at the top of the job list shows the user with the most GPUs allocated across running jobs, alongside the existing job count hog.
+- **Batch Cancel via Checkboxes**: Select multiple jobs using checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
+- **Job Dependencies**: Jobs with dependencies now show a 🔗 indicator and the dependency details (e.g., `afterok:12345`) in the expanded job view.
+
+### Improved
+- **Job Array Cancel UX**: The cancel dropdown (cancel pending / cancel specific / cancel entire array) now only appears for **pending** job array tasks. Running job array tasks are cancelled directly like any regular job, fixing an issue where already-dispatched indices couldn't be cancelled.
+- **Streamlined Pending Jobs**: Pending jobs now hide irrelevant details (Nodes, Elapsed, stdout, stderr) and show estimated start time and dependency info instead.
+
 ## [1.1.0] - 2026-02-13
 
 ### Added

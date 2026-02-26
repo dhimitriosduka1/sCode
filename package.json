@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -47,6 +47,12 @@
     },
     "views": {
       "slurm-explorer": [
+        {
+          "id": "slurmLeaderboard",
+          "name": "Hall of Shame",
+          "icon": "$(flame)",
+          "contextualTitle": "Cluster Leaderboard"
+        },
         {
           "id": "slurmJobs",
           "name": "Active Jobs",
@@ -149,6 +155,11 @@
         "command": "slurmJobs.unpinJob",
         "title": "Unpin Job",
         "icon": "$(pinned)"
+      },
+      {
+        "command": "slurmLeaderboard.refresh",
+        "title": "Refresh Leaderboard",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -207,6 +218,11 @@
           "command": "slurmHistory.nextPage",
           "when": "view == slurmHistory",
           "group": "navigation@5"
+        },
+        {
+          "command": "slurmLeaderboard.refresh",
+          "when": "view == slurmLeaderboard",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
