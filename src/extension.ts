@@ -740,7 +740,7 @@ export function activate(context: vscode.ExtensionContext) {
         const result = await slurmService.submitJob(scriptPath);
 
         if (result.success) {
-            vscode.window.showInformationMessage(`${result.message}`);
+            vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
         } else {
