@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { LeaderboardProvider } from './leaderboardProvider';
+import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
 import { SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -166,6 +167,28 @@ export function activate(context: vscode.ExtensionContext) {
     const docChangeListener = vscode.workspace.onDidChangeTextDocument((e) => {
         if (vscode.window.activeTextEditor?.document === e.document) {
             updateSlurmScriptContext(vscode.window.activeTextEditor);
+        }
+    });
+
+    // Register hover provider for partition stats on hover
+    const hoverProvider = vscode.languages.registerHoverProvider(
+        [
+            { scheme: 'file', language: 'shellscript' },
+            { scheme: 'file', language: 'plaintext' },
+            { scheme: 'file', pattern: '**/*.{slurm,sbatch}' },
+        ],
+        new SlurmHoverProvider(slurmService)
+    );
+
+    // Underline decorations for hoverable partition names
+    const decorationProvider = new SlurmDecorationProvider();
+    decorationProvider.updateDecorations(vscode.window.activeTextEditor);
+    const decorEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        decorationProvider.updateDecorations(editor);
+    });
+    const decorDocListener = vscode.workspace.onDidChangeTextDocument((e) => {
+        if (vscode.window.activeTextEditor?.document === e.document) {
+            decorationProvider.updateDecorations(vscode.window.activeTextEditor);
         }
     });
 
@@ -797,6 +820,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(submitCurrentFileCommand);
     context.subscriptions.push(editorChangeListener);
     context.subscriptions.push(docChangeListener);
+    context.subscriptions.push(hoverProvider);
+    context.subscriptions.push(decorationProvider);
+    context.subscriptions.push(decorEditorListener);
+    context.subscriptions.push(decorDocListener);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
 

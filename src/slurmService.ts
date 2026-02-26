@@ -586,6 +586,103 @@ export class SlurmService {
     }
 
     /**
+     * Get real-time stats for a SLURM partition
+     * @param partition The partition name
+     * @returns Partition stats or null if unavailable
+     */
+    async getPartitionStats(partition: string): Promise<{
+        totalGpus: number;
+        allocatedGpus: number;
+        idleGpus: number;
+        runningJobs: number;
+        pendingJobs: number;
+        nodesUp: number;
+        nodesTotal: number;
+        nodeStates: string;
+    } | null> {
+        try {
+            // Run sinfo and squeue in parallel for speed
+            const [sinfoResult, squeueResult, allocGpuResult] = await Promise.all([
+                // %D = nodes, %F = nodes state (allocated/idle/other/total), %G = GRES
+                execAsync(`sinfo -p ${partition} --noheader --format="%D %F %G"`),
+                // Job counts by state
+                execAsync(`squeue -p ${partition} --noheader --format="%t" 2>/dev/null`),
+                // Running jobs' GPU allocation
+                execAsync(`squeue -p ${partition} --noheader --state=R --format="%b" 2>/dev/null`),
+            ]);
+
+            // Parse sinfo output
+            let totalGpus = 0;
+            let nodesUp = 0;
+            let nodesTotal = 0;
+
+            const sinfoLines = sinfoResult.stdout.trim().split('\n').filter(l => l.trim());
+            for (const line of sinfoLines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 3) {
+                    const nodeStates = parts[1].split('/');
+                    if (nodeStates.length === 4) {
+                        const allocated = parseInt(nodeStates[0], 10) || 0;
+                        const idle = parseInt(nodeStates[1], 10) || 0;
+                        const total = parseInt(nodeStates[3], 10) || 0;
+                        nodesUp += allocated + idle;
+                        nodesTotal += total;
+                    }
+
+                    const gres = parts[2];
+                    if (gres && gres !== '(null)') {
+                        const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
+                        if (gpuMatch) {
+                            const gpusPerNode = parseInt(gpuMatch[1], 10);
+                            const nodeCount = parseInt(parts[0], 10) || 0;
+                            totalGpus += gpusPerNode * nodeCount;
+                        }
+                    }
+                }
+            }
+
+            // Count allocated GPUs from running jobs
+            let allocatedGpus = 0;
+            const gpuLines = allocGpuResult.stdout.trim().split('\n').filter(l => l.trim());
+            for (const line of gpuLines) {
+                const gres = line.trim();
+                if (gres && gres !== '(null)' && gres !== 'N/A') {
+                    const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
+                    if (gpuMatch) {
+                        allocatedGpus += parseInt(gpuMatch[1], 10);
+                    }
+                }
+            }
+
+            // Count running and pending jobs
+            let runningJobs = 0;
+            let pendingJobs = 0;
+            const jobLines = squeueResult.stdout.trim().split('\n').filter(l => l.trim());
+            for (const line of jobLines) {
+                const state = line.trim();
+                if (state === 'R') { runningJobs++; }
+                else if (state === 'PD') { pendingJobs++; }
+            }
+
+            const idleGpus = Math.max(0, totalGpus - allocatedGpus);
+
+            return {
+                totalGpus,
+                allocatedGpus,
+                idleGpus,
+                runningJobs,
+                pendingJobs,
+                nodesUp,
+                nodesTotal,
+                nodeStates: `${nodesUp}/${nodesTotal}`,
+            };
+        } catch (error) {
+            console.error(`Failed to get partition stats for ${partition}:`, error);
+            return null;
+        }
+    }
+
+    /**
      * Cancel a SLURM job using scancel
      * @param jobId The job ID to cancel
      * @returns Object with success status and optional error message

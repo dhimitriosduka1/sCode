@@ -2,6 +2,13 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [1.3.0] - 2026-02-26
+
+### Added
+- **Quick Submit Button**: A ▶ button appears in the editor title bar when viewing a SLURM script (any file containing `#SBATCH`). One click submits the script immediately. A brief status bar notification confirms the submission.
+- **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` or `#SBATCH -p` to see real-time GPU usage, running/pending jobs, and node availability in a rich tooltip with a visual usage bar.
+- **Hoverable Partition Underline**: Partition names in SLURM scripts get a dotted underline to indicate they're interactive.
+
 ## [1.2.0] - 2026-02-26
 
 ### Added

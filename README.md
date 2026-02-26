@@ -63,6 +63,11 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 - **Manual refresh only** — no background polling, so it won't add load to your cluster.
 - Top 3 hogs get shame emojis: 💀 🔥 👹
 
+### Script Intelligence
+- **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit — no dialogs.
+- **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` to see real-time GPU usage, running/pending jobs, and node availability with a visual usage bar.
+- **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
+
 ---
 
 ## ⚙️ Configuration
