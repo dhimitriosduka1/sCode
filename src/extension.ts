@@ -312,9 +312,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Check if this is a job array (contains underscore)
         const isJobArray = jobId.includes('_');
+        const jobState = item.job.state;
         let jobIdToCancel = jobId;
 
-        if (isJobArray) {
+        // Only show array-level cancel options for pending jobs.
+        // Running job array tasks are treated as individual jobs since
+        // they already have a specific array index assigned.
+        if (isJobArray && jobState === 'PD') {
             // Extract base job ID (the part before the underscore)
             const baseJobId = jobId.split('_')[0];
 
