@@ -536,6 +536,56 @@ export class SlurmService {
     }
 
     /**
+     * Get a full leaderboard of users ranked by running jobs and GPU allocations
+     * @returns Array of { username, jobCount, gpuCount } sorted by gpuCount desc, then jobCount desc
+     */
+    async getClusterLeaderboard(): Promise<{ username: string; jobCount: number; gpuCount: number }[]> {
+        try {
+            const { stdout } = await execAsync(
+                'squeue --noheader --state=R --format="%u|%b"'
+            );
+
+            const lines = stdout.trim().split('\n').filter(l => l.trim());
+
+            if (lines.length === 0) {
+                return [];
+            }
+
+            const jobCounts = new Map<string, number>();
+            const gpuCounts = new Map<string, number>();
+
+            for (const line of lines) {
+                const parts = line.split('|');
+                const user = parts[0].trim();
+                const gres = parts[1]?.trim() || '';
+
+                jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
+
+                if (gres && gres !== '(null)' && gres !== 'N/A') {
+                    const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
+                    if (gpuMatch) {
+                        const gpus = parseInt(gpuMatch[1], 10);
+                        gpuCounts.set(user, (gpuCounts.get(user) || 0) + gpus);
+                    }
+                }
+            }
+
+            // Build the leaderboard array
+            const users = new Set([...jobCounts.keys(), ...gpuCounts.keys()]);
+            const leaderboard = Array.from(users).map(username => ({
+                username,
+                jobCount: jobCounts.get(username) || 0,
+                gpuCount: gpuCounts.get(username) || 0,
+            }));
+
+            return leaderboard;
+        } catch (error) {
+            console.error('Failed to get cluster leaderboard:', error);
+            return [];
+        }
+    }
+
+    /**
      * Cancel a SLURM job using scancel
      * @param jobId The job ID to cancel
      * @returns Object with success status and optional error message

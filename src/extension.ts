@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
+import { LeaderboardProvider } from './leaderboardProvider';
 import { SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -136,6 +137,15 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
     });
 
+    // Create the leaderboard provider (no auto-refresh, manual only)
+    const leaderboardProvider = new LeaderboardProvider(slurmService);
+
+    // Register the Leaderboard TreeView
+    const leaderboardTreeView = vscode.window.createTreeView('slurmLeaderboard', {
+        treeDataProvider: leaderboardProvider,
+        showCollapseAll: true,
+    });
+
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
         slurmJobProvider.refresh();
@@ -149,6 +159,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the refresh history command
     const refreshHistoryCommand = vscode.commands.registerCommand('slurmHistory.refresh', () => {
         jobHistoryProvider.refresh();
+    });
+
+    // Register the refresh leaderboard command
+    const refreshLeaderboardCommand = vscode.commands.registerCommand('slurmLeaderboard.refresh', () => {
+        leaderboardProvider.refresh();
     });
 
     // Register command to open output files
@@ -717,8 +732,10 @@ export function activate(context: vscode.ExtensionContext) {
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
+    context.subscriptions.push(leaderboardTreeView);
     context.subscriptions.push(refreshCommand);
     context.subscriptions.push(refreshHistoryCommand);
+    context.subscriptions.push(refreshLeaderboardCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openStdoutCommand);
     context.subscriptions.push(openStderrCommand);
