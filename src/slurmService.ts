@@ -462,43 +462,76 @@ export class SlurmService {
     }
 
     /**
-     * Get the user with the most running jobs on the cluster (for fun!)
-     * @returns Object with username and job count, or null if unavailable
+     * Get the users with the most running jobs and most GPUs on the cluster
+     * @returns Object with top job hog and top GPU hog, or null if unavailable
      */
-    async getTopJobHog(): Promise<{ username: string; jobCount: number } | null> {
+    async getClusterHogs(): Promise<{
+        topJobHog: { username: string; jobCount: number } | null;
+        topGpuHog: { username: string; gpuCount: number } | null;
+    }> {
         try {
-            // Get all running jobs on the cluster with their usernames
+            // Get all running jobs with usernames and GRES (GPU resources)
+            // %u = username, %b = GRES (e.g., "gpu:4", "gpu:a100:2", "(null)")
             const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u"'
+                'squeue --noheader --state=R --format="%u|%b"'
             );
 
-            const users = stdout.trim().split('\n').filter(u => u.trim());
+            const lines = stdout.trim().split('\n').filter(l => l.trim());
 
-            if (users.length === 0) {
-                return null;
+            if (lines.length === 0) {
+                return { topJobHog: null, topGpuHog: null };
             }
 
-            // Count jobs per user
+            // Count jobs and GPUs per user
             const jobCounts = new Map<string, number>();
-            for (const user of users) {
-                const trimmedUser = user.trim();
-                jobCounts.set(trimmedUser, (jobCounts.get(trimmedUser) || 0) + 1);
+            const gpuCounts = new Map<string, number>();
+
+            for (const line of lines) {
+                const parts = line.split('|');
+                const user = parts[0].trim();
+                const gres = parts[1]?.trim() || '';
+
+                // Count jobs
+                jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
+
+                // Parse GPU count from GRES field
+                // Formats: "gpu:4", "gpu:a100:2", "gpu:h200:1", "(null)", "N/A", ""
+                if (gres && gres !== '(null)' && gres !== 'N/A') {
+                    const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
+                    if (gpuMatch) {
+                        const gpus = parseInt(gpuMatch[1], 10);
+                        gpuCounts.set(user, (gpuCounts.get(user) || 0) + gpus);
+                    }
+                }
             }
 
             // Find the user with most jobs
-            let topUser = '';
+            let topJobUser = '';
             let maxJobs = 0;
             jobCounts.forEach((count, user) => {
                 if (count > maxJobs) {
                     maxJobs = count;
-                    topUser = user;
+                    topJobUser = user;
                 }
             });
 
-            return { username: topUser, jobCount: maxJobs };
+            // Find the user with most GPUs
+            let topGpuUser = '';
+            let maxGpus = 0;
+            gpuCounts.forEach((count, user) => {
+                if (count > maxGpus) {
+                    maxGpus = count;
+                    topGpuUser = user;
+                }
+            });
+
+            return {
+                topJobHog: maxJobs > 0 ? { username: topJobUser, jobCount: maxJobs } : null,
+                topGpuHog: maxGpus > 0 ? { username: topGpuUser, gpuCount: maxGpus } : null,
+            };
         } catch (error) {
-            console.error('Failed to get top job hog:', error);
-            return null;
+            console.error('Failed to get cluster hogs:', error);
+            return { topJobHog: null, topGpuHog: null };
         }
     }
 

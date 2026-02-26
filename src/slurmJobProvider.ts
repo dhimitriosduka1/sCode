@@ -268,11 +268,24 @@ class MessageItem extends vscode.TreeItem {
  */
 class JobHogItem extends vscode.TreeItem {
     constructor(username: string, jobCount: number) {
-        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator', '🤗 CUDA Cuddler', '😋 Node Nom-Nom', '🧛 VRAMpire'];
+        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator', '🤗 CUDA Cuddler', '😋 Node Nom-Nom'];
         const title = funTitles[Math.floor(Math.random() * funTitles.length)];
         super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
         this.tooltip = `${username} is currently hogging the cluster with ${jobCount} running jobs!`;
         this.contextValue = 'jobHog';
+    }
+}
+
+/**
+ * Fun item showing the user with the most GPUs allocated
+ */
+class GpuHogItem extends vscode.TreeItem {
+    constructor(username: string, gpuCount: number) {
+        const funTitles = ['🧛 VRAMpire', '🎮 GPU Gobbler', '⚡ Watt Wizard', '🏋️ Tensor Titan'];
+        const title = funTitles[Math.floor(Math.random() * funTitles.length)];
+        super(`${title}: ${username} (${gpuCount} GPUs)`, vscode.TreeItemCollapsibleState.None);
+        this.tooltip = `${username} is currently hoarding ${gpuCount} GPUs on the cluster!`;
+        this.contextValue = 'gpuHog';
     }
 }
 
@@ -399,26 +412,27 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             const filteredJobs = this.getFilteredJobs();
 
-            // Always fetch and show the cluster dominator (it's a cluster-wide stat)
-            const topHog = await this.slurmService.getTopJobHog();
-            const hogItem = topHog && topHog.jobCount > 1
-                ? new JobHogItem(topHog.username, topHog.jobCount)
+            // Always fetch and show cluster hogs (cluster-wide stats)
+            const { topJobHog, topGpuHog } = await this.slurmService.getClusterHogs();
+            const jobHogItem = topJobHog && topJobHog.jobCount > 1
+                ? new JobHogItem(topJobHog.username, topJobHog.jobCount)
+                : null;
+            const gpuHogItem = topGpuHog && topGpuHog.gpuCount > 0
+                ? new GpuHogItem(topGpuHog.username, topGpuHog.gpuCount)
                 : null;
 
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
-                if (hogItem) {
-                    items.push(hogItem);
-                }
+                if (jobHogItem) { items.push(jobHogItem); }
+                if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
                 return items;
             }
 
             if (filteredJobs.length === 0 && this.searchFilter) {
                 const items: vscode.TreeItem[] = [];
-                if (hogItem) {
-                    items.push(hogItem);
-                }
+                if (jobHogItem) { items.push(jobHogItem); }
+                if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
                 return items;
             }
@@ -426,10 +440,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
-            // Add the cluster dominator at the top
-            if (hogItem) {
-                categories.push(hogItem);
-            }
+            // Add cluster hogs at the top
+            if (jobHogItem) { categories.push(jobHogItem); }
+            if (gpuHogItem) { categories.push(gpuHogItem); }
 
             // Add Pinned category first if there are pinned jobs
             if (this.pinnedCache) {
