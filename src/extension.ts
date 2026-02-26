@@ -146,6 +146,29 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
     });
 
+
+    // Detect SLURM scripts and set context key for editor title button
+    function updateSlurmScriptContext(editor?: vscode.TextEditor) {
+        if (!editor) {
+            vscode.commands.executeCommand('setContext', 'slurmJobs.isSlurmScript', false);
+            return;
+        }
+        const text = editor.document.getText(
+            new vscode.Range(0, 0, Math.min(editor.document.lineCount, 50), 0)
+        );
+        const isSlurmScript = text.includes('#SBATCH');
+        vscode.commands.executeCommand('setContext', 'slurmJobs.isSlurmScript', isSlurmScript);
+    }
+
+    // Check on activation and editor changes
+    updateSlurmScriptContext(vscode.window.activeTextEditor);
+    const editorChangeListener = vscode.window.onDidChangeActiveTextEditor(updateSlurmScriptContext);
+    const docChangeListener = vscode.workspace.onDidChangeTextDocument((e) => {
+        if (vscode.window.activeTextEditor?.document === e.document) {
+            updateSlurmScriptContext(vscode.window.activeTextEditor);
+        }
+    });
+
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
         slurmJobProvider.refresh();
@@ -705,6 +728,26 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register submit current file command (for CodeLens)
+    const submitCurrentFileCommand = vscode.commands.registerCommand('slurmJobs.submitCurrentFile', async (uri?: vscode.Uri) => {
+        const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
+        if (!fileUri) {
+            vscode.window.showWarningMessage('No file open to submit.');
+            return;
+        }
+
+        const scriptPath = fileUri.fsPath;
+        const result = await slurmService.submitJob(scriptPath);
+
+        if (result.success) {
+            vscode.window.showInformationMessage(`${result.message}`);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register pin job command
     const pinJobCommand = vscode.commands.registerCommand('slurmJobs.pinJob', async (item: any) => {
         if (!item?.job?.jobId) {
@@ -751,6 +794,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(submitJobCommand);
+    context.subscriptions.push(submitCurrentFileCommand);
+    context.subscriptions.push(editorChangeListener);
+    context.subscriptions.push(docChangeListener);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
 

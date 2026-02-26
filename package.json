@@ -160,9 +160,21 @@
         "command": "slurmLeaderboard.refresh",
         "title": "Refresh Leaderboard",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmJobs.submitCurrentFile",
+        "title": "Submit to SLURM",
+        "icon": "$(play)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "slurmJobs.submitCurrentFile",
+          "when": "slurmJobs.isSlurmScript",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "slurmJobs.refresh",
