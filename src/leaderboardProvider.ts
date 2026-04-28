@@ -1,66 +1,33 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
 import { SlurmService } from './slurmService';
+import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import {
+    DEFAULT_LEADERBOARD_ENTRY_COUNT,
+    formatLeaderboardEntryTrailingDescription,
+    formatLeaderboardTooltipMarkdown,
+    getGpuLeaderboardEntries,
+    getLeaderboardEntryRowLabel,
+    getTotalLeaderboardGpuCount,
+    getVisibleLeaderboardEntries,
+    LeaderboardEntry,
+    normalizeLeaderboardEntryCount,
+    RankedLeaderboardEntry,
+} from './leaderboardRanking';
 
 /**
- * Leaderboard entry for a single user
- */
-interface LeaderboardEntry {
-    username: string;
-    jobCount: number;
-    gpuCount: number;
-}
-
-/**
- * Category item: "GPU Leaderboard" or "Job Leaderboard"
- */
-class LeaderboardCategoryItem extends vscode.TreeItem {
-    constructor(
-        public readonly mode: 'gpu' | 'jobs',
-        public readonly entries: LeaderboardEntry[],
-    ) {
-        const label = mode === 'gpu' ? '⚡ GPU Leaderboard' : '🏃 Job Leaderboard';
-        super(label, entries.length > 0
-            ? vscode.TreeItemCollapsibleState.Expanded
-            : vscode.TreeItemCollapsibleState.Collapsed
-        );
-        this.contextValue = 'leaderboardCategory';
-        this.description = `(${entries.length} users)`;
-    }
-}
-
-/**
- * A single user row in the leaderboard
+ * A single user row in the Hall of Shame.
  */
 class LeaderboardEntryItem extends vscode.TreeItem {
     constructor(
-        entry: LeaderboardEntry,
-        rank: number,
-        mode: 'gpu' | 'jobs',
+        entry: RankedLeaderboardEntry,
+        topUserCount: number,
+        totalGpuCount: number,
     ) {
-        const medal = rank === 1 ? '💀' : rank === 2 ? '🔥' : rank === 3 ? '👹' : `${rank}.`;
-        const primary = mode === 'gpu'
-            ? `${entry.gpuCount} GPUs`
-            : `${entry.jobCount} jobs`;
-        const secondary = mode === 'gpu'
-            ? `${entry.jobCount} jobs`
-            : `${entry.gpuCount} GPUs`;
-
-        super(`${medal} ${entry.username}`, vscode.TreeItemCollapsibleState.None);
-        this.description = `${primary} · ${secondary}`;
+        super(getLeaderboardEntryRowLabel(entry), vscode.TreeItemCollapsibleState.None);
+        this.description = formatLeaderboardEntryTrailingDescription(entry, totalGpuCount);
         this.contextValue = 'leaderboardEntry';
-
-        // Fun tooltip
-        const tooltipLines = [
-            `**${entry.username}**`,
-            ``,
-            `| Metric | Value |`,
-            `|--------|-------|`,
-            `| Running Jobs | ${entry.jobCount} |`,
-            `| GPUs Allocated | ${entry.gpuCount} |`,
-            `| Rank (${mode === 'gpu' ? 'GPU' : 'Jobs'}) | #${rank} |`,
-        ];
-        const md = new vscode.MarkdownString(tooltipLines.join('\n'));
-        this.tooltip = md;
+        this.tooltip = new vscode.MarkdownString(formatLeaderboardTooltipMarkdown(entry, topUserCount));
     }
 }
 
@@ -74,10 +41,33 @@ class LeaderboardMessageItem extends vscode.TreeItem {
     }
 }
 
-const MAX_ENTRIES = 10;
+/**
+ * Informational item showing when the Hall of Shame data was fetched.
+ */
+class LeaderboardRefreshItem extends vscode.TreeItem {
+    constructor(refreshedAt: Date) {
+        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
+        this.iconPath = new vscode.ThemeIcon('history');
+        this.contextValue = 'leaderboardRefreshInfo';
+        this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt));
+    }
+}
+
+function getCurrentUsername(): string | undefined {
+    try {
+        return os.userInfo().username || undefined;
+    } catch {
+        return process.env.USER || process.env.USERNAME;
+    }
+}
+
+function getConfiguredTopUserCount(): number {
+    const config = vscode.workspace.getConfiguration('slurmClusterManager');
+    return normalizeLeaderboardEntryCount(config.get<number>('leaderboardTopUserCount', DEFAULT_LEADERBOARD_ENTRY_COUNT));
+}
 
 /**
- * TreeDataProvider for the "Hall of Flame" cluster leaderboard.
+ * TreeDataProvider for the "Hall of Shame" cluster leaderboard.
  * Only fetches data on manual refresh or when the view is opened — no auto-refresh.
  */
 export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -86,13 +76,23 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     private slurmService: SlurmService;
     private cachedEntries: LeaderboardEntry[] = [];
+    private lastRefreshedAt: Date | undefined;
+    private hasFetchedEntries = false;
+    private currentUsernameProvider: () => string | undefined;
 
-    constructor(slurmService: SlurmService) {
+    constructor(slurmService: SlurmService, currentUsernameProvider: () => string | undefined = getCurrentUsername) {
         this.slurmService = slurmService;
+        this.currentUsernameProvider = currentUsernameProvider;
     }
 
     refresh(): void {
         this.cachedEntries = [];
+        this.lastRefreshedAt = undefined;
+        this.hasFetchedEntries = false;
+        this._onDidChangeTreeData.fire();
+    }
+
+    rerender(): void {
         this._onDidChangeTreeData.fire();
     }
 
@@ -101,48 +101,47 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-        // Category children — show ranked entries
-        if (element instanceof LeaderboardCategoryItem) {
-            const sorted = [...element.entries];
-            if (element.mode === 'gpu') {
-                sorted.sort((a, b) => b.gpuCount - a.gpuCount || b.jobCount - a.jobCount);
-            } else {
-                sorted.sort((a, b) => b.jobCount - a.jobCount || b.gpuCount - a.gpuCount);
-            }
-            const top = sorted.slice(0, MAX_ENTRIES);
-            return top.map((entry, i) => new LeaderboardEntryItem(entry, i + 1, element.mode));
+        if (element) {
+            return [];
         }
 
-        // Root level
         return this.getRootItems();
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
-            // Fetch fresh data if cache is empty
-            if (this.cachedEntries.length === 0) {
+            // Fetch data once until manual refresh, even when the result is empty.
+            if (!this.hasFetchedEntries) {
                 this.cachedEntries = await this.slurmService.getClusterLeaderboard();
+                this.lastRefreshedAt = new Date();
+                this.hasFetchedEntries = true;
             }
-
-            if (this.cachedEntries.length === 0) {
-                return [new LeaderboardMessageItem('No running jobs on the cluster', 'info')];
-            }
-
-            // Filter entries with GPUs for the GPU leaderboard
-            const gpuEntries = this.cachedEntries.filter(e => e.gpuCount > 0);
 
             const items: vscode.TreeItem[] = [];
-
-            if (gpuEntries.length > 0) {
-                items.push(new LeaderboardCategoryItem('gpu', gpuEntries));
+            if (this.lastRefreshedAt) {
+                items.push(new LeaderboardRefreshItem(this.lastRefreshedAt));
             }
 
-            items.push(new LeaderboardCategoryItem('jobs', this.cachedEntries));
+            const gpuEntries = getGpuLeaderboardEntries(this.cachedEntries);
+            const totalGpuCount = getTotalLeaderboardGpuCount(gpuEntries);
+            const topUserCount = getConfiguredTopUserCount();
+
+            if (gpuEntries.length === 0) {
+                items.push(new LeaderboardMessageItem('No GPU jobs running on the cluster', 'info'));
+                return items;
+            }
+
+            const visibleEntries = getVisibleLeaderboardEntries(
+                gpuEntries,
+                this.currentUsernameProvider(),
+                topUserCount,
+            );
+            items.push(...visibleEntries.map(entry => new LeaderboardEntryItem(entry, topUserCount, totalGpuCount)));
 
             return items;
         } catch (error) {
-            console.error('Error fetching leaderboard:', error);
-            return [new LeaderboardMessageItem('Failed to fetch leaderboard', 'error')];
+            console.error('Error fetching Hall of Shame:', error);
+            return [new LeaderboardMessageItem('Failed to fetch Hall of Shame', 'error')];
         }
     }
 }

@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="SLURM Cluster Manager logo">
+  <defs>
+    <linearGradient id="background" x1="164" y1="120" x2="860" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="rail" x1="304" y1="248" x2="720" y2="776" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="0.48" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#22c55e"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="384" y1="384" x2="640" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="96" y="96" width="832" height="832" rx="190" fill="url(#background)"/>
+
+  <g fill="none" stroke="#1e293b" stroke-width="28" stroke-linecap="round">
+    <path d="M300 306h176"/>
+    <path d="M548 306h176"/>
+    <path d="M300 718h176"/>
+    <path d="M548 718h176"/>
+    <path d="M306 306v412"/>
+    <path d="M718 306v412"/>
+  </g>
+
+  <path
+    d="M664 284C592 244 420 250 365 342c-45 76 17 142 143 163 132 22 194 75 150 153-55 97-230 112-314 58"
+    fill="none"
+    stroke="url(#rail)"
+    stroke-width="74"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <g fill="#0b1120" stroke="#67e8f9" stroke-width="22">
+    <circle cx="306" cy="306" r="54"/>
+    <circle cx="718" cy="306" r="54"/>
+    <circle cx="306" cy="718" r="54"/>
+    <circle cx="718" cy="718" r="54"/>
+  </g>
+
+  <g fill="#facc15">
+    <circle cx="306" cy="306" r="16"/>
+    <circle cx="718" cy="306" r="16"/>
+    <circle cx="306" cy="718" r="16"/>
+    <circle cx="718" cy="718" r="16"/>
+  </g>
+
+  <rect x="382" y="382" width="260" height="260" rx="54" fill="url(#chip)" stroke="#e2e8f0" stroke-width="18"/>
+  <rect x="430" y="430" width="164" height="164" rx="30" fill="#0f172a" stroke="#67e8f9" stroke-width="18"/>
+
+  <g stroke="#64748b" stroke-width="16" stroke-linecap="round">
+    <path d="M352 432h-34"/>
+    <path d="M352 512h-34"/>
+    <path d="M352 592h-34"/>
+    <path d="M672 432h34"/>
+    <path d="M672 512h34"/>
+    <path d="M672 592h34"/>
+    <path d="M432 352v-34"/>
+    <path d="M512 352v-34"/>
+    <path d="M592 352v-34"/>
+    <path d="M432 672v34"/>
+    <path d="M512 672v34"/>
+    <path d="M592 672v34"/>
+  </g>
+
+  <path d="M538 420 462 534h58l-34 92 86-126h-60l48-80z" fill="#facc15"/>
+</svg>

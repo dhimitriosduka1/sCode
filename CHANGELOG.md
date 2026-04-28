@@ -2,6 +2,32 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [1.4.0] - 2026-04-28
+
+### GPU Usage Insights
+- **GPU Partition Usage**: Added a GPU-only partition view for comparing Slurm partitions before submitting jobs. Partitions are sorted from least used to most used by allocated GPU share, pending pressure, idle GPUs, running jobs, and name.
+- **Cluster Overview**: Added an account-level GPU usage view showing which Slurm accounts are using the most GPUs, including top users, GPU type breakdowns, cluster-share bars, and refresh timestamps.
+- **Hall of Shame Overhaul**: Reworked Hall of Shame into a GPU-only leaderboard that shows rows directly, excludes CPU-only jobs and users, highlights your own row, and supports a configurable top-user count.
+- **GPU Context Everywhere**: Hall of Shame and Cluster Overview now show Slurm account context, GPU type breakdowns, and cluster GPU share bars.
+- **GPU Partition Accuracy**: GPU Partition Usage now ignores CPU-only partitions and uses available GPU capacity, so down or draining nodes do not make a partition look more usable than it is.
+
+### Job Management
+- **Human-readable Pending Reasons**: Pending jobs now show readable explanations for Slurm reason codes like `Resources`, `Priority`, `Dependency`, QOS limits, and association limits.
+- **Cancel All Pending Jobs**: Added a Pending category context action to cancel all pending jobs while leaving running jobs untouched.
+
+### Job History and Logs
+- **Job History Refresh Summary**: Job History now shows when data was last fetched and summarizes the active lookback range.
+- **Job History Date Groups**: Historical jobs are grouped by completion date with compact end-time and elapsed-time labels.
+- **Configurable Job History Range**: Added a Job History toolbar action for changing the `sacct` lookback window.
+- **Stdout/Stderr Path Handling**: Output paths now handle `scontrol` metadata more robustly, including relative paths resolved against `WorkDir`, `~`, quoted values, Slurm octal escapes, common filename placeholders, job arrays, unavailable `(null)` paths, and unresolved pending-node placeholders.
+- **Job History Output Lookup**: Historical stdout/stderr lookup now uses cached active-job paths when safe, falls back to `scontrol` when available, and avoids caching unresolved output paths.
+
+### UI and Documentation
+- **Consistent Tooltips**: Tree and partition-hover tooltips now use the same readable title, summary, and bullet-list style.
+- **Refresh Awareness**: Hall of Shame, Cluster Overview, and Job History now show last-refreshed timestamps so users know how fresh the data is.
+- **README Product Screenshots**: README now includes updated product screenshots for the full sidebar, Active Jobs, Job History, and GPU partition submission workflow.
+- **Extension Icon**: Replaced the old text-heavy icon with a cleaner SLURM/GPU cluster mark.
+
 ## [1.3.0] - 2026-02-26
 
 ### Added
@@ -12,7 +38,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 ## [1.2.0] - 2026-02-26
 
 ### Added
-- **Hall of Shame**: New sidebar leaderboard showing the top cluster resource hogs, ranked by GPU allocation and running job count. Only fetches data on manual refresh — no background polling.
+- **Hall of Shame**: New sidebar view showing the top cluster GPU resource hogs. Only fetches data on manual refresh — no background polling.
 - **GPU Hog Tracking**: A separate "VRAMpire" indicator at the top of the job list shows the user with the most GPUs allocated across running jobs, alongside the existing job count hog.
 - **Batch Cancel via Checkboxes**: Select multiple jobs using checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
 - **Job Dependencies**: Jobs with dependencies now show a 🔗 indicator and the dependency details (e.g., `afterok:12345`) in the expanded job view.
@@ -45,7 +71,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - Active job monitoring with real-time status updates
 - Visual progress bars showing elapsed vs. time limit
 - GPU visibility via `nvidia-smi` integration
-- Job history browser (last 7 days)
+- Job History browser (last 7 days)
 - Pin important jobs to keep them visible
 - Search and filter jobs by name
 - One-click access to stdout/stderr files

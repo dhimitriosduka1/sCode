@@ -2,7 +2,7 @@
 
 **Manage, monitor, and submit SLURM jobs directly from VS Code.**
 
-SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, and take common actions (cancel/hold/pin) without context-switching to a terminal.
+SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, compare GPU usage, and take common actions (cancel/pin/submit) without context-switching to a terminal.
 
 ![Extension Icon](icon.png)
 
@@ -10,27 +10,33 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 
 ## ✨ Highlights
 
-- **Live job monitoring** in a dedicated sidebar (Running / Pending / Held)
+- **Live job monitoring** in a dedicated sidebar (Running / Pending / Completing / Job History)
 - **Visual progress bars** for time usage (`Elapsed / Time Limit`)
-- **Resource overview** (CPUs, memory, nodes)
+- **GPU Partition Usage** so you can compare partitions before submitting
+- **Cluster Overview** showing which Slurm accounts are using the most GPUs
 - **GPU stats** via `nvidia-smi` (when available)
-- **One-click actions**: cancel, hold, pin
-- **Job history** for recent completed/failed/cancelled jobs
+- **One-click actions**: cancel, cancel pending jobs, batch cancel, pin
+- **Job History** grouped by date with configurable lookback range
 - **Instant log access** for `stdout` / `stderr`
+
+![SLURM Cluster Manager sidebar overview](screenshots/full_sidebar_overview.png)
 
 ---
 
 ## 🚀 Features
 
 ### Active Job Management
-- **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Held).
+- **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Completing, and other active states).
 - **Time Awareness**: Smart progress bars show elapsed vs. requested wall time.
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
-- **One-Click Actions**: Cancel, hold, or pin jobs directly from the UI.
+- **One-Click Actions**: Cancel or pin jobs directly from the UI.
 - **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
-- **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show estimated start time and dependency indicators (🔗).
+- **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
+- **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show human-readable pending reasons, estimated start time, and dependency indicators (🔗).
 - **Job Dependencies**: View dependency info (e.g., `afterok:12345`) in the expanded job details.
+
+![Active SLURM jobs with progress, pending reasons, and expanded job details](screenshots/active_jobs.png)
 
 ### Job Array Management
 Smart handling of SLURM job arrays with flexible cancellation options:
@@ -47,9 +53,22 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 > **Note:** Array-level cancel options only appear for pending jobs. Running array tasks are cancelled directly like any individual job.
 
 ### Job History & Logs
-- **Integrated History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
+- **Integrated Job History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
+- **Date Grouping**: Jobs are grouped by completion date with compact elapsed-time and end-time labels.
+- **Job History Range Control**: Use the toolbar action to switch between common lookback windows or enter a custom range.
+- **Refresh Awareness**: Job History includes a "last refreshed" row so you know when the data was fetched.
 - **Instant Log Access**: Right-click any job (active or historical) to open its `stdout` / `stderr`.
-- **Smart Path Resolution**: Automatically resolves log locations from `sbatch` directives and `scontrol` metadata.
+- **Smart Path Resolution**: Automatically resolves log locations from `sbatch` directives and `scontrol` metadata, including relative paths, `~`, Slurm filename placeholders, array IDs, escaped spaces, and unavailable paths like `(null)`.
+
+![Job History grouped by date with expanded job details and stdout/stderr access](screenshots/job_history.png)
+
+### GPU Partition Usage
+- **GPU-only Partition View**: A dedicated sidebar view shows only partitions that advertise GPUs through Slurm GRES.
+- **Least-used First**: Rows are sorted from least used to most used by allocated GPU share, then pending-job pressure, idle GPUs, running jobs, and name.
+- **Available vs. Total GPUs**: Rows distinguish available GPUs from total GPUs so down/draining nodes do not make a partition look more usable than it is.
+- **Queue Pressure**: Running and pending job counts are shown per GPU partition, including pending jobs that target multiple partitions.
+- **GPU Type Breakdown**: Hover a partition row to see GPU types and capacity, such as `a100`, `h200`, or generic GPUs.
+- **Manual refresh only**: The view fetches data when opened or manually refreshed, avoiding background load on the Slurm controller.
 
 ### Workflow Integrations
 - **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
@@ -59,14 +78,31 @@ Smart handling of SLURM job arrays with flexible cancellation options:
   - **GPU Hog**: The user hoarding the most GPUs (🧛 VRAMpire, 🎮 GPU Gobbler, ⚡ Watt Wizard, 🏋️ Tensor Titan)
 
 ### Hall of Shame
-- **Cluster Leaderboard**: A dedicated sidebar view ranking all users by GPU allocation and running job count.
+- **Hall of Shame**: A dedicated sidebar view ranking GPU users by allocated GPUs and running GPU job count.
+- **GPU-only rankings**: CPU-only jobs and CPU-only users are excluded from the Hall of Shame.
+- **Slurm account context**: Rows show the Slurm account responsible for the GPU jobs, with all accounts listed in the tooltip when a user has jobs under multiple accounts.
+- **GPU type breakdown**: Hover a row to see how many GPUs are allocated by type, such as `a100`, `h200`, or generic GPUs.
+- **Cluster GPU share**: Rows show a progress bar for how much of the currently allocated cluster GPU pool each user is holding.
+- **Configurable size**: Use the Hall of Shame toolbar action or `leaderboardTopUserCount` setting to choose how many top GPU users to show.
 - **Manual refresh only** — no background polling, so it won't add load to your cluster.
+- **Last refreshed timestamp**: Shows when the Hall of Shame data was fetched so stale data is easy to spot.
+- **Your row stays visible**: Your own Hall of Shame row is highlighted and shown even when you're outside the configured top count.
 - Top 3 hogs get shame emojis: 💀 🔥 👹
+
+### Cluster Overview
+- **Account-level GPU Usage**: A dedicated sidebar view shows which Slurm accounts are using the most GPUs.
+- **GPU-only accounting**: CPU-only jobs are excluded so the view stays focused on GPU pressure.
+- **Top users per account**: Hover an account row to see the heaviest users under that account.
+- **GPU type breakdown**: Tooltips show how each account's GPU allocation is distributed by GPU type.
+- **Cluster share bars**: Rows show each account's share of currently allocated GPUs as a compact progress bar.
+- **Last refreshed timestamp**: Shows when the Cluster Overview was fetched.
 
 ### Script Intelligence
 - **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit — no dialogs.
 - **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` to see real-time GPU usage, running/pending jobs, and node availability with a visual usage bar.
 - **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
+
+![GPU partition usage and submit-script partition hover stats](screenshots/gpu_submission_submit_script.png)
 
 ---
 
@@ -79,6 +115,7 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `autoRefreshInterval` | `30` | Refresh frequency (in seconds). Range: **5s → 1h** |
 | `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
 | `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
+| `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 
 > Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
 
@@ -91,10 +128,13 @@ In practice, that means you should install it **only on the cluster side** (e.g.
 
 Required commands:
 - `squeue`
+- `sinfo`
 - `scontrol`
 - `sacct`
 - `sbatch`
 - `scancel`
+
+GPU Partition Usage requires GPU partitions to be exposed through Slurm GRES (`sinfo %G`). If your cluster tracks GPUs outside GRES, those partitions may not appear in the GPU Partition Usage view.
 
 ### Important: No Remote Connection (Yet)
 At the moment, the extension **cannot connect to a remote cluster by itself**.

@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getStateDescription, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
+import { SlurmJob, SlurmService, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
+import { getSlurmJobRowParts } from './slurmJobRow';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
+import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
 /**
  * Status categories for grouping jobs
@@ -57,7 +59,7 @@ export class StatusCategoryItem extends vscode.TreeItem {
         );
 
         this.iconPath = info.icon;
-        this.contextValue = 'statusCategory';
+        this.contextValue = category === 'pending' ? 'statusCategoryPending' : 'statusCategory';
     }
 }
 
@@ -70,9 +72,10 @@ export class SlurmJobItem extends vscode.TreeItem {
         public readonly isPinned: boolean = false,
         isChecked: boolean = false,
     ) {
-        super(job.name, vscode.TreeItemCollapsibleState.Collapsed);
+        const rowParts = getSlurmJobRowParts(job);
+        super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
 
-        this.description = this.createDescription();
+        this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         // Use pending-specific context values so package.json can hide stdout/stderr/pin icons
@@ -86,69 +89,59 @@ export class SlurmJobItem extends vscode.TreeItem {
             : vscode.TreeItemCheckboxState.Unchecked;
     }
 
-    private createDescription(): string {
-        const parts: string[] = [this.job.jobId];
-
-        if (this.job.state === 'R') {
-            // Running: show progress
-            const progress = calculateProgress(this.job.time, this.job.timeLimit);
-            if (progress >= 0) {
-                parts.push(generateProgressBar(progress, 8));
-            } else {
-                parts.push(this.job.time);
-            }
-        } else if (this.job.state === 'PD') {
-            // Pending: show estimated start time
-            const startStr = formatStartTime(this.job.startTime);
-            parts.push(`Starts: ~${startStr}`);
-            // Show dependency hint for pending jobs
-            if (this.job.dependency) {
-                parts.push('🔗');
-            }
-        } else {
-            parts.push(getStateDescription(this.job.state));
-        }
-
-        return parts.join(' • ');
-    }
-
     private createTooltip(): vscode.MarkdownString {
-        const md = new vscode.MarkdownString();
-        md.appendMarkdown(`**Job: ${this.job.name}**\n\n`);
-        md.appendMarkdown(`| Property | Value |\n`);
-        md.appendMarkdown(`|----------|-------|\n`);
-        md.appendMarkdown(`| Job ID | ${this.job.jobId} |\n`);
-        md.appendMarkdown(`| State | ${getStateDescription(this.job.state)} |\n`);
+        const details: TooltipDetail[] = [
+            { label: 'Job ID', value: this.job.jobId },
+            { label: 'State', value: getStateDescription(this.job.state) },
+        ];
 
         if (this.job.state !== 'PD') {
-            md.appendMarkdown(`| Elapsed | ${this.job.time} |\n`);
+            details.push({ label: 'Elapsed', value: this.job.time });
         }
-        md.appendMarkdown(`| Time Limit | ${this.job.timeLimit} |\n`);
-        md.appendMarkdown(`| Partition | ${this.job.partition} |\n`);
+        details.push(
+            { label: 'Time limit', value: this.job.timeLimit },
+            { label: 'Partition', value: this.job.partition },
+        );
 
         if (this.job.state !== 'PD') {
-            md.appendMarkdown(`| Nodes | ${this.job.nodes} |\n`);
+            details.push({ label: 'Nodes', value: this.job.nodes });
         }
 
         if (this.job.state === 'PD') {
-            md.appendMarkdown(`| Est. Start | ${formatStartTime(this.job.startTime)} |\n`);
+            const reasonInfo = getPendingReasonInfo(this.job.pendingReason);
+            if (reasonInfo) {
+                details.push(
+                    { label: 'Pending reason', value: reasonInfo.description },
+                    { label: 'Reason code', value: reasonInfo.code },
+                );
+            }
+            details.push({ label: 'Est. start', value: formatStartTime(this.job.startTime) });
         }
 
         if (this.job.state === 'R') {
             const progress = calculateProgress(this.job.time, this.job.timeLimit);
             if (progress >= 0) {
-                md.appendMarkdown(`| Progress | ${progress}% |\n`);
+                details.push({ label: 'Progress', value: generateProgressBar(progress, 8) });
             }
         }
 
+        const sections = [];
         if (this.job.state !== 'PD') {
-            md.appendMarkdown(`\n---\n`);
-            md.appendMarkdown(`**Output Files:**\n`);
-            md.appendMarkdown(`- stdout: \`${this.job.stdoutPath}\`\n`);
-            md.appendMarkdown(`- stderr: \`${this.job.stderrPath}\`\n`);
+            sections.push({
+                title: 'Output files',
+                lines: [
+                    `stdout: \`${this.job.stdoutPath}\``,
+                    `stderr: \`${this.job.stderrPath}\``,
+                ],
+            });
         }
 
-        return md;
+        return new vscode.MarkdownString(formatTooltipMarkdown({
+            title: `Job: ${this.job.name}`,
+            summary: `${getStateDescription(this.job.state)} · ${this.job.jobId}`,
+            details,
+            sections,
+        }));
     }
 
     private getStateIcon(): vscode.ThemeIcon {
@@ -191,7 +184,11 @@ export class OutputFileItem extends vscode.TreeItem {
     ) {
         super(label, vscode.TreeItemCollapsibleState.None);
 
-        this.tooltip = `Click to open: ${filePath}`;
+        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+            title: label,
+            summary: 'Click to open this file.',
+            details: [{ label: 'Path', value: `\`${filePath}\`` }],
+        }));
         this.iconPath = new vscode.ThemeIcon(fileType === 'stdout' ? 'output' : 'warning');
         this.contextValue = 'outputFile';
 
@@ -234,10 +231,23 @@ class SubmitScriptItem extends vscode.TreeItem {
         super(label, vscode.TreeItemCollapsibleState.None);
 
         if (isCached) {
-            this.tooltip = `Cached at: ${cachedAt}\nClick to open the script as it was at submission time`;
+            this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+                title: 'Submit script',
+                summary: 'Cached at submission time',
+                details: [
+                    { label: 'Cached at', value: cachedAt || 'Unknown' },
+                    { label: 'Path', value: `\`${filePath}\`` },
+                ],
+                note: 'Click to open the script as it was at submission time.',
+            }));
             this.iconPath = new vscode.ThemeIcon('archive', new vscode.ThemeColor('charts.blue'));
         } else {
-            this.tooltip = `Current file: ${filePath}\nClick to open the current version of the script`;
+            this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+                title: 'Submit script',
+                summary: 'Current file',
+                details: [{ label: 'Path', value: `\`${filePath}\`` }],
+                note: 'Click to open the current version of the script.',
+            }));
             this.iconPath = new vscode.ThemeIcon('file-code');
         }
 
@@ -271,7 +281,14 @@ class JobHogItem extends vscode.TreeItem {
         const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator', '🤗 CUDA Cuddler', '😋 Node Nom-Nom'];
         const title = funTitles[Math.floor(Math.random() * funTitles.length)];
         super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
-        this.tooltip = `${username} is currently hogging the cluster with ${jobCount} running jobs!`;
+        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+            title,
+            summary: `${username} has the most running jobs.`,
+            details: [
+                { label: 'User', value: username },
+                { label: 'Running jobs', value: jobCount },
+            ],
+        }));
         this.contextValue = 'jobHog';
     }
 }
@@ -284,7 +301,14 @@ class GpuHogItem extends vscode.TreeItem {
         const funTitles = ['🧛 VRAMpire', '🎮 GPU Gobbler', '⚡ Watt Wizard', '🏋️ Tensor Titan'];
         const title = funTitles[Math.floor(Math.random() * funTitles.length)];
         super(`${title}: ${username} (${gpuCount} GPUs)`, vscode.TreeItemCollapsibleState.None);
-        this.tooltip = `${username} is currently hoarding ${gpuCount} GPUs on the cluster!`;
+        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+            title,
+            summary: `${username} has the most allocated GPUs.`,
+            details: [
+                { label: 'User', value: username },
+                { label: 'Allocated GPUs', value: gpuCount },
+            ],
+        }));
         this.contextValue = 'gpuHog';
     }
 }
@@ -354,10 +378,13 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return this.cachedJobs;
         }
 
-        return this.cachedJobs.filter(job =>
-            job.name.toLowerCase().includes(this.searchFilter) ||
-            job.jobId.toLowerCase().includes(this.searchFilter)
-        );
+        return this.cachedJobs.filter(job => {
+            const reasonInfo = getPendingReasonInfo(job.pendingReason);
+            return job.name.toLowerCase().includes(this.searchFilter) ||
+                job.jobId.toLowerCase().includes(this.searchFilter) ||
+                reasonInfo?.code.toLowerCase().includes(this.searchFilter) ||
+                reasonInfo?.label.toLowerCase().includes(this.searchFilter);
+        });
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -538,6 +565,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
 
         if (job.state === 'PD') {
+            const reasonInfo = getPendingReasonInfo(job.pendingReason);
+            if (reasonInfo) {
+                children.push(new JobDetailItem('Pending Reason', reasonInfo.description, 'question'));
+                children.push(new JobDetailItem('Reason Code', reasonInfo.code, 'symbol-key'));
+            }
+
             const startTime = formatStartTime(job.startTime);
             children.push(new JobDetailItem('Est. Start', startTime, 'calendar'));
         }

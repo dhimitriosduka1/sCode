@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -48,10 +48,22 @@
     "views": {
       "slurm-explorer": [
         {
+          "id": "slurmPartitionUsage",
+          "name": "GPU Partition Usage",
+          "icon": "$(server-process)",
+          "contextualTitle": "SLURM GPU Partition Usage"
+        },
+        {
+          "id": "slurmClusterOverview",
+          "name": "Cluster Overview",
+          "icon": "$(dashboard)",
+          "contextualTitle": "SLURM Cluster Overview"
+        },
+        {
           "id": "slurmLeaderboard",
           "name": "Hall of Shame",
           "icon": "$(flame)",
-          "contextualTitle": "Cluster Leaderboard"
+          "contextualTitle": "SLURM Hall of Shame"
         },
         {
           "id": "slurmJobs",
@@ -69,14 +81,29 @@
     },
     "commands": [
       {
+        "command": "slurmPartitionUsage.refresh",
+        "title": "Refresh GPU Partition Usage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmClusterOverview.refresh",
+        "title": "Refresh Cluster Overview",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "slurmJobs.refresh",
         "title": "Refresh Jobs",
         "icon": "$(refresh)"
       },
       {
         "command": "slurmHistory.refresh",
-        "title": "Refresh History",
+        "title": "Refresh Job History",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmHistory.setRange",
+        "title": "Set Job History Range",
+        "icon": "$(calendar)"
       },
       {
         "command": "slurmJobs.search",
@@ -122,23 +149,28 @@
         "icon": "$(trash)"
       },
       {
+        "command": "slurmJobs.cancelAllPendingJobs",
+        "title": "Cancel All Pending Jobs",
+        "icon": "$(trash)"
+      },
+      {
         "command": "slurmHistory.search",
-        "title": "Search History",
+        "title": "Search Job History",
         "icon": "$(search)"
       },
       {
         "command": "slurmHistory.clearSearch",
-        "title": "Clear History Search",
+        "title": "Clear Job History Search",
         "icon": "$(clear-all)"
       },
       {
         "command": "slurmHistory.nextPage",
-        "title": "Next Page",
+        "title": "Next Job History Page",
         "icon": "$(chevron-right)"
       },
       {
         "command": "slurmHistory.previousPage",
-        "title": "Previous Page",
+        "title": "Previous Job History Page",
         "icon": "$(chevron-left)"
       },
       {
@@ -158,8 +190,13 @@
       },
       {
         "command": "slurmLeaderboard.refresh",
-        "title": "Refresh Leaderboard",
+        "title": "Refresh Hall of Shame",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmLeaderboard.setTopUserCount",
+        "title": "Set Hall of Shame Size",
+        "icon": "$(list-ordered)"
       },
       {
         "command": "slurmJobs.submitCurrentFile",
@@ -176,6 +213,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "slurmPartitionUsage.refresh",
+          "when": "view == slurmPartitionUsage",
+          "group": "navigation@1"
+        },
+        {
+          "command": "slurmClusterOverview.refresh",
+          "when": "view == slurmClusterOverview",
+          "group": "navigation@1"
+        },
         {
           "command": "slurmJobs.refresh",
           "when": "view == slurmJobs",
@@ -214,30 +261,45 @@
         {
           "command": "slurmHistory.search",
           "when": "view == slurmHistory",
-          "group": "navigation@2"
+          "group": "navigation@3"
         },
         {
           "command": "slurmHistory.clearSearch",
           "when": "view == slurmHistory",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "slurmHistory.previousPage",
           "when": "view == slurmHistory",
-          "group": "navigation@4"
+          "group": "navigation@5"
         },
         {
           "command": "slurmHistory.nextPage",
           "when": "view == slurmHistory",
-          "group": "navigation@5"
+          "group": "navigation@6"
+        },
+        {
+          "command": "slurmHistory.setRange",
+          "when": "view == slurmHistory",
+          "group": "navigation@2"
         },
         {
           "command": "slurmLeaderboard.refresh",
           "when": "view == slurmLeaderboard",
           "group": "navigation@1"
+        },
+        {
+          "command": "slurmLeaderboard.setTopUserCount",
+          "when": "view == slurmLeaderboard",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
+        {
+          "command": "slurmJobs.cancelAllPendingJobs",
+          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "group": "inline@1"
+        },
         {
           "command": "slurmJobs.openStdout",
           "when": "view == slurmJobs && viewItem == slurmJob",
@@ -359,6 +421,18 @@
           "type": "boolean",
           "default": true,
           "description": "Show confirmation dialog before cancelling a job"
+        },
+        "slurmClusterManager.mockMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use local mock Slurm data for extension development without requiring Slurm commands"
+        },
+        "slurmClusterManager.leaderboardTopUserCount": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Number of top GPU users to show in the Hall of Shame. Your own row is still shown when it falls outside this count."
         }
       }
     }
@@ -368,6 +442,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
+    "test": "node --test out/test/*.test.js",
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {

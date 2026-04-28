@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SlurmService } from './slurmService';
+import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 /**
  * HoverProvider that shows real-time partition stats when hovering over
@@ -46,9 +47,10 @@ export class SlurmHoverProvider implements vscode.HoverProvider {
         // Fetch stats
         const stats = await this.slurmService.getPartitionStats(partitionName);
         if (!stats) {
-            const md = new vscode.MarkdownString();
-            md.appendMarkdown(`**Partition: \`${partitionName}\`**\n\n`);
-            md.appendMarkdown(`_Could not fetch partition stats_`);
+            const md = new vscode.MarkdownString(formatTooltipMarkdown({
+                title: `Partition: \`${partitionName}\``,
+                summary: 'Could not fetch partition stats.',
+            }));
             return new vscode.Hover(md, new vscode.Range(position.line, nameStart, position.line, nameEnd));
         }
 
@@ -68,9 +70,6 @@ export class SlurmHoverProvider implements vscode.HoverProvider {
         const md = new vscode.MarkdownString();
         md.isTrusted = true;
 
-        // Header
-        md.appendMarkdown(`**📊 Partition: \`${partitionName}\`**\n\n`);
-
         // GPU usage bar
         const gpuPercent = stats.totalGpus > 0
             ? Math.round((stats.allocatedGpus / stats.totalGpus) * 100)
@@ -79,17 +78,18 @@ export class SlurmHoverProvider implements vscode.HoverProvider {
         const filled = Math.round((gpuPercent / 100) * barWidth);
         const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
 
-        md.appendMarkdown(`GPU Usage: \`${bar}\` ${gpuPercent}%\n\n`);
-
-        // Stats table
-        md.appendMarkdown(`|Metric|Value|\n`);
-        md.appendMarkdown(`|:--|:--|\n`);
-        md.appendMarkdown(`| Total GPUs | ${stats.totalGpus} |\n`);
-        md.appendMarkdown(`| Allocated | ${stats.allocatedGpus} |\n`);
-        md.appendMarkdown(`| Idle | ${stats.idleGpus} |\n`);
-        md.appendMarkdown(`| Running Jobs | ${stats.runningJobs} |\n`);
-        md.appendMarkdown(`| Pending Jobs | ${stats.pendingJobs} |\n`);
-        md.appendMarkdown(`| Nodes (up/total) | ${stats.nodeStates} |\n`);
+        md.appendMarkdown(formatTooltipMarkdown({
+            title: `Partition: \`${partitionName}\``,
+            summary: `GPU usage: \`${bar}\` ${gpuPercent}%`,
+            details: [
+                { label: 'Total GPUs', value: stats.totalGpus },
+                { label: 'Allocated', value: stats.allocatedGpus },
+                { label: 'Idle', value: stats.idleGpus },
+                { label: 'Running jobs', value: stats.runningJobs },
+                { label: 'Pending jobs', value: stats.pendingJobs },
+                { label: 'Nodes up/total', value: stats.nodeStates },
+            ],
+        }));
 
         const range = nameStart !== undefined && nameEnd !== undefined
             ? new vscode.Range(position.line, nameStart, position.line, nameEnd)

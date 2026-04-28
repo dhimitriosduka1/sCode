@@ -1,9 +1,17 @@
 import * as vscode from 'vscode';
 import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
+import { PartitionUsageProvider } from './partitionUsageProvider';
+import { ClusterOverviewProvider } from './clusterOverviewProvider';
 import { LeaderboardProvider } from './leaderboardProvider';
+import {
+    DEFAULT_LEADERBOARD_ENTRY_COUNT,
+    MAX_LEADERBOARD_ENTRY_COUNT,
+    MIN_LEADERBOARD_ENTRY_COUNT,
+    normalizeLeaderboardEntryCount,
+} from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { SlurmService } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
@@ -22,6 +30,14 @@ function getAutoRefreshConfig(): { enabled: boolean; interval: number } {
         enabled: config.get<boolean>('autoRefreshEnabled', false),
         interval: config.get<number>('autoRefreshInterval', 30),
     };
+}
+
+/**
+ * Check whether local mock data should be used instead of Slurm commands
+ */
+function isMockModeEnabled(): boolean {
+    const config = vscode.workspace.getConfiguration('slurmClusterManager');
+    return config.get<boolean>('mockMode', false);
 }
 
 /**
@@ -97,7 +113,12 @@ export function activate(context: vscode.ExtensionContext) {
     const pinnedJobsCache = new PinnedJobsCache(context);
 
     // Create shared SlurmService with caches
-    const slurmService = new SlurmService(jobPathCache, submitScriptCache);
+    const slurmService = new SlurmService(
+        jobPathCache,
+        submitScriptCache,
+        undefined,
+        isMockModeEnabled
+    );
 
     // Track checked (selected) jobs for batch cancellation
     const checkedJobIds = new Set<string>();
@@ -107,6 +128,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
+
+    // Create the partition usage provider (no auto-refresh, manual only)
+    const partitionUsageProvider = new PartitionUsageProvider(slurmService);
+
+    // Create the cluster overview provider (no auto-refresh, manual only)
+    const clusterOverviewProvider = new ClusterOverviewProvider(slurmService);
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -138,13 +165,25 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
     });
 
+    // Register the Partition Usage TreeView
+    const partitionUsageTreeView = vscode.window.createTreeView('slurmPartitionUsage', {
+        treeDataProvider: partitionUsageProvider,
+        showCollapseAll: false,
+    });
+
+    // Register the Cluster Overview TreeView
+    const clusterOverviewTreeView = vscode.window.createTreeView('slurmClusterOverview', {
+        treeDataProvider: clusterOverviewProvider,
+        showCollapseAll: false,
+    });
+
     // Create the leaderboard provider (no auto-refresh, manual only)
     const leaderboardProvider = new LeaderboardProvider(slurmService);
 
     // Register the Leaderboard TreeView
     const leaderboardTreeView = vscode.window.createTreeView('slurmLeaderboard', {
         treeDataProvider: leaderboardProvider,
-        showCollapseAll: true,
+        showCollapseAll: false,
     });
 
 
@@ -207,32 +246,90 @@ export function activate(context: vscode.ExtensionContext) {
         jobHistoryProvider.refresh();
     });
 
+    // Register the refresh partition usage command
+    const refreshPartitionUsageCommand = vscode.commands.registerCommand('slurmPartitionUsage.refresh', () => {
+        partitionUsageProvider.refresh();
+    });
+
+    // Register the refresh cluster overview command
+    const refreshClusterOverviewCommand = vscode.commands.registerCommand('slurmClusterOverview.refresh', () => {
+        clusterOverviewProvider.refresh();
+    });
+
     // Register the refresh leaderboard command
     const refreshLeaderboardCommand = vscode.commands.registerCommand('slurmLeaderboard.refresh', () => {
         leaderboardProvider.refresh();
     });
 
+    const setLeaderboardTopUserCountCommand = vscode.commands.registerCommand('slurmLeaderboard.setTopUserCount', async () => {
+        const config = vscode.workspace.getConfiguration('slurmClusterManager');
+        const currentCount = normalizeLeaderboardEntryCount(
+            config.get<number>('leaderboardTopUserCount', DEFAULT_LEADERBOARD_ENTRY_COUNT)
+        );
+
+        const input = await vscode.window.showInputBox({
+            prompt: `Enter how many top GPU users to show (${MIN_LEADERBOARD_ENTRY_COUNT}-${MAX_LEADERBOARD_ENTRY_COUNT})`,
+            placeHolder: 'e.g., 10',
+            value: String(currentCount),
+            validateInput: (value) => {
+                const num = Number(value);
+                if (!Number.isInteger(num) ||
+                    num < MIN_LEADERBOARD_ENTRY_COUNT ||
+                    num > MAX_LEADERBOARD_ENTRY_COUNT) {
+                    return `Please enter a whole number between ${MIN_LEADERBOARD_ENTRY_COUNT} and ${MAX_LEADERBOARD_ENTRY_COUNT}`;
+                }
+                return null;
+            },
+        });
+
+        if (input !== undefined) {
+            const newCount = normalizeLeaderboardEntryCount(Number(input));
+            await config.update('leaderboardTopUserCount', newCount, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(
+                `Hall of Shame will show the top ${newCount} GPU user${newCount === 1 ? '' : 's'}`
+            );
+        }
+    });
+
     // Register command to open output files
     const openFileCommand = vscode.commands.registerCommand('slurmJobs.openFile', async (filePath: string) => {
-        if (!filePath || filePath === 'N/A') {
+        const normalizedFilePath = normalizeOpenableFilePath(
+            filePath,
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        );
+
+        if (!normalizedFilePath) {
             vscode.window.showWarningMessage('File path not available');
+            return;
+        }
+
+        if (hasUnresolvedSlurmPathPlaceholders(normalizedFilePath) || normalizedFilePath.includes('PENDING_NODE')) {
+            vscode.window.showWarningMessage(
+                `Output path is not fully resolved yet: ${normalizedFilePath}. Refresh after the job starts or finishes.`
+            );
             return;
         }
 
         try {
             // Check if file exists
-            if (!fs.existsSync(filePath)) {
+            if (!fs.existsSync(normalizedFilePath)) {
                 // For pending jobs, the file might not exist yet
-                vscode.window.showWarningMessage(`File not found: ${filePath}. The file may not exist yet if the job hasn't started.`);
+                vscode.window.showWarningMessage(`File not found: ${normalizedFilePath}. The file may not exist yet if the job hasn't started.`);
                 return;
             }
 
-            const uri = vscode.Uri.file(filePath);
+            const stat = fs.statSync(normalizedFilePath);
+            if (stat.isDirectory()) {
+                vscode.window.showWarningMessage(`Output path is a directory, not a file: ${normalizedFilePath}`);
+                return;
+            }
+
+            const uri = vscode.Uri.file(normalizedFilePath);
             const doc = await vscode.workspace.openTextDocument(uri);
             await vscode.window.showTextDocument(doc, { preview: true });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`Failed to open file: ${filePath}\n${errorMessage}`);
+            vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
             console.error('Error opening file:', error);
         }
     });
@@ -281,7 +378,7 @@ export function activate(context: vscode.ExtensionContext) {
     const searchHistoryCommand = vscode.commands.registerCommand('slurmHistory.search', async () => {
         const currentFilter = jobHistoryProvider.getSearchFilter();
         const searchTerm = await vscode.window.showInputBox({
-            prompt: 'Search job history by name or Job ID',
+            prompt: 'Search Job History by name or Job ID',
             placeHolder: 'Enter search term...',
             value: currentFilter,
         });
@@ -289,10 +386,10 @@ export function activate(context: vscode.ExtensionContext) {
         if (searchTerm !== undefined) {
             if (searchTerm === '') {
                 jobHistoryProvider.clearSearchFilter();
-                vscode.window.showInformationMessage('History search filter cleared');
+                vscode.window.showInformationMessage('Job History search filter cleared');
             } else {
                 jobHistoryProvider.setSearchFilter(searchTerm);
-                vscode.window.showInformationMessage(`Filtering history: "${searchTerm}"`);
+                vscode.window.showInformationMessage(`Filtering Job History: "${searchTerm}"`);
             }
         }
     });
@@ -300,7 +397,53 @@ export function activate(context: vscode.ExtensionContext) {
     // Register clear history search command
     const clearSearchHistoryCommand = vscode.commands.registerCommand('slurmHistory.clearSearch', () => {
         jobHistoryProvider.clearSearchFilter();
-        vscode.window.showInformationMessage('History search filter cleared');
+        vscode.window.showInformationMessage('Job History search filter cleared');
+    });
+
+    // Register history range command
+    const setHistoryRangeCommand = vscode.commands.registerCommand('slurmHistory.setRange', async () => {
+        const currentDays = jobHistoryProvider.getHistoryDays();
+        const selected = await vscode.window.showQuickPick(
+            [
+                { label: 'Last 1 day', description: 'Show jobs from the last day', days: 1 },
+                { label: 'Last 7 days', description: 'Show jobs from the last week', days: 7 },
+                { label: 'Last 30 days', description: 'Show jobs from the last month', days: 30 },
+                { label: 'Custom...', description: 'Enter a custom range from 1 to 365 days', days: undefined },
+            ],
+            {
+                placeHolder: `Current range: last ${currentDays} day${currentDays === 1 ? '' : 's'}`,
+                title: 'Set Job History Range',
+            }
+        );
+
+        if (!selected) {
+            return;
+        }
+
+        let newDays = selected.days;
+        if (newDays === undefined) {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter Job History range in days (1-365)',
+                placeHolder: 'e.g., 14',
+                value: String(currentDays),
+                validateInput: (value) => {
+                    const num = Number(value);
+                    if (!Number.isInteger(num) || num < 1 || num > 365) {
+                        return 'Please enter a whole number between 1 and 365';
+                    }
+                    return null;
+                },
+            });
+
+            if (input === undefined) {
+                return;
+            }
+
+            newDays = Number(input);
+        }
+
+        jobHistoryProvider.setHistoryDays(newDays);
+        vscode.window.showInformationMessage(`Job History range set to last ${newDays} day${newDays === 1 ? '' : 's'}`);
     });
 
     // Register next page command
@@ -356,6 +499,19 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('slurmClusterManager.autoRefreshEnabled') ||
             e.affectsConfiguration('slurmClusterManager.autoRefreshInterval')) {
             startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+        }
+
+        if (e.affectsConfiguration('slurmClusterManager.mockMode')) {
+            checkedJobIds.clear();
+            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+            clusterOverviewProvider.refresh();
+            leaderboardProvider.refresh();
+        }
+
+        if (e.affectsConfiguration('slurmClusterManager.leaderboardTopUserCount')) {
+            leaderboardProvider.rerender();
         }
     });
 
@@ -673,6 +829,29 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register cancel all pending jobs command
+    const cancelAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllPendingJobs', async () => {
+        const confirmation = await vscode.window.showWarningMessage(
+            'Are you sure you want to cancel ALL your pending jobs? Running jobs will be kept.',
+            { modal: true },
+            'Cancel Pending Jobs'
+        );
+
+        if (confirmation !== 'Cancel Pending Jobs') {
+            return;
+        }
+
+        const result = await slurmService.cancelAllPendingJobs();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register submit job command
     const submitJobCommand = vscode.commands.registerCommand('slurmJobs.submitJob', async () => {
         // Check if workspace is open
@@ -798,10 +977,15 @@ export function activate(context: vscode.ExtensionContext) {
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
+    context.subscriptions.push(partitionUsageTreeView);
+    context.subscriptions.push(clusterOverviewTreeView);
     context.subscriptions.push(leaderboardTreeView);
     context.subscriptions.push(refreshCommand);
     context.subscriptions.push(refreshHistoryCommand);
+    context.subscriptions.push(refreshPartitionUsageCommand);
+    context.subscriptions.push(refreshClusterOverviewCommand);
     context.subscriptions.push(refreshLeaderboardCommand);
+    context.subscriptions.push(setLeaderboardTopUserCountCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openStdoutCommand);
     context.subscriptions.push(openStderrCommand);
@@ -809,6 +993,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(clearSearchCommand);
     context.subscriptions.push(searchHistoryCommand);
     context.subscriptions.push(clearSearchHistoryCommand);
+    context.subscriptions.push(setHistoryRangeCommand);
     context.subscriptions.push(nextPageCommand);
     context.subscriptions.push(previousPageCommand);
     context.subscriptions.push(toggleAutoRefreshCommand);
@@ -816,6 +1001,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
+    context.subscriptions.push(cancelAllPendingJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(submitCurrentFileCommand);
     context.subscriptions.push(editorChangeListener);

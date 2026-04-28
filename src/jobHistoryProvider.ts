@@ -1,8 +1,18 @@
 import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
+import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
+import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
+import {
+    formatHistoryJobDescription,
+    formatHistorySummaryDescription,
+    formatHistorySummaryTooltip,
+    groupHistoryJobsByEndDate,
+    HistoryDateGroup,
+    normalizeHistoryDays,
+} from './historyViewModel';
 
 /**
- * Tree item representing a job from history
+ * Tree item representing a job from Job History.
  */
 export class HistoryJobItem extends vscode.TreeItem {
     constructor(
@@ -12,41 +22,42 @@ export class HistoryJobItem extends vscode.TreeItem {
 
         const stateInfo = getHistoryStateInfo(job.state, job.exitCode);
 
-        this.description = `${job.jobId} • ${stateInfo.description}`;
+        this.description = formatHistoryJobDescription(job);
         this.tooltip = this.createTooltip();
         this.iconPath = new vscode.ThemeIcon(stateInfo.icon, new vscode.ThemeColor(stateInfo.color));
         this.contextValue = 'historyJob';
     }
 
     private createTooltip(): vscode.MarkdownString {
-        const md = new vscode.MarkdownString();
         const stateInfo = getHistoryStateInfo(this.job.state, this.job.exitCode);
-
-        md.appendMarkdown(`**Job: ${this.job.name}**\n\n`);
-        md.appendMarkdown(`| Property | Value |\n`);
-        md.appendMarkdown(`|----------|-------|\n`);
-        md.appendMarkdown(`| Job ID | ${this.job.jobId} |\n`);
-        md.appendMarkdown(`| Status | ${stateInfo.description} |\n`);
-        md.appendMarkdown(`| Exit Code | ${this.job.exitCode} |\n`);
-        md.appendMarkdown(`| Elapsed | ${this.job.elapsed} |\n`);
-        md.appendMarkdown(`| Start | ${this.job.startTime} |\n`);
-        md.appendMarkdown(`| End | ${this.job.endTime} |\n`);
-        md.appendMarkdown(`| Partition | ${this.job.partition} |\n`);
-        md.appendMarkdown(`| Nodes | ${this.job.nodes} |\n`);
+        const details: TooltipDetail[] = [
+            { label: 'Job ID', value: this.job.jobId },
+            { label: 'Status', value: stateInfo.description },
+            { label: 'Exit code', value: this.job.exitCode },
+            { label: 'Elapsed', value: this.job.elapsed },
+            { label: 'Start', value: this.job.startTime },
+            { label: 'End', value: this.job.endTime },
+            { label: 'Partition', value: this.job.partition },
+            { label: 'Nodes', value: this.job.nodes },
+        ];
 
         if (this.job.cpus !== 'N/A') {
-            md.appendMarkdown(`| CPUs | ${this.job.cpus} |\n`);
+            details.push({ label: 'CPUs', value: this.job.cpus });
         }
         if (this.job.maxMemory !== 'N/A' && this.job.maxMemory) {
-            md.appendMarkdown(`| Max Memory | ${this.job.maxMemory} |\n`);
+            details.push({ label: 'Max memory', value: this.job.maxMemory });
         }
 
-        return md;
+        return new vscode.MarkdownString(formatTooltipMarkdown({
+            title: `Job: ${this.job.name}`,
+            summary: `${stateInfo.description} · ${this.job.jobId}`,
+            details,
+        }));
     }
 }
 
 /**
- * Tree item for history job details
+ * Tree item for Job History job details.
  */
 export class HistoryDetailItem extends vscode.TreeItem {
     constructor(
@@ -62,7 +73,7 @@ export class HistoryDetailItem extends vscode.TreeItem {
 }
 
 /**
- * Tree item for history job file paths (stdout/stderr) - clickable
+ * Tree item for Job History job file paths (stdout/stderr) - clickable.
  */
 export class HistoryFileItem extends vscode.TreeItem {
     constructor(
@@ -71,10 +82,14 @@ export class HistoryFileItem extends vscode.TreeItem {
         icon: string,
         public readonly job: HistoryJob,
     ) {
-        super(`${label}: ${filePath}`, vscode.TreeItemCollapsibleState.None);
+        super(label, vscode.TreeItemCollapsibleState.None);
         this.iconPath = new vscode.ThemeIcon(icon);
         this.contextValue = label === 'Stdout' ? 'historyStdout' : 'historyStderr';
-        this.tooltip = `Click to open: ${filePath}`;
+        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+            title: label,
+            summary: 'Click to open this file.',
+            details: [{ label: 'Path', value: `\`${filePath}\`` }],
+        }));
 
         // Make it clickable
         this.command = {
@@ -86,7 +101,39 @@ export class HistoryFileItem extends vscode.TreeItem {
 }
 
 /**
- * Message item for the history view
+ * Summary item showing fetch time, Job History range, and job count.
+ */
+class HistorySummaryItem extends vscode.TreeItem {
+    constructor(
+        refreshedAt: Date,
+        historyDays: number,
+        totalJobs: number,
+        filteredJobs: number,
+        searchFilter: string,
+    ) {
+        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
+        this.description = formatHistorySummaryDescription(historyDays, totalJobs, filteredJobs, searchFilter);
+        this.iconPath = new vscode.ThemeIcon('history');
+        this.contextValue = 'historySummary';
+        this.tooltip = new vscode.MarkdownString(
+            formatHistorySummaryTooltip(refreshedAt, historyDays, totalJobs, filteredJobs, searchFilter)
+        );
+    }
+}
+
+/**
+ * Date group item for history jobs.
+ */
+class HistoryDateGroupItem extends vscode.TreeItem {
+    constructor(public readonly group: HistoryDateGroup) {
+        super(group.label, vscode.TreeItemCollapsibleState.Expanded);
+        this.iconPath = new vscode.ThemeIcon('calendar');
+        this.contextValue = 'historyDateGroup';
+    }
+}
+
+/**
+ * Message item for the Job History view.
  */
 class HistoryMessageItem extends vscode.TreeItem {
     constructor(message: string, icon: string = 'info') {
@@ -109,7 +156,7 @@ class PaginationControlItem extends vscode.TreeItem {
 }
 
 /**
- * TreeDataProvider for job history
+ * TreeDataProvider for Job History.
  */
 export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> =
@@ -121,6 +168,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private slurmService: SlurmService;
     private cachedJobs: HistoryJob[] = [];
     private cachedSlurmAvailable: boolean | null = null;
+    private lastRefreshedAt: Date | undefined;
+    private hasFetchedJobs = false;
     private historyDays: number = 7;
     private searchFilter: string = '';
     private currentPage: number = 0;
@@ -137,6 +186,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     refresh(): void {
         this.cachedJobs = [];
         this.cachedSlurmAvailable = null;
+        this.lastRefreshedAt = undefined;
+        this.hasFetchedJobs = false;
         this._onDidChangeTreeData.fire();
     }
 
@@ -151,8 +202,16 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
      * Set number of days to look back
      */
     setHistoryDays(days: number): void {
-        this.historyDays = days;
+        this.historyDays = normalizeHistoryDays(days);
+        this.currentPage = 0;
         this.refresh();
+    }
+
+    /**
+     * Get number of days to look back.
+     */
+    getHistoryDays(): number {
+        return this.historyDays;
     }
 
     /**
@@ -211,6 +270,10 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             return await this.getJobChildren(element.job);
         }
 
+        if (element instanceof HistoryDateGroupItem) {
+            return element.group.jobs.map(job => new HistoryJobItem(job));
+        }
+
         // Root level: show jobs
         return this.getRootItems();
     }
@@ -218,7 +281,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             // Skip availability check if we already have cached jobs
-            if (this.cachedJobs.length === 0) {
+            if (!this.hasFetchedJobs) {
                 // Check if SLURM is available (cache the result)
                 if (this.cachedSlurmAvailable === null) {
                     this.cachedSlurmAvailable = await this.slurmService.isAvailable();
@@ -229,10 +292,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
                 // Fetch history
                 this.cachedJobs = await this.slurmService.getJobHistory(this.historyDays);
-            }
-
-            if (this.cachedJobs.length === 0) {
-                return [new HistoryMessageItem(`No jobs in the last ${this.historyDays} days`, 'info')];
+                this.lastRefreshedAt = new Date();
+                this.hasFetchedJobs = true;
             }
 
             // Apply search filter
@@ -244,20 +305,37 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                     job.jobId.includes(this.searchFilter)
                 );
 
-                if (filteredJobs.length === 0) {
-                    return [new HistoryMessageItem(`No jobs match "${this.searchFilter}"`, 'search')];
-                }
             }
 
             this.totalFilteredJobs = filteredJobs.length;
+            const items: vscode.TreeItem[] = [];
+
+            if (this.lastRefreshedAt) {
+                items.push(new HistorySummaryItem(
+                    this.lastRefreshedAt,
+                    this.historyDays,
+                    this.cachedJobs.length,
+                    filteredJobs.length,
+                    this.searchFilter,
+                ));
+            }
+
+            if (this.cachedJobs.length === 0) {
+                items.push(new HistoryMessageItem(`No jobs in the last ${this.historyDays} days`, 'info'));
+                return items;
+            }
+
+            if (filteredJobs.length === 0) {
+                items.push(new HistoryMessageItem(`No jobs match "${this.searchFilter}"`, 'search'));
+                return items;
+            }
 
             // Calculate pagination
             const totalPages = Math.ceil(this.totalFilteredJobs / this.itemsPerPage);
+            this.currentPage = Math.min(this.currentPage, Math.max(0, totalPages - 1));
             const startIndex = this.currentPage * this.itemsPerPage;
             const endIndex = Math.min(startIndex + this.itemsPerPage, this.totalFilteredJobs);
             const pageJobs = filteredJobs.slice(startIndex, endIndex);
-
-            const items: vscode.TreeItem[] = [];
 
             // Add pagination info at the top if there are multiple pages
             if (totalPages > 1) {
@@ -268,13 +346,13 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 items.push(pageInfo);
             }
 
-            // Add job items
-            items.push(...pageJobs.map(job => new HistoryJobItem(job)));
+            // Add grouped job items
+            items.push(...groupHistoryJobsByEndDate(pageJobs).map(group => new HistoryDateGroupItem(group)));
 
             return items;
         } catch (error) {
-            console.error('Error fetching job history:', error);
-            return [new HistoryMessageItem('Error fetching history', 'error')];
+            console.error('Error fetching Job History:', error);
+            return [new HistoryMessageItem('Error fetching Job History', 'error')];
         }
     }
 
@@ -305,7 +383,10 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         // Lazy-load stdout/stderr paths only when the job is expanded
         if (job.stdoutPath === 'N/A' && job.stderrPath === 'N/A') {
             // Paths not yet fetched - fetch them now
-            const paths = await this.slurmService.getHistoryJobPaths(job.jobId);
+            const paths = await this.slurmService.getHistoryJobPaths(job.jobId, {
+                jobName: job.name,
+                nodes: job.nodes,
+            });
             job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes);
             job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes);
         }
