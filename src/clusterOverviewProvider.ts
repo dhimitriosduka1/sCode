@@ -10,6 +10,7 @@ import {
     sortClusterAccountOverviewEntries,
 } from './clusterOverviewRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
+import { SlurmConnectionSetupItem } from './connectionTreeItem';
 
 class ClusterOverviewRefreshItem extends vscode.TreeItem {
     constructor(refreshedAt: Date) {
@@ -91,6 +92,11 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailabilityStatus();
+            if (!availability.available) {
+                return [new SlurmConnectionSetupItem(availability)];
+            }
+
             if (!this.hasFetchedEntries) {
                 this.cachedEntries = await this.slurmService.getClusterAccountOverview();
                 this.lastRefreshedAt = new Date();

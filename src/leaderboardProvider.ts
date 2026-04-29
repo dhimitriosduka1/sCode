@@ -14,6 +14,7 @@ import {
     normalizeLeaderboardEntryCount,
     RankedLeaderboardEntry,
 } from './leaderboardRanking';
+import { SlurmConnectionSetupItem } from './connectionTreeItem';
 
 /**
  * A single user row in the Hall of Shame.
@@ -110,6 +111,11 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailabilityStatus();
+            if (!availability.available) {
+                return [new SlurmConnectionSetupItem(availability)];
+            }
+
             // Fetch data once until manual refresh, even when the result is empty.
             if (!this.hasFetchedEntries) {
                 this.cachedEntries = await this.slurmService.getClusterLeaderboard();

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
+import { SlurmConnectionSetupItem } from './connectionTreeItem';
 import {
     formatHistoryJobDescription,
     formatHistorySummaryDescription,
@@ -283,11 +284,13 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             // Skip availability check if we already have cached jobs
             if (!this.hasFetchedJobs) {
                 // Check if SLURM is available (cache the result)
+                let availability;
                 if (this.cachedSlurmAvailable === null) {
-                    this.cachedSlurmAvailable = await this.slurmService.isAvailable();
+                    availability = await this.slurmService.getAvailabilityStatus();
+                    this.cachedSlurmAvailable = availability.available;
                 }
                 if (!this.cachedSlurmAvailable) {
-                    return [new HistoryMessageItem('SLURM not available', 'warning')];
+                    return [new SlurmConnectionSetupItem(availability ?? await this.slurmService.getAvailabilityStatus())];
                 }
 
                 // Fetch history

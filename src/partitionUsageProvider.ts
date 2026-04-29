@@ -10,6 +10,7 @@ import {
     sortPartitionUsageEntries,
 } from './partitionUsageRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
+import { SlurmConnectionSetupItem } from './connectionTreeItem';
 
 class PartitionUsageRefreshItem extends vscode.TreeItem {
     constructor(refreshedAt: Date) {
@@ -97,6 +98,11 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailabilityStatus();
+            if (!availability.available) {
+                return [new SlurmConnectionSetupItem(availability)];
+            }
+
             if (!this.hasFetchedEntries) {
                 this.cachedEntries = await this.slurmService.getPartitionUsage();
                 this.lastRefreshedAt = new Date();

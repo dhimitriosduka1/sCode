@@ -1,13 +1,18 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { SlurmCommandRunner, SlurmService } from '../slurmService';
+import { SlurmService } from '../slurmService';
+import { SlurmExecutor } from '../slurmExecutor';
 
 function createMockService(): SlurmService {
-    const commandRunner: SlurmCommandRunner = async (command) => {
-        throw new Error(`Unexpected command in mock mode: ${command}`);
+    const executor: SlurmExecutor = {
+        kind: 'local',
+        connectionKey: 'local',
+        async run(invocation) {
+            throw new Error(`Unexpected command in mock mode: ${invocation.command}`);
+        },
     };
 
-    return new SlurmService(undefined, undefined, commandRunner, () => true);
+    return new SlurmService(undefined, undefined, executor, () => true);
 }
 
 describe('SlurmService mock mode', () => {

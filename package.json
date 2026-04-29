@@ -202,6 +202,21 @@
         "command": "slurmJobs.submitCurrentFile",
         "title": "Submit to SLURM",
         "icon": "$(play)"
+      },
+      {
+        "command": "slurmRemote.configure",
+        "title": "Connect to SLURM Cluster",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "slurmRemote.switchCluster",
+        "title": "Switch SLURM Cluster",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "slurmRemote.testConnection",
+        "title": "Test SLURM Connection",
+        "icon": "$(plug)"
       }
     ],
     "menus": {
@@ -421,6 +436,83 @@
           "type": "boolean",
           "default": true,
           "description": "Show confirmation dialog before cancelling a job"
+        },
+        "slurmClusterManager.connectionMode": {
+          "type": "string",
+          "default": "local",
+          "enum": [
+            "local",
+            "ssh"
+          ],
+          "enumDescriptions": [
+            "Run Slurm commands on the same machine as the extension host.",
+            "Run Slurm commands on a remote server through the local OpenSSH client."
+          ],
+          "description": "Where SLURM commands should be executed"
+        },
+        "slurmClusterManager.sshHost": {
+          "type": "string",
+          "default": "",
+          "description": "OpenSSH host alias or user@host value used when connectionMode is ssh. Authentication uses your existing SSH keys or agent."
+        },
+        "slurmClusterManager.activeCluster": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the active SLURM cluster profile. Use \"local\" for local mode. Empty falls back to the legacy connectionMode/sshHost settings."
+        },
+        "slurmClusterManager.clusters": {
+          "type": "array",
+          "default": [],
+          "description": "Named SLURM cluster connection profiles. SSH profiles use OpenSSH host aliases or user@host values and never store passwords.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "connectionMode"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display name for this cluster profile"
+              },
+              "connectionMode": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "ssh"
+                ],
+                "description": "Where Slurm commands should be executed for this profile"
+              },
+              "sshHost": {
+                "type": "string",
+                "description": "OpenSSH host alias or user@host value for SSH profiles"
+              },
+              "sshConnectTimeout": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 120,
+                "description": "SSH connection timeout in seconds for this profile"
+              },
+              "remoteLogMaxBytes": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "Maximum remote stdout/stderr file size to open through SSH for this profile"
+              }
+            }
+          }
+        },
+        "slurmClusterManager.sshConnectTimeout": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 120,
+          "description": "SSH connection timeout in seconds when connectionMode is ssh"
+        },
+        "slurmClusterManager.remoteLogMaxBytes": {
+          "type": "number",
+          "default": 2097152,
+          "minimum": 1024,
+          "description": "Maximum remote stdout/stderr file size to open through SSH, in bytes"
         },
         "slurmClusterManager.mockMode": {
           "type": "boolean",

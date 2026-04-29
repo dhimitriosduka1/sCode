@@ -14,6 +14,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Visual progress bars** for time usage (`Elapsed / Time Limit`)
 - **GPU Partition Usage** so you can compare partitions before submitting
 - **Cluster Overview** showing which Slurm accounts are using the most GPUs
+- **Direct SSH mode** for connecting to remote Slurm servers through OpenSSH
 - **GPU stats** via `nvidia-smi` (when available)
 - **One-click actions**: cancel, cancel pending jobs, batch cancel, pin
 - **Job History** grouped by date with configurable lookback range
@@ -24,6 +25,12 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 ---
 
 ## 🚀 Features
+
+### Remote Slurm Connections
+- **Local or SSH execution**: Run Slurm commands on the extension host or on a remote Slurm server through OpenSSH.
+- **Key/agent authentication**: SSH mode uses your existing SSH config, keys, and agent. It does not collect or store passwords.
+- **Remote log access**: Open remote stdout/stderr files as read-only virtual documents with size checks.
+- **Explicit remote submit paths**: In SSH mode, job submission asks for the absolute remote path to an existing submit script.
 
 ### Active Job Management
 - **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Completing, and other active states).
@@ -115,6 +122,12 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `autoRefreshInterval` | `30` | Refresh frequency (in seconds). Range: **5s → 1h** |
 | `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
 | `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
+| `connectionMode` | `local` | Run Slurm commands locally or through SSH (`local` / `ssh`) |
+| `sshHost` | `""` | OpenSSH host alias or `user@host` used when `connectionMode` is `ssh` |
+| `activeCluster` | `""` | Name of the active cluster profile, or `local` for local mode |
+| `clusters` | `[]` | Named local/SSH cluster profiles for switching between clusters |
+| `sshConnectTimeout` | `10` | SSH connection timeout in seconds |
+| `remoteLogMaxBytes` | `2097152` | Maximum remote stdout/stderr file size to open through SSH |
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 
 > Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
@@ -123,8 +136,10 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 
 ## ✅ Requirements
 
-This extension **must run on a machine with direct access to SLURM commands**.  
-In practice, that means you should install it **only on the cluster side** (e.g., a login node / head node / SLURM-accessible node — whichever your site provides), not on your local computer.
+The extension can run in two modes:
+
+- **Local mode**: Run VS Code on a machine with direct access to SLURM commands, such as a login node or a VS Code Remote - SSH extension host.
+- **SSH mode**: Run VS Code locally and let the extension execute SLURM commands on a remote server through your system OpenSSH client.
 
 Required commands:
 - `squeue`
@@ -136,13 +151,25 @@ Required commands:
 
 GPU Partition Usage requires GPU partitions to be exposed through Slurm GRES (`sinfo %G`). If your cluster tracks GPUs outside GRES, those partitions may not appear in the GPU Partition Usage view.
 
-### Important: No Remote Connection (Yet)
-At the moment, the extension **cannot connect to a remote cluster by itself**.
-It does **not** SSH into a server, tunnel commands, or forward SLURM calls.
+### Direct SSH Mode
+Direct SSH mode uses your existing OpenSSH setup. Run **SLURM: Connect to SLURM Cluster** from the command palette, or click the SLURM connection item in the VS Code status bar. Choose SSH and enter an OpenSSH host alias or `user@host`.
 
-✅ **Supported setup:** Run VS Code *on the SLURM-accessible node* (or use **VS Code Remote - SSH** to open a remote VS Code session on that node) and install the extension **on the Remote target**.
+You can add multiple SSH clusters and switch between them from the status bar or with **SLURM: Switch SLURM Cluster**. Profiles are saved by the extension and can also be provided manually through `slurmClusterManager.clusters`; `slurmClusterManager.activeCluster` can select a configured profile by name.
 
-🚧 **Remote connection support is work-in-progress (WIP)** and will be added in a future release.
+Single-cluster settings (`slurmClusterManager.connectionMode` and `slurmClusterManager.sshHost`) remain supported as a fallback for existing installs.
+
+Security model:
+- Authentication uses SSH keys or your SSH agent only.
+- The extension does not collect or store SSH passwords.
+- Password-only clusters need an SSH key, agent, or a valid Kerberos/GSSAPI ticket before the extension can connect.
+- SSH host-key verification is handled by OpenSSH.
+- Remote submit scripts and output files must already exist on the remote filesystem.
+
+Current limitations:
+- No automatic file upload before `sbatch`.
+- No local-to-remote path mapping.
+- `Submit Job` in SSH mode asks for an absolute remote script path.
+- Remote stdout/stderr opening is read-only and capped by `remoteLogMaxBytes`.
 
 ---
 
@@ -150,7 +177,7 @@ It does **not** SSH into a server, tunnel commands, or forward SLURM calls.
 
 Contributions are welcome — bug fixes, documentation improvements, and feature requests.
 
-- Report issues / request features: https://github.com/dhimitriosduka1/sCode/issues  
+- Report issues / request features: https://github.com/dhimitriosduka1/sCode/issues
 - Pull requests are welcome!
 
 If you’re opening a PR, please include:

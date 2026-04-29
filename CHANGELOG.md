@@ -2,6 +2,20 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Direct SSH Remote Slurm Support**: Added an SSH connection mode that runs Slurm commands on a remote server through the system OpenSSH client while keeping local mode as the default.
+- **Remote Connection Commands**: Added commands to configure the Slurm connection mode and test the active Slurm connection.
+- **Remote Log Opening**: Added read-only remote stdout/stderr opening for SSH mode with file metadata checks and a configurable size limit.
+- **Connection Setup UX**: Added a clickable SLURM status bar connection item for switching clusters and seeing connection health, plus direct "Connect with SSH" actions from connection failure messages.
+- **Multiple Cluster Profiles**: Added named local/SSH cluster profiles and a switcher command for moving between Slurm clusters without editing settings manually.
+
+### Security
+- **Structured Command Execution**: Slurm commands now go through a local/SSH executor abstraction using structured arguments instead of shell-string command construction.
+- **SSH Safety Defaults**: SSH mode uses `BatchMode=yes`, keeps OpenSSH host-key verification enabled, rejects unsafe command arguments, and does not collect or store SSH passwords.
+- **Explicit Remote Paths**: SSH mode requires absolute remote paths for submission and log opening; uploads and local-to-remote path mapping are intentionally not supported in this first secure version.
+
 ## [1.4.0] - 2026-04-28
 
 ### GPU Usage Insights

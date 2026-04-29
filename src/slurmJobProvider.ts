@@ -4,6 +4,7 @@ import { getSlurmJobRowParts } from './slurmJobRow';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
+import { SlurmConnectionSetupItem } from './connectionTreeItem';
 
 /**
  * Status categories for grouping jobs
@@ -411,9 +412,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
         try {
             // Check if SLURM is available
-            const isAvailable = await this.slurmService.isAvailable();
-            if (!isAvailable) {
-                return [new MessageItem('SLURM not available on this system', 'warning')];
+            const availability = await this.slurmService.getAvailabilityStatus();
+            if (!availability.available) {
+                return [new SlurmConnectionSetupItem(availability)];
             }
 
             // Fetch and cache jobs only if cache is empty
