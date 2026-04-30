@@ -30,7 +30,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Local or SSH execution**: Run Slurm commands on the extension host or on a remote Slurm server through OpenSSH.
 - **Key/agent authentication**: SSH mode uses your existing SSH config, keys, and agent. It does not collect or store passwords.
 - **Remote log access**: Open remote stdout/stderr files as read-only virtual documents with size checks.
-- **Explicit remote submit paths**: In SSH mode, job submission asks for the absolute remote path to an existing submit script.
+- **Explicit remote submit paths**: In SSH mode, job submission asks for the absolute remote path to an existing submit script instead of guessing from the local editor path.
 
 ### Active Job Management
 - **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Completing, and other active states).
@@ -152,16 +152,87 @@ Required commands:
 GPU Partition Usage requires GPU partitions to be exposed through Slurm GRES (`sinfo %G`). If your cluster tracks GPUs outside GRES, those partitions may not appear in the GPU Partition Usage view.
 
 ### Direct SSH Mode
-Direct SSH mode uses your existing OpenSSH setup. Run **SLURM: Connect to SLURM Cluster** from the command palette, or click the SLURM connection item in the VS Code status bar. Choose SSH and enter an OpenSSH host alias or `user@host`.
+Direct SSH mode uses your existing OpenSSH setup. Run **SLURM: Connect to SLURM Cluster** from the command palette, or click the SLURM connection item in the VS Code status bar. Choose SSH and select an alias from `~/.ssh/config`, or enter a simple `user@host` value manually.
+
+For clusters that need `ProxyJump` or Kerberos/GSSAPI, keep that setup in `~/.ssh/config` and select the alias in the extension. On Linux, macOS, and WSL, the extension automatically adds reusable OpenSSH session options (`ControlMaster=auto`, `ControlPersist=8h`, a local `ControlPath`, and `ServerAliveInterval=60`) so 2FA sessions can be reused without adding those options to `~/.ssh/config`. On Linux, the control socket is stored under a local runtime directory instead of `~/.ssh`, which avoids issues with network-backed home directories. Windows OpenSSH does not reliably support ControlMaster, so direct Windows usage should use SSH keys, an agent, Kerberos/GSSAPI, WSL, or a Unix-like remote extension host. The connection test can copy the exact terminal command the extension needs.
+
+When SSH mode is active, the editor title submit action changes to **Submit Remote Script**. It does not submit the local VS Code file path and it does not upload the file. It asks for an absolute remote script path, and only pre-fills that value when the editor is already showing a `slurm-remote:` document.
+
+For 2FA clusters on Linux, macOS, or WSL, the extension tests the selected SSH alias immediately. If OpenSSH reports that interactive authentication is required, the extension opens an integrated terminal and runs the same reusable OpenSSH command with `<alias> true` so you can complete password/OTP authentication directly with OpenSSH. After that succeeds, run **SLURM: Test SLURM Connection** again. The extension never collects or stores the password or OTP.
+
+Use **SLURM: Disconnect from SLURM Cluster** to switch the extension back to Local mode. If you authenticated with a reusable OpenSSH ControlMaster session, the disconnect flow can also run the matching `ssh -O exit <alias>` command in an integrated terminal to ask OpenSSH to close that session.
 
 You can add multiple SSH clusters and switch between them from the status bar or with **SLURM: Switch SLURM Cluster**. Profiles are saved by the extension and can also be provided manually through `slurmClusterManager.clusters`; `slurmClusterManager.activeCluster` can select a configured profile by name.
 
 Single-cluster settings (`slurmClusterManager.connectionMode` and `slurmClusterManager.sshHost`) remain supported as a fallback for existing installs.
 
+#### Troubleshooting SSH Connections
+
+Run these commands on the same machine where the extension is running. If you use a VS Code fork locally, run them locally. If you use VS Code Remote, run them in the remote extension-host environment.
+
+First verify non-interactive SSH authentication. Prefer **Copy Test Command** from the extension because the SSH options are platform-specific. On Linux, macOS, or WSL, the command will look like this:
+
+```bash
+ssh \
+  -o ControlMaster=auto \
+  -o ControlPersist=8h \
+  -o "ControlPath=<local-runtime-control-path>/cm-%C" \
+  -o ServerAliveInterval=60 \
+  -o BatchMode=yes \
+  <alias-or-user@host> id -un
+```
+
+Then verify Slurm is available in the same non-interactive SSH session:
+
+```bash
+ssh \
+  -o ControlMaster=auto \
+  -o ControlPersist=8h \
+  -o "ControlPath=<local-runtime-control-path>/cm-%C" \
+  -o ServerAliveInterval=60 \
+  -o BatchMode=yes \
+  <alias-or-user@host> 'hostname; command -v squeue; squeue --version'
+```
+
+How to interpret the result:
+
+- If the first command fails, SSH authentication/configuration is failing before the extension reaches Slurm.
+- If the first command works but the second fails, SSH works but Slurm commands are not available in the non-interactive remote environment.
+- If both commands work, use the exact same `<alias-or-user@host>` value in the extension.
+
+Common fixes:
+
+- Use the `~/.ssh/config` alias when the cluster needs `ProxyJump` or Kerberos/GSSAPI. Do not replace it with the raw hostname unless the raw hostname also works with `BatchMode=yes`.
+- Authenticate once manually when your site requires an interactive login first. On Linux, macOS, or WSL, the extension starts this automatically when it detects a 2FA/password prompt is needed, or you can do it manually:
+
+```bash
+ssh \
+  -o ControlMaster=auto \
+  -o ControlPersist=8h \
+  -o "ControlPath=<local-runtime-control-path>/cm-%C" \
+  -o ServerAliveInterval=60 \
+  <alias> true
+```
+
+Then retry:
+
+```bash
+ssh \
+  -o ControlMaster=auto \
+  -o ControlPersist=8h \
+  -o "ControlPath=<local-runtime-control-path>/cm-%C" \
+  -o ServerAliveInterval=60 \
+  -o BatchMode=yes \
+  <alias> id -un
+```
+
+- If Slurm is missing from non-interactive `PATH`, configure the remote account so `squeue`, `sinfo`, `scontrol`, `sacct`, `sbatch`, and `scancel` are available to non-interactive SSH commands.
+- On Windows, direct SSH mode is supported for non-interactive authentication, but 2FA session reuse through OpenSSH ControlMaster is not. Use WSL, VS Code Remote - SSH to a Unix-like machine, SSH keys/agent, or Kerberos/GSSAPI for clusters that require interactive 2FA.
+
 Security model:
-- Authentication uses SSH keys or your SSH agent only.
+- Background Slurm commands use non-interactive OpenSSH (`BatchMode=yes`) and can reuse an existing key, agent, Kerberos/GSSAPI, or ControlMaster-authenticated session.
 - The extension does not collect or store SSH passwords.
-- Password-only clusters need an SSH key, agent, or a valid Kerberos/GSSAPI ticket before the extension can connect.
+- Password/OTP authentication happens only inside the OpenSSH terminal session used to create the reusable connection on platforms that support OpenSSH ControlMaster.
 - SSH host-key verification is handled by OpenSSH.
 - Remote submit scripts and output files must already exist on the remote filesystem.
 

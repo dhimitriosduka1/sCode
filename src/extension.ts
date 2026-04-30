@@ -14,9 +14,19 @@ import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvide
 import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService } from './slurmService';
 import { LocalSlurmExecutor, SshSlurmExecutor, validateRemoteFilePath } from './slurmExecutor';
 import { createRemoteSlurmUri, RemoteSlurmDocumentProvider, REMOTE_SLURM_SCHEME } from './remoteSlurmDocumentProvider';
+import { getRemoteSubmitPromptOptions, RemoteSubmitPromptOptions } from './remoteSubmit';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
+import {
+    ensureDefaultSshControlDirectory,
+    formatSshBatchModeTestCommand,
+    formatSshControlMasterExitCommand,
+    formatSshInteractiveLoginCommand,
+    isInteractiveSshAuthFailure,
+    parseSshConfigHosts,
+    supportsSshControlMaster,
+} from './sshConfig';
 import {
     ConnectionMode,
     formatClusterProfileDescription,
@@ -34,6 +44,8 @@ import {
     validateSshHost,
 } from './clusterProfiles';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // Auto-refresh timer
 let autoRefreshTimer: NodeJS.Timeout | undefined;
@@ -43,6 +55,16 @@ let extensionContext: vscode.ExtensionContext | undefined;
 
 const STORED_CLUSTER_PROFILES_KEY = 'slurmClusterManager.clusters';
 const STORED_ACTIVE_CLUSTER_KEY = 'slurmClusterManager.activeCluster';
+
+type SshHostQuickPickItem = vscode.QuickPickItem & {
+    host?: string;
+    action?: 'manual' | 'openConfig';
+};
+
+type ClusterQuickPickItem = vscode.QuickPickItem & {
+    profile?: SlurmClusterProfile;
+    action?: 'add' | 'disconnect';
+};
 
 /**
  * Get autorefresh configuration
@@ -157,12 +179,12 @@ function isUnavailableFilePath(filePath: string | undefined): boolean {
     return normalized === 'n/a' || normalized === '(null)' || normalized === 'unknown' || normalized === 'none';
 }
 
-async function promptRemoteSubmitPath(initialValue?: string): Promise<string | undefined> {
+async function promptRemoteSubmitPath(options?: Partial<RemoteSubmitPromptOptions>): Promise<string | undefined> {
     const input = await vscode.window.showInputBox({
-        title: 'Submit Remote SLURM Job',
-        prompt: 'Enter the absolute path to a SLURM submit script on the remote server.',
-        placeHolder: '/home/user/project/train.sbatch',
-        value: initialValue,
+        title: options?.title ?? 'Submit Remote SLURM Script',
+        prompt: options?.prompt ?? 'Enter the absolute path to a SLURM submit script on the remote server.',
+        placeHolder: options?.placeHolder ?? '/home/user/project/train.sbatch',
+        value: options?.initialValue,
         validateInput: (value) => {
             try {
                 validateRemoteFilePath(value.trim());
@@ -176,11 +198,138 @@ async function promptRemoteSubmitPath(initialValue?: string): Promise<string | u
     return input?.trim();
 }
 
-async function promptSshHost(initialValue?: string): Promise<string | undefined> {
+function getRemoteSubmitDocumentInfo(uri?: vscode.Uri): { scheme: string; path: string; fileName?: string } | undefined {
+    const documentUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+    if (!documentUri) {
+        return undefined;
+    }
+
+    return {
+        scheme: documentUri.scheme,
+        path: documentUri.path,
+        fileName: path.basename(documentUri.path || documentUri.fsPath),
+    };
+}
+
+function getSshConfigPath(): string {
+    return path.join(os.homedir(), '.ssh', 'config');
+}
+
+async function readSshConfigHosts(): Promise<string[]> {
+    try {
+        return parseSshConfigHosts(await fs.promises.readFile(getSshConfigPath(), 'utf8'));
+    } catch {
+        return [];
+    }
+}
+
+async function openSshConfig(): Promise<void> {
+    const sshConfigPath = getSshConfigPath();
+    try {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(sshConfigPath));
+        await vscode.window.showTextDocument(doc, { preview: false });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showWarningMessage(`Could not open ${sshConfigPath}: ${errorMessage}`);
+    }
+}
+
+async function copySshTestCommand(host: string): Promise<void> {
+    if (!host.trim()) {
+        vscode.window.showWarningMessage('No SSH host is configured for the active SLURM cluster.');
+        return;
+    }
+
+    if (!prepareSshControlDirectory()) {
+        return;
+    }
+
+    await vscode.env.clipboard.writeText(formatSshBatchModeTestCommand(host));
+    vscode.window.showInformationMessage('Copied SSH test command to clipboard.');
+}
+
+function prepareSshControlDirectory(): boolean {
+    try {
+        ensureDefaultSshControlDirectory();
+        return true;
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showWarningMessage(errorMessage);
+        return false;
+    }
+}
+
+function startInteractiveSshLogin(host: string): void {
+    const trimmedHost = host.trim();
+    if (!trimmedHost) {
+        vscode.window.showWarningMessage('No SSH host is configured for the active SLURM cluster.');
+        return;
+    }
+
+    try {
+        validateSshHost(trimmedHost);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showWarningMessage(`Cannot start SSH login: ${errorMessage}`);
+        return;
+    }
+
+    if (!supportsSshControlMaster()) {
+        vscode.window.showWarningMessage(
+            '2FA session reuse requires OpenSSH ControlMaster, which is not supported by Windows OpenSSH. Use an SSH key/agent, Kerberos/GSSAPI, WSL, or run the extension on a Unix-like extension host.'
+        );
+        return;
+    }
+
+    if (!prepareSshControlDirectory()) {
+        return;
+    }
+
+    const terminal = vscode.window.createTerminal(`SLURM SSH: ${trimmedHost}`);
+    terminal.show(true);
+    terminal.sendText(formatSshInteractiveLoginCommand(trimmedHost));
+    vscode.window.showInformationMessage(
+        'Complete SSH authentication in the terminal. When it finishes, run Test SLURM Connection again.'
+    );
+}
+
+function closeSshControlMasterSession(host: string): void {
+    const trimmedHost = host.trim();
+    if (!trimmedHost) {
+        vscode.window.showWarningMessage('No SSH host is configured for the active SLURM cluster.');
+        return;
+    }
+
+    try {
+        validateSshHost(trimmedHost);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showWarningMessage(`Cannot close SSH session: ${errorMessage}`);
+        return;
+    }
+
+    if (!supportsSshControlMaster()) {
+        vscode.window.showWarningMessage('There is no reusable OpenSSH ControlMaster session to close on this platform.');
+        return;
+    }
+
+    if (!prepareSshControlDirectory()) {
+        return;
+    }
+
+    const terminal = vscode.window.createTerminal(`SLURM SSH Disconnect: ${trimmedHost}`);
+    terminal.show(true);
+    terminal.sendText(formatSshControlMasterExitCommand(trimmedHost));
+    vscode.window.showInformationMessage(
+        'Requested OpenSSH to close the ControlMaster session. If no master session exists, SSH may print a harmless error in the terminal.'
+    );
+}
+
+async function promptSshHostInput(initialValue?: string): Promise<string | undefined> {
     const host = await vscode.window.showInputBox({
         title: 'Connect to Remote SLURM Cluster',
-        prompt: 'Enter an OpenSSH host alias or user@host value. Authentication uses your SSH keys or agent.',
-        placeHolder: 'cluster-login or user@cluster.example.edu',
+        prompt: 'Enter an OpenSSH host alias or user@host value. For ProxyJump or Kerberos/GSSAPI, use an alias from ~/.ssh/config. 2FA session reuse is handled by the extension on Linux, macOS, or WSL.',
+        placeHolder: 'dais or user@cluster.example.edu',
         value: initialValue,
         validateInput: (value) => {
             try {
@@ -193,6 +342,52 @@ async function promptSshHost(initialValue?: string): Promise<string | undefined>
     });
 
     return host?.trim();
+}
+
+async function promptSshHost(initialValue?: string): Promise<string | undefined> {
+    const sshConfigHosts = await readSshConfigHosts();
+    const items: SshHostQuickPickItem[] = [
+        ...sshConfigHosts.map(host => ({
+            label: `$(server-environment) ${host}`,
+            description: '~/.ssh/config',
+            detail: `Recommended when the cluster needs ProxyJump or Kerberos/GSSAPI. Test: ${formatSshBatchModeTestCommand(host)}`,
+            host,
+        })),
+        {
+            label: '$(edit) Enter host manually',
+            description: 'For simple SSH targets',
+            detail: 'Use user@host directly only when it works with BatchMode=yes from a terminal.',
+            action: 'manual',
+        },
+        {
+            label: '$(file-code) Open ~/.ssh/config',
+            description: 'Recommended for complex clusters',
+            detail: 'Keep SSH routing and authentication in OpenSSH. The extension stores only the alias or user@host value.',
+            action: 'openConfig',
+        },
+    ];
+
+    const selected = await vscode.window.showQuickPick(items, {
+        title: 'Choose SSH Target',
+        placeHolder: sshConfigHosts.length > 0
+            ? 'Select an SSH config alias, or enter a host manually'
+            : 'No SSH aliases found. Enter a host manually or open ~/.ssh/config',
+    });
+
+    if (!selected) {
+        return undefined;
+    }
+
+    if (selected.host) {
+        return selected.host;
+    }
+
+    if (selected.action === 'openConfig') {
+        await openSshConfig();
+        return undefined;
+    }
+
+    return promptSshHostInput(initialValue);
 }
 
 async function promptClusterName(defaultName: string, existingProfiles: SlurmClusterProfile[]): Promise<string | undefined> {
@@ -404,6 +599,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     function refreshAllViewsForConnectionChange(): void {
         slurmService.setExecutor(createSlurmExecutorFromConfig());
+        const isRemoteMode = slurmService.isRemoteMode();
+        vscode.commands.executeCommand('setContext', 'slurmJobs.isRemoteMode', isRemoteMode);
+        vscode.commands.executeCommand('setContext', 'slurmJobs.isLocalMode', !isRemoteMode);
         checkedJobIds.clear();
         vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
         slurmJobProvider.refresh();
@@ -426,6 +624,9 @@ export function activate(context: vscode.ExtensionContext) {
         const isSlurmScript = text.includes('#SBATCH');
         vscode.commands.executeCommand('setContext', 'slurmJobs.isSlurmScript', isSlurmScript);
     }
+
+    vscode.commands.executeCommand('setContext', 'slurmJobs.isRemoteMode', slurmService.isRemoteMode());
+    vscode.commands.executeCommand('setContext', 'slurmJobs.isLocalMode', !slurmService.isRemoteMode());
 
     // Check on activation and editor changes
     updateSlurmScriptContext(vscode.window.activeTextEditor);
@@ -505,30 +706,104 @@ export function activate(context: vscode.ExtensionContext) {
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
         } else {
-            const configureLabel = getConnectionMode() === 'local' ? 'Connect with SSH' : 'Edit Connection';
-            const selection = await vscode.window.showErrorMessage(
-                result.message,
-                configureLabel,
-                'Open Settings'
-            );
-            if (selection === configureLabel) {
-                await vscode.commands.executeCommand(
-                    'slurmRemote.configure',
-                    getConnectionMode() === 'local' ? ('ssh' as ConnectionMode) : undefined
+            if (getConnectionMode() === 'ssh') {
+                if (isInteractiveSshAuthFailure(result.message)) {
+                    startInteractiveSshLogin(getSshHost());
+                    return;
+                }
+
+                const selection = await vscode.window.showErrorMessage(
+                    result.message,
+                    'Copy Test Command',
+                    'Open SSH Config',
+                    'Edit Connection'
                 );
-            } else if (selection === 'Open Settings') {
-                await vscode.commands.executeCommand(
-                    'workbench.action.openSettings',
-                    '@ext:dhimitriosduka.slurm-cluster-manager'
+                if (selection === 'Copy Test Command') {
+                    await copySshTestCommand(getSshHost());
+                } else if (selection === 'Open SSH Config') {
+                    await openSshConfig();
+                } else if (selection === 'Edit Connection') {
+                    await vscode.commands.executeCommand('slurmRemote.configure', 'ssh' as ConnectionMode);
+                }
+            } else {
+                const selection = await vscode.window.showErrorMessage(
+                    result.message,
+                    'Connect with SSH',
+                    'Open Settings'
                 );
+                if (selection === 'Connect with SSH') {
+                    await vscode.commands.executeCommand('slurmRemote.configure', 'ssh' as ConnectionMode);
+                } else if (selection === 'Open Settings') {
+                    await vscode.commands.executeCommand(
+                        'workbench.action.openSettings',
+                        '@ext:dhimitriosduka.slurm-cluster-manager'
+                    );
+                }
             }
         }
+    });
+
+    const startSshSessionCommand = vscode.commands.registerCommand('slurmRemote.startSshSession', async () => {
+        if (getConnectionMode() !== 'ssh' || !getSshHost()) {
+            const selection = await vscode.window.showWarningMessage(
+                'Configure an SSH cluster before starting an SSH login session.',
+                'Configure SSH'
+            );
+            if (selection === 'Configure SSH') {
+                await vscode.commands.executeCommand('slurmRemote.configure', 'ssh' as ConnectionMode);
+            }
+            return;
+        }
+
+        startInteractiveSshLogin(getSshHost());
+    });
+
+    const disconnectRemoteCommand = vscode.commands.registerCommand('slurmRemote.disconnect', async () => {
+        const activeProfile = getActiveClusterProfile();
+        if (activeProfile.connectionMode !== 'ssh') {
+            vscode.window.showInformationMessage('SLURM Cluster Manager is already disconnected from SSH.');
+            return;
+        }
+
+        const activeSshHost = activeProfile.sshHost ?? '';
+        const selection = await vscode.window.showQuickPick(
+            [
+                {
+                    label: '$(debug-disconnect) Disconnect Extension',
+                    description: 'Switch SLURM Cluster Manager back to Local mode',
+                    closeSshSession: false,
+                },
+                ...(supportsSshControlMaster() ? [{
+                    label: '$(terminal) Disconnect and Close SSH Session',
+                    description: 'Also run ssh -O exit for the active alias',
+                    detail: 'Use this when you want to close a reusable ControlMaster session created for 2FA.',
+                    closeSshSession: true,
+                }] : []),
+            ],
+            {
+                title: `Disconnect from ${formatClusterProfileLabel(activeProfile)}`,
+                placeHolder: 'Choose how much to disconnect',
+            }
+        );
+
+        if (!selection) {
+            return;
+        }
+
+        await saveActiveCluster({ name: LOCAL_CLUSTER_NAME, connectionMode: 'local' });
+        refreshAllViewsForConnectionChange();
+
+        if (selection.closeSshSession) {
+            closeSshControlMasterSession(activeSshHost);
+        }
+
+        vscode.window.showInformationMessage('Disconnected from remote SLURM cluster. Active cluster: Local.');
     });
 
     const switchClusterCommand = vscode.commands.registerCommand('slurmRemote.switchCluster', async () => {
         const currentProfile = getActiveClusterProfile();
         const profiles = getClusterProfiles();
-        const clusterOptions = [
+        const clusterOptions: ClusterQuickPickItem[] = [
             {
                 label: currentProfile.connectionMode === 'local' ? '$(check) Local' : 'Local',
                 description: 'Run Slurm commands on this machine',
@@ -539,10 +814,17 @@ export function activate(context: vscode.ExtensionContext) {
                 description: formatClusterProfileDescription(profile),
                 profile,
             })),
+            ...(currentProfile.connectionMode === 'ssh'
+                ? [{
+                    label: '$(debug-disconnect) Disconnect',
+                    description: 'Switch back to Local mode',
+                    action: 'disconnect' as const,
+                }]
+                : []),
             {
                 label: '$(add) Add SSH Cluster...',
                 description: 'Create a new remote Slurm connection profile',
-                profile: undefined,
+                action: 'add' as const,
             },
         ];
 
@@ -555,19 +837,26 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        if (!selected.profile) {
+        if (selected.action === 'disconnect') {
+            await vscode.commands.executeCommand('slurmRemote.disconnect');
+            return;
+        }
+
+        if (selected.action === 'add') {
             await vscode.commands.executeCommand('slurmRemote.configure', 'ssh' as ConnectionMode);
+            return;
+        }
+
+        if (!selected.profile) {
             return;
         }
 
         await saveActiveCluster(selected.profile);
         refreshAllViewsForConnectionChange();
-        const selection = await vscode.window.showInformationMessage(
-            `Active SLURM cluster: ${formatClusterProfileLabel(selected.profile)}.`,
-            'Test Connection'
-        );
-        if (selection === 'Test Connection') {
+        if (selected.profile.connectionMode === 'ssh') {
             await vscode.commands.executeCommand('slurmRemote.testConnection');
+        } else {
+            vscode.window.showInformationMessage(`Active SLURM cluster: ${formatClusterProfileLabel(selected.profile)}.`);
         }
     });
 
@@ -622,10 +911,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         refreshAllViewsForConnectionChange();
         const activeProfile = getActiveClusterProfile();
-        const message = `Active SLURM cluster: ${formatClusterProfileLabel(activeProfile)}.`;
-        const selection = await vscode.window.showInformationMessage(message, 'Test Connection');
-        if (selection === 'Test Connection') {
+        if (activeProfile.connectionMode === 'ssh') {
             await vscode.commands.executeCommand('slurmRemote.testConnection');
+        } else {
+            vscode.window.showInformationMessage(`Active SLURM cluster: ${formatClusterProfileLabel(activeProfile)}.`);
         }
     });
 
@@ -1348,22 +1637,37 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    async function submitRemoteScript(uri?: vscode.Uri): Promise<void> {
+        const remoteScriptPath = await promptRemoteSubmitPath(
+            getRemoteSubmitPromptOptions(getRemoteSubmitDocumentInfo(uri))
+        );
+        if (!remoteScriptPath) {
+            return;
+        }
+
+        const result = await slurmService.submitJob(remoteScriptPath);
+        if (result.success) {
+            vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    }
+
+    const submitRemoteScriptCommand = vscode.commands.registerCommand('slurmJobs.submitRemoteScript', async (uri?: vscode.Uri) => {
+        if (!slurmService.isRemoteMode()) {
+            await vscode.commands.executeCommand('slurmJobs.submitCurrentFile', uri);
+            return;
+        }
+
+        await submitRemoteScript(uri);
+    });
+
     // Register submit current file command (for CodeLens)
     const submitCurrentFileCommand = vscode.commands.registerCommand('slurmJobs.submitCurrentFile', async (uri?: vscode.Uri) => {
         if (slurmService.isRemoteMode()) {
-            const remoteScriptPath = await promptRemoteSubmitPath();
-            if (!remoteScriptPath) {
-                return;
-            }
-
-            const result = await slurmService.submitJob(remoteScriptPath);
-            if (result.success) {
-                vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
-                slurmJobProvider.refresh();
-                jobHistoryProvider.refresh();
-            } else {
-                vscode.window.showErrorMessage(result.message);
-            }
+            await submitRemoteScript(uri);
             return;
         }
 
@@ -1421,6 +1725,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(refreshClusterOverviewCommand);
     context.subscriptions.push(refreshLeaderboardCommand);
     context.subscriptions.push(testRemoteConnectionCommand);
+    context.subscriptions.push(startSshSessionCommand);
+    context.subscriptions.push(disconnectRemoteCommand);
     context.subscriptions.push(switchClusterCommand);
     context.subscriptions.push(configureRemoteCommand);
     context.subscriptions.push(setLeaderboardTopUserCountCommand);
@@ -1441,6 +1747,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
     context.subscriptions.push(submitJobCommand);
+    context.subscriptions.push(submitRemoteScriptCommand);
     context.subscriptions.push(submitCurrentFileCommand);
     context.subscriptions.push(editorChangeListener);
     context.subscriptions.push(docChangeListener);

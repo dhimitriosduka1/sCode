@@ -1,4 +1,5 @@
 import { execFile, ExecFileOptions } from 'child_process';
+import { ensureDefaultSshControlDirectory, getDefaultSshControlOptions } from './sshConfig';
 
 export interface SlurmCommandResult {
     stdout: string;
@@ -97,7 +98,7 @@ function normalizeExecutorError(error: unknown, executable: string, requestedCom
 
     if (kind === 'ssh' && stderr && /permission denied/i.test(stderr)) {
         return cloneExecutorError(
-            `SSH authentication failed. SLURM Cluster Manager uses non-interactive OpenSSH with BatchMode=yes, so password prompts are not supported. Configure an SSH key/agent or a valid Kerberos/GSSAPI ticket for this host, then verify that "ssh <host> id -un" works without prompting. Details: ${stderr}`,
+            `SSH authentication failed. SLURM Cluster Manager uses non-interactive OpenSSH with BatchMode=yes for background commands, so password prompts are not supported there. Use "SLURM: Start 2FA SSH Login" or the copied SSH test command to authenticate once in a terminal, then retry. Details: ${stderr}`,
             error
         );
     }
@@ -221,6 +222,7 @@ export interface SshSlurmExecutorOptions {
     host: string;
     connectTimeoutSeconds?: number;
     execFileRunner?: ExecFileRunner;
+    prepareControlDirectory?: () => void;
 }
 
 export class SshSlurmExecutor implements SlurmExecutor {
@@ -230,22 +232,26 @@ export class SshSlurmExecutor implements SlurmExecutor {
     private readonly host: string;
     private readonly connectTimeoutSeconds: number;
     private readonly execFileRunner: ExecFileRunner;
+    private readonly prepareControlDirectory: () => void;
 
     constructor(options: SshSlurmExecutorOptions) {
         this.host = options.host.trim();
         this.connectTimeoutSeconds = normalizeTimeoutSeconds(options.connectTimeoutSeconds ?? 10);
         this.execFileRunner = options.execFileRunner ?? defaultExecFileRunner;
+        this.prepareControlDirectory = options.prepareControlDirectory ?? ensureDefaultSshControlDirectory;
         this.connectionKey = `ssh:${this.host}`;
     }
 
     async run(invocation: SlurmCommandInvocation): Promise<SlurmCommandResult> {
         this.validateHost();
+        this.prepareControlDirectory();
         const remoteCommand = this.buildRemoteCommand(invocation);
         const args = [
             '-o',
             'BatchMode=yes',
             '-o',
             `ConnectTimeout=${this.connectTimeoutSeconds}`,
+            ...getDefaultSshControlOptions().flatMap(option => ['-o', option]),
             this.host,
             remoteCommand,
         ];

@@ -204,6 +204,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "slurmJobs.submitRemoteScript",
+        "title": "Submit Remote Script",
+        "icon": "$(server-process)"
+      },
+      {
         "command": "slurmRemote.configure",
         "title": "Connect to SLURM Cluster",
         "icon": "$(settings-gear)"
@@ -217,13 +222,28 @@
         "command": "slurmRemote.testConnection",
         "title": "Test SLURM Connection",
         "icon": "$(plug)"
+      },
+      {
+        "command": "slurmRemote.startSshSession",
+        "title": "Start 2FA SSH Login",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "slurmRemote.disconnect",
+        "title": "Disconnect from SLURM Cluster",
+        "icon": "$(debug-disconnect)"
       }
     ],
     "menus": {
       "editor/title": [
         {
           "command": "slurmJobs.submitCurrentFile",
-          "when": "slurmJobs.isSlurmScript",
+          "when": "slurmJobs.isSlurmScript && slurmJobs.isLocalMode",
+          "group": "navigation"
+        },
+        {
+          "command": "slurmJobs.submitRemoteScript",
+          "when": "slurmJobs.isSlurmScript && slurmJobs.isRemoteMode",
           "group": "navigation"
         }
       ],

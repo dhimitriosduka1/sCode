@@ -9,6 +9,11 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Remote Connection Commands**: Added commands to configure the Slurm connection mode and test the active Slurm connection.
 - **Remote Log Opening**: Added read-only remote stdout/stderr opening for SSH mode with file metadata checks and a configurable size limit.
 - **Connection Setup UX**: Added a clickable SLURM status bar connection item for switching clusters and seeing connection health, plus direct "Connect with SSH" actions from connection failure messages.
+- **SSH Alias Picker**: The SSH setup flow now lists aliases from `~/.ssh/config` and can copy the exact non-interactive terminal test command for failed connections.
+- **Automatic SSH Session Reuse**: On Linux, macOS, and WSL, SSH mode now adds `ControlMaster=auto`, `ControlPersist=8h`, a local runtime `ControlPath`, and `ServerAliveInterval=60` to extension SSH commands so 2FA sessions can be reused without editing `~/.ssh/config`.
+- **2FA Login Helper**: SSH setup/test now starts an integrated-terminal OpenSSH login automatically when interactive 2FA/password authentication is required, so users can complete 2FA directly with OpenSSH and then retest.
+- **Remote Disconnect**: Added a disconnect command and switcher option that returns the extension to Local mode, with an optional OpenSSH ControlMaster close action.
+- **Remote Submit UX**: In SSH mode, the editor title action is now labeled **Submit Remote Script** and requires an explicit remote path instead of implying the local editor path will be submitted.
 - **Multiple Cluster Profiles**: Added named local/SSH cluster profiles and a switcher command for moving between Slurm clusters without editing settings manually.
 
 ### Security

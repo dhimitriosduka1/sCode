@@ -9,6 +9,9 @@ import {
     validatePartitionName,
     validateRemoteFilePath,
 } from '../slurmExecutor';
+import { supportsSshControlMaster } from '../sshConfig';
+
+const noopPrepareControlDirectory = () => {};
 
 describe('Slurm executors', () => {
     it('runs local commands through execFile without a shell command string', async () => {
@@ -42,6 +45,7 @@ describe('Slurm executors', () => {
             host: 'cluster-login',
             connectTimeoutSeconds: 7,
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         });
 
         await executor.run({
@@ -50,14 +54,23 @@ describe('Slurm executors', () => {
         });
 
         assert.equal(calls[0].file, 'ssh');
-        assert.deepEqual(calls[0].args.slice(0, 5), [
+        assert.deepEqual(calls[0].args.slice(0, 4), [
             '-o',
             'BatchMode=yes',
             '-o',
             'ConnectTimeout=7',
-            'cluster-login',
         ]);
-        assert.equal(calls[0].args[5], "scontrol 'show' 'job' '123_[1,3]'");
+        assert.ok(calls[0].args.includes('ServerAliveInterval=60'));
+        if (supportsSshControlMaster()) {
+            assert.ok(calls[0].args.includes('ControlMaster=auto'));
+            assert.ok(calls[0].args.includes('ControlPersist=8h'));
+            assert.ok(calls[0].args.some(arg => String(arg).startsWith('ControlPath=') && String(arg).includes('cm-%C')));
+        } else {
+            assert.ok(!calls[0].args.includes('ControlMaster=auto'));
+            assert.ok(!calls[0].args.some(arg => String(arg).startsWith('ControlPath=')));
+        }
+        assert.equal(calls[0].args.at(-2), 'cluster-login');
+        assert.equal(calls[0].args.at(-1), "scontrol 'show' 'job' '123_[1,3]'");
     });
 
     it('clamps SSH connection timeouts to a safe range', async () => {
@@ -71,11 +84,13 @@ describe('Slurm executors', () => {
             host: 'cluster-login',
             connectTimeoutSeconds: -5,
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         }).run({ command: 'id', args: ['-un'] });
         await new SshSlurmExecutor({
             host: 'cluster-login',
             connectTimeoutSeconds: 999,
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         }).run({ command: 'id', args: ['-un'] });
 
         assert.equal(calls[0].args[3], 'ConnectTimeout=1');
@@ -90,7 +105,7 @@ describe('Slurm executors', () => {
     });
 
     it('serializes remote working directories without interpolating raw input', () => {
-        const executor = new SshSlurmExecutor({ host: 'cluster-login' });
+        const executor = new SshSlurmExecutor({ host: 'cluster-login', prepareControlDirectory: noopPrepareControlDirectory });
 
         assert.equal(
             executor.buildRemoteCommand({
@@ -103,7 +118,7 @@ describe('Slurm executors', () => {
     });
 
     it('rejects relative remote working directories', () => {
-        const executor = new SshSlurmExecutor({ host: 'cluster-login' });
+        const executor = new SshSlurmExecutor({ host: 'cluster-login', prepareControlDirectory: noopPrepareControlDirectory });
 
         assert.throws(
             () => executor.buildRemoteCommand({
@@ -116,7 +131,7 @@ describe('Slurm executors', () => {
     });
 
     it('rejects unsupported commands and unsafe arguments', async () => {
-        const executor = new SshSlurmExecutor({ host: 'cluster-login' });
+        const executor = new SshSlurmExecutor({ host: 'cluster-login', prepareControlDirectory: noopPrepareControlDirectory });
 
         await assert.rejects(
             () => executor.run({ command: 'bash', args: ['-lc', 'whoami'] }),
@@ -162,6 +177,7 @@ describe('Slurm executors', () => {
         const executor = new SshSlurmExecutor({
             host: 'cluster-login',
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         });
 
         await assert.rejects(
@@ -179,6 +195,7 @@ describe('Slurm executors', () => {
         const executor = new SshSlurmExecutor({
             host: 'cluster-login',
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         });
 
         await assert.rejects(
@@ -196,6 +213,7 @@ describe('Slurm executors', () => {
         const executor = new SshSlurmExecutor({
             host: 'dduka@raven.mpcdf.mpg.de',
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         });
 
         await assert.rejects(
@@ -213,6 +231,7 @@ describe('Slurm executors', () => {
         const executor = new SshSlurmExecutor({
             host: 'cluster-login',
             execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
         });
 
         await assert.rejects(
