@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
     parseClusterAccountOverviewOutput,
+    parseClusterHogsOutput,
     parseClusterLeaderboardOutput,
     parsePartitionUsageOutput,
 } from '../slurmService';
@@ -76,6 +77,22 @@ describe('parseClusterLeaderboardOutput', () => {
         ]);
     });
 
+    it('multiplies per-node GPU requests by allocated node count', () => {
+        assert.deepEqual(parseClusterLeaderboardOutput([
+            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|4|gpu:a100:4',
+        ].join('\n')), [
+            {
+                username: 'dduka',
+                accounts: ['mpi_gpu'],
+                gpuCount: 48,
+                gpuJobCount: 3,
+                gpuTypes: [{ type: 'a100', count: 48 }],
+            },
+        ]);
+    });
+
     it('returns an empty leaderboard for empty squeue output', () => {
         assert.deepEqual(parseClusterLeaderboardOutput(''), []);
         assert.deepEqual(parseClusterLeaderboardOutput('\n\n'), []);
@@ -122,6 +139,36 @@ describe('parseClusterAccountOverviewOutput', () => {
                 users: [{ username: 'alice', gpuCount: 2, gpuJobCount: 1 }],
             },
         ]);
+    });
+
+    it('multiplies account GPU usage by allocated node count', () => {
+        assert.deepEqual(parseClusterAccountOverviewOutput([
+            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|4|gpu:a100:4',
+        ].join('\n')), [
+            {
+                account: 'mpi_gpu',
+                gpuCount: 48,
+                gpuJobCount: 3,
+                gpuTypes: [{ type: 'a100', count: 48 }],
+                users: [{ username: 'dduka', gpuCount: 48, gpuJobCount: 3 }],
+            },
+        ]);
+    });
+});
+
+describe('parseClusterHogsOutput', () => {
+    it('uses node counts when ranking top GPU hogs', () => {
+        assert.deepEqual(parseClusterHogsOutput([
+            'dduka|4|gpu:a100:4',
+            'dduka|4|gpu:a100:4',
+            'dduka|4|gpu:a100:4',
+            'alice|1|gpu:h100:8',
+        ].join('\n')), {
+            topJobHog: { username: 'dduka', jobCount: 3 },
+            topGpuHog: { username: 'dduka', gpuCount: 48 },
+        });
     });
 });
 
@@ -194,6 +241,16 @@ describe('parsePartitionUsageOutput', () => {
             { partition: 'gpu', pendingJobs: 1, runningJobs: 0 },
             { partition: 'h200', pendingJobs: 1, runningJobs: 0 },
         ]);
+    });
+
+    it('multiplies allocated partition GPUs by running job node count', () => {
+        const entries = parsePartitionUsageOutput(
+            'gpu|8|4/4/0/8|gpu:a100:4',
+            'gpu|R|4|gpu:a100:4',
+        );
+
+        assert.equal(entries[0].allocatedGpus, 16);
+        assert.equal(entries[0].idleGpus, 16);
     });
 
     it('combines multiple sinfo rows for the same partition', () => {

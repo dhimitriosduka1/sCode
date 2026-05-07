@@ -140,6 +140,37 @@ describe('Slurm service helper functions', () => {
         });
     });
 
+    it('prefers total AllocTRES GPUs over per-node TresPerNode counts', () => {
+        const details = parseJobDetailsOutput([
+            'JobId=789 JobName=multi-node',
+            'NumNodes=4',
+            'TresPerNode=gres/gpu:a100:4',
+            'AllocTRES=cpu=288,mem=1875G,gres/gpu:a100=16',
+            'StdOut=/logs/out',
+            'StdErr=/logs/err',
+            'Command=train.sbatch',
+            'WorkDir=/scratch/run',
+        ].join(' '));
+
+        assert.equal(details.gpuCount, 16);
+        assert.equal(details.gpuType, 'A100');
+    });
+
+    it('multiplies TresPerNode GPUs by NumNodes when AllocTRES is unavailable', () => {
+        const details = parseJobDetailsOutput([
+            'JobId=790 JobName=multi-node',
+            'NumNodes=4',
+            'TresPerNode=gres/gpu:a100:4',
+            'StdOut=/logs/out',
+            'StdErr=/logs/err',
+            'Command=train.sbatch',
+            'WorkDir=/scratch/run',
+        ].join(' '));
+
+        assert.equal(details.gpuCount, 16);
+        assert.equal(details.gpuType, 'A100');
+    });
+
     it('parses unavailable scontrol path values consistently', () => {
         const details = parseJobDetailsOutput([
             'JobId=456 JobName=pending',

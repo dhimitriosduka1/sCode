@@ -666,6 +666,30 @@ function readScontrolField(stdout: string, fieldName: string): string {
     return normalizeSlurmPathValue(match?.[1]);
 }
 
+function parseNodeCount(value: string | undefined): number {
+    const nodeCount = parseInt(value?.trim() ?? '', 10);
+    return Number.isFinite(nodeCount) && nodeCount > 0 ? nodeCount : 1;
+}
+
+function scaleGpuAllocationsByNodeCount(
+    allocations: ClusterLeaderboardGpuType[],
+    nodeCount: number,
+): ClusterLeaderboardGpuType[] {
+    const multiplier = Math.max(1, nodeCount);
+    return allocations.map(allocation => ({
+        type: allocation.type,
+        count: allocation.count * multiplier,
+    }));
+}
+
+function sumGpuAllocations(allocations: ClusterLeaderboardGpuType[]): number {
+    return allocations.reduce((total, allocation) => total + allocation.count, 0);
+}
+
+function findGpuAllocationType(allocations: ClusterLeaderboardGpuType[]): string | undefined {
+    return allocations.find(allocation => allocation.type !== 'generic')?.type.toUpperCase();
+}
+
 export function parseJobDetailsOutput(stdout: string): JobDetails & {
     gpuCount?: number;
     gpuType?: string;
@@ -673,47 +697,39 @@ export function parseJobDetailsOutput(stdout: string): JobDetails & {
     dependency?: string;
 } {
     // Parse GPU count and type from various SLURM fields
-    // Formats: TresPerNode=gres/gpu:h200:2, AllocTRES=...gres/gpu=2..., Gres=gpu:2
+    // Formats: AllocTRES=...gres/gpu=16..., TresPerNode=gres/gpu:h200:4, Gres=gpu:4
+    const nodeCount = parseNodeCount(stdout.match(/(?:^|\s)NumNodes=(\d+)/)?.[1]);
     let gpuCount: number | undefined;
     let gpuType: string | undefined;
 
-    // Try TresPerNode first (e.g., "gres/gpu:h200:2" -> type=h200, count=2)
-    const tresPerNodeMatch = stdout.match(/TresPerNode=gres\/gpu:([^:]+):(\d+)/);
-    if (tresPerNodeMatch) {
-        gpuType = tresPerNodeMatch[1].toUpperCase();
-        gpuCount = parseInt(tresPerNodeMatch[2], 10);
+    // AllocTRES reports the total allocation for a running job, so prefer it when present.
+    const allocTresMatch = stdout.match(/(?:^|\s)AllocTRES=([^\s]+)/);
+    const allocTresGpuAllocations = parseGpuAllocations(allocTresMatch?.[1] ?? '');
+    if (allocTresGpuAllocations.length > 0) {
+        gpuCount = sumGpuAllocations(allocTresGpuAllocations);
+        gpuType = findGpuAllocationType(allocTresGpuAllocations);
     }
 
-    // Fallback to AllocTRES for GPU type (e.g., "gres/gpu:h200=2")
+    // TresPerNode is per node. Multiply by NumNodes when AllocTRES is unavailable.
+    const tresPerNodeMatch = stdout.match(/(?:^|\s)TresPerNode=([^\s]+)/);
+    const tresPerNodeGpuAllocations = parseGpuAllocations(tresPerNodeMatch?.[1] ?? '');
     if (!gpuType) {
-        const allocTresTypeMatch = stdout.match(/AllocTRES=.*gres\/gpu:([^=]+)=(\d+)/);
-        if (allocTresTypeMatch) {
-            gpuType = allocTresTypeMatch[1].toUpperCase();
-            gpuCount = parseInt(allocTresTypeMatch[2], 10);
-        }
+        gpuType = findGpuAllocationType(tresPerNodeGpuAllocations);
+    }
+    if (!gpuCount && tresPerNodeGpuAllocations.length > 0) {
+        gpuCount = sumGpuAllocations(scaleGpuAllocationsByNodeCount(tresPerNodeGpuAllocations, nodeCount));
     }
 
-    // Fallback to AllocTRES for count only (e.g., "gres/gpu=2")
-    if (!gpuCount) {
-        const allocTresMatch = stdout.match(/AllocTRES=.*gres\/gpu=(\d+)/);
-        if (allocTresMatch) {
-            gpuCount = parseInt(allocTresMatch[1], 10);
-        }
-    }
-
-    // Fallback to Gres field (e.g., "Gres=gpu:4" or "Gres=gpu:a100:2")
+    // Fallback to Gres field (e.g., "Gres=gpu:4" or "Gres=gpu:a100:2"). This is also per node for --gres jobs.
     if (!gpuCount) {
         const gresMatch = stdout.match(/Gres=([^\s]+)/);
         if (gresMatch && gresMatch[1] !== '(null)') {
-            const gpuTypeCountMatch = gresMatch[1].match(/gpu:([^:]+):(\d+)/);
-            if (gpuTypeCountMatch) {
-                gpuType = gpuTypeCountMatch[1].toUpperCase();
-                gpuCount = parseInt(gpuTypeCountMatch[2], 10);
-            } else {
-                const gpuCountMatch = gresMatch[1].match(/gpu:(\d+)/);
-                if (gpuCountMatch) {
-                    gpuCount = parseInt(gpuCountMatch[1], 10);
-                }
+            const gresGpuAllocations = parseGpuAllocations(gresMatch[1]);
+            if (!gpuType) {
+                gpuType = findGpuAllocationType(gresGpuAllocations);
+            }
+            if (gresGpuAllocations.length > 0) {
+                gpuCount = sumGpuAllocations(scaleGpuAllocationsByNodeCount(gresGpuAllocations, nodeCount));
             }
         }
     }
@@ -917,6 +933,11 @@ export interface ClusterLeaderboardGpuType {
     count: number;
 }
 
+export interface ClusterHogSummary {
+    topJobHog: { username: string; jobCount: number } | null;
+    topGpuHog: { username: string; gpuCount: number } | null;
+}
+
 export interface ClusterAccountOverviewEntry {
     account: string;
     gpuCount: number;
@@ -979,6 +1000,16 @@ function formatGpuTypeEntries(gpuTypes: Map<string, number>): ClusterLeaderboard
         .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
 }
 
+function addGpuTypes(target: Map<string, number> | undefined, allocations: ClusterLeaderboardGpuType[]): void {
+    if (!target) {
+        return;
+    }
+
+    for (const allocation of allocations) {
+        target.set(allocation.type, (target.get(allocation.type) || 0) + allocation.count);
+    }
+}
+
 export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboardEntry[] {
     const lines = stdout.trim().split('\n').filter(line => line.trim());
 
@@ -997,25 +1028,22 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
         if (!user) {
             continue;
         }
+        const hasNodeColumn = parts.length >= 4;
         const hasAccountColumn = parts.length >= 3;
         const account = hasAccountColumn ? normalizeSlurmAccount(parts[1] || '') : undefined;
-        const gres = (hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
-        const gpuAllocations = parseGpuAllocations(gres);
+        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
+        const gres = (hasNodeColumn ? parts[3] : hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
+        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
 
         if (gpuAllocations.length > 0) {
-            const jobGpuCount = gpuAllocations.reduce((total, allocation) => total + allocation.count, 0);
+            const jobGpuCount = sumGpuAllocations(gpuAllocations);
             gpuJobCounts.set(user, (gpuJobCounts.get(user) || 0) + 1);
             gpuCounts.set(user, (gpuCounts.get(user) || 0) + jobGpuCount);
 
             if (!gpuTypesByUser.has(user)) {
                 gpuTypesByUser.set(user, new Map<string, number>());
             }
-            const userGpuTypes = gpuTypesByUser.get(user);
-            for (const allocation of gpuAllocations) {
-                if (userGpuTypes) {
-                    userGpuTypes.set(allocation.type, (userGpuTypes.get(allocation.type) || 0) + allocation.count);
-                }
-            }
+            addGpuTypes(gpuTypesByUser.get(user), gpuAllocations);
 
             if (account) {
                 if (!accountsByUser.has(user)) {
@@ -1054,28 +1082,25 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
             continue;
         }
 
+        const hasNodeColumn = parts.length >= 4;
         const hasAccountColumn = parts.length >= 3;
         const account = (hasAccountColumn ? normalizeSlurmAccount(parts[1] || '') : undefined) ?? 'unknown';
-        const gres = (hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
-        const gpuAllocations = parseGpuAllocations(gres);
+        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
+        const gres = (hasNodeColumn ? parts[3] : hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
+        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
 
         if (gpuAllocations.length === 0) {
             continue;
         }
 
-        const jobGpuCount = gpuAllocations.reduce((total, allocation) => total + allocation.count, 0);
+        const jobGpuCount = sumGpuAllocations(gpuAllocations);
         gpuJobCounts.set(account, (gpuJobCounts.get(account) || 0) + 1);
         gpuCounts.set(account, (gpuCounts.get(account) || 0) + jobGpuCount);
 
         if (!gpuTypesByAccount.has(account)) {
             gpuTypesByAccount.set(account, new Map<string, number>());
         }
-        const accountGpuTypes = gpuTypesByAccount.get(account);
-        for (const allocation of gpuAllocations) {
-            if (accountGpuTypes) {
-                accountGpuTypes.set(allocation.type, (accountGpuTypes.get(allocation.type) || 0) + allocation.count);
-            }
-        }
+        addGpuTypes(gpuTypesByAccount.get(account), gpuAllocations);
 
         if (!usersByAccount.has(account)) {
             usersByAccount.set(account, new Map<string, ClusterAccountOverviewUser>());
@@ -1097,6 +1122,51 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
         users: Array.from(usersByAccount.get(account)?.values() || [])
             .sort((a, b) => b.gpuCount - a.gpuCount || b.gpuJobCount - a.gpuJobCount || a.username.localeCompare(b.username)),
     }));
+}
+
+export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
+    const lines = stdout.trim().split('\n').filter(line => line.trim());
+
+    if (lines.length === 0) {
+        return { topJobHog: null, topGpuHog: null };
+    }
+
+    const jobCounts = new Map<string, number>();
+    const gpuCounts = new Map<string, number>();
+
+    for (const line of lines) {
+        const parts = line.split('|');
+        const user = parts[0].trim();
+        if (!user) {
+            continue;
+        }
+
+        const hasNodeColumn = parts.length >= 3;
+        const nodeCount = hasNodeColumn ? parseNodeCount(parts[1]) : 1;
+        const gres = (hasNodeColumn ? parts[2] : parts[1])?.trim() || '';
+        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+
+        jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
+        if (gpuAllocations.length > 0) {
+            gpuCounts.set(user, (gpuCounts.get(user) || 0) + sumGpuAllocations(gpuAllocations));
+        }
+    }
+
+    let topJobHog: ClusterHogSummary['topJobHog'] = null;
+    for (const [username, jobCount] of jobCounts.entries()) {
+        if (!topJobHog || jobCount > topJobHog.jobCount) {
+            topJobHog = { username, jobCount };
+        }
+    }
+
+    let topGpuHog: ClusterHogSummary['topGpuHog'] = null;
+    for (const [username, gpuCount] of gpuCounts.entries()) {
+        if (!topGpuHog || gpuCount > topGpuHog.gpuCount) {
+            topGpuHog = { username, gpuCount };
+        }
+    }
+
+    return { topJobHog, topGpuHog };
 }
 
 export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: string): PartitionUsageEntry[] {
@@ -1169,7 +1239,9 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         }
 
         const state = parts[1].trim().toUpperCase();
-        const gres = parts.slice(2).join('|');
+        const hasNodeColumn = parts.length >= 4;
+        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
+        const gres = parts.slice(hasNodeColumn ? 3 : 2).join('|');
         const partitionInfos = parsePartitionList(parts[0]);
         if (partitionInfos.length === 0) {
             continue;
@@ -1179,8 +1251,8 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
             const partitionInfo = partitionInfos[0];
             const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
             entry.runningJobs += 1;
-            const gpuAllocations = parseGpuAllocations(gres);
-            entry.allocatedGpus += gpuAllocations.reduce((total, allocation) => total + allocation.count, 0);
+            const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+            entry.allocatedGpus += sumGpuAllocations(gpuAllocations);
         } else if (state === 'PD' || state === 'PENDING') {
             for (const partitionInfo of partitionInfos) {
                 const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
@@ -1554,10 +1626,7 @@ export class SlurmService {
      * Get the users with the most running jobs and most GPUs on the cluster
      * @returns Object with top job hog and top GPU hog, or null if unavailable
      */
-    async getClusterHogs(): Promise<{
-        topJobHog: { username: string; jobCount: number } | null;
-        topGpuHog: { username: string; gpuCount: number } | null;
-    }> {
+    async getClusterHogs(): Promise<ClusterHogSummary> {
         if (this.isMockMode()) {
             return {
                 topJobHog: { username: 'nova42', jobCount: 8 },
@@ -1566,65 +1635,12 @@ export class SlurmService {
         }
 
         try {
-            // Get all running jobs with usernames and GRES (GPU resources)
-            // %u = username, %b = GRES (e.g., "gpu:4", "gpu:a100:2", "(null)")
+            // %D = node count. %b is a per-node GPU request on common Slurm setups.
             const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%b"'
+                'squeue --noheader --state=R --format="%u|%D|%b"'
             );
 
-            const lines = stdout.trim().split('\n').filter(l => l.trim());
-
-            if (lines.length === 0) {
-                return { topJobHog: null, topGpuHog: null };
-            }
-
-            // Count jobs and GPUs per user
-            const jobCounts = new Map<string, number>();
-            const gpuCounts = new Map<string, number>();
-
-            for (const line of lines) {
-                const parts = line.split('|');
-                const user = parts[0].trim();
-                const gres = parts[1]?.trim() || '';
-
-                // Count jobs
-                jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
-
-                // Parse GPU count from GRES field
-                // Formats: "gpu:4", "gpu:a100:2", "gpu:h200:1", "(null)", "N/A", ""
-                if (gres && gres !== '(null)' && gres !== 'N/A') {
-                    const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
-                    if (gpuMatch) {
-                        const gpus = parseInt(gpuMatch[1], 10);
-                        gpuCounts.set(user, (gpuCounts.get(user) || 0) + gpus);
-                    }
-                }
-            }
-
-            // Find the user with most jobs
-            let topJobUser = '';
-            let maxJobs = 0;
-            jobCounts.forEach((count, user) => {
-                if (count > maxJobs) {
-                    maxJobs = count;
-                    topJobUser = user;
-                }
-            });
-
-            // Find the user with most GPUs
-            let topGpuUser = '';
-            let maxGpus = 0;
-            gpuCounts.forEach((count, user) => {
-                if (count > maxGpus) {
-                    maxGpus = count;
-                    topGpuUser = user;
-                }
-            });
-
-            return {
-                topJobHog: maxJobs > 0 ? { username: topJobUser, jobCount: maxJobs } : null,
-                topGpuHog: maxGpus > 0 ? { username: topGpuUser, gpuCount: maxGpus } : null,
-            };
+            return parseClusterHogsOutput(stdout);
         } catch (error) {
             console.error('Failed to get cluster hogs:', error);
             return { topJobHog: null, topGpuHog: null };
@@ -1642,7 +1658,7 @@ export class SlurmService {
 
         try {
             const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%a|%b"'
+                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
             );
 
             return parseClusterLeaderboardOutput(stdout);
@@ -1663,7 +1679,7 @@ export class SlurmService {
 
         try {
             const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%a|%b"'
+                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
             );
 
             return parseClusterAccountOverviewOutput(stdout);
@@ -1690,7 +1706,7 @@ export class SlurmService {
             let squeueStdout = '';
             try {
                 const squeueResult = await execAsync(
-                    'squeue --noheader --format="%P|%t|%b" 2>/dev/null'
+                    'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
                 );
                 squeueStdout = squeueResult.stdout;
             } catch {
@@ -1743,7 +1759,7 @@ export class SlurmService {
                 // Job counts by state
                 execAsync(`squeue -p ${partition} --noheader --format="%t" 2>/dev/null`),
                 // Running jobs' GPU allocation
-                execAsync(`squeue -p ${partition} --noheader --state=R --format="%b" 2>/dev/null`),
+                execAsync(`squeue -p ${partition} --noheader --state=R --format="%D|%b" 2>/dev/null`),
             ]);
 
             // Parse sinfo output
@@ -1780,13 +1796,12 @@ export class SlurmService {
             let allocatedGpus = 0;
             const gpuLines = allocGpuResult.stdout.trim().split('\n').filter(l => l.trim());
             for (const line of gpuLines) {
-                const gres = line.trim();
-                if (gres && gres !== '(null)' && gres !== 'N/A') {
-                    const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
-                    if (gpuMatch) {
-                        allocatedGpus += parseInt(gpuMatch[1], 10);
-                    }
-                }
+                const parts = line.split('|');
+                const hasNodeColumn = parts.length >= 2;
+                const nodeCount = hasNodeColumn ? parseNodeCount(parts[0]) : 1;
+                const gres = (hasNodeColumn ? parts.slice(1).join('|') : line).trim();
+                const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+                allocatedGpus += sumGpuAllocations(gpuAllocations);
             }
 
             // Count running and pending jobs
