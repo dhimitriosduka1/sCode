@@ -111,6 +111,51 @@ describe('SlurmService remote executor integration', () => {
         assert.equal(jobs[0].gpuType, 'H200');
     });
 
+    it('deduplicates concurrent remote username lookups', async () => {
+        let idCalls = 0;
+        let resolveIdStarted: (() => void) | undefined;
+        let releaseIdLookup: (() => void) | undefined;
+        const idStarted = new Promise<void>(resolve => {
+            resolveIdStarted = resolve;
+        });
+        const idBlocked = new Promise<void>(resolve => {
+            releaseIdLookup = resolve;
+        });
+
+        const executor = new FakeExecutor('ssh', async (invocation) => {
+            if (invocation.command === 'id') {
+                idCalls++;
+                resolveIdStarted?.();
+                await idBlocked;
+                return { stdout: 'remote-user\n', stderr: '' };
+            }
+            if (invocation.command === 'squeue' && invocation.args?.includes('--version')) {
+                return { stdout: 'slurm 24.05.0\n', stderr: '' };
+            }
+            if (invocation.command === 'squeue') {
+                assert.deepEqual(invocation.args?.slice(0, 2), ['-u', 'remote-user']);
+                return { stdout: '', stderr: '' };
+            }
+            if (invocation.command === 'nvidia-smi') {
+                throw new Error('not available');
+            }
+            throw new Error(`Unexpected command: ${invocation.command}`);
+        });
+        const service = new SlurmService(undefined, undefined, executor);
+
+        const jobsPromise = service.getJobs();
+        await idStarted;
+        const testConnectionPromise = service.testConnection();
+        await new Promise(resolve => setImmediate(resolve));
+
+        assert.equal(idCalls, 1);
+
+        releaseIdLookup?.();
+        await Promise.all([jobsPromise, testConnectionPromise]);
+
+        assert.equal(idCalls, 1);
+    });
+
     it('submits remote jobs only through explicit absolute remote paths', async () => {
         const executor = new FakeExecutor('ssh', (invocation) => {
             if (invocation.command === 'sbatch') {

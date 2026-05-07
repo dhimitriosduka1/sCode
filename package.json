@@ -551,9 +551,10 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
+    "pretest": "npm run clean && npm run compile",
     "test": "node --test out/test/*.test.js",
     "lint": "eslint src --ext ts"
   },

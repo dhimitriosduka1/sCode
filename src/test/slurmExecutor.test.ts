@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
     ExecFileRunner,
+    isTransientSshStartupError,
     LocalSlurmExecutor,
     posixShellQuote,
     SshSlurmExecutor,
@@ -95,6 +96,95 @@ describe('Slurm executors', () => {
 
         assert.equal(calls[0].args[3], 'ConnectTimeout=1');
         assert.equal(calls[1].args[3], 'ConnectTimeout=120');
+    });
+
+    it('serializes concurrent SSH invocations to avoid login-node connection bursts', async () => {
+        const startedCommands: string[] = [];
+        let releaseFirstCommand: (() => void) | undefined;
+        const firstCommandRunning = new Promise<void>(resolve => {
+            releaseFirstCommand = resolve;
+        });
+
+        const runner: ExecFileRunner = async (_file, args) => {
+            const remoteCommand = String(args.at(-1));
+            startedCommands.push(remoteCommand);
+            if (remoteCommand === "id '-un'") {
+                await firstCommandRunning;
+            }
+            return { stdout: 'ok', stderr: '' };
+        };
+
+        const executor = new SshSlurmExecutor({
+            host: 'cluster-login',
+            execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
+        });
+
+        const firstRun = executor.run({ command: 'id', args: ['-un'] });
+        const secondRun = executor.run({ command: 'squeue', args: ['--version'] });
+
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(startedCommands, ["id '-un'"]);
+
+        releaseFirstCommand?.();
+        await Promise.all([firstRun, secondRun]);
+
+        assert.deepEqual(startedCommands, [
+            "id '-un'",
+            "squeue '--version'",
+        ]);
+    });
+
+    it('retries transient SSH startup failures before surfacing an error', async () => {
+        let attempts = 0;
+        const runner: ExecFileRunner = async () => {
+            attempts++;
+            if (attempts === 1) {
+                const error = new Error('Command failed') as Error & { stderr: string };
+                error.stderr = 'kex_exchange_identification: Connection closed by remote host\nConnection closed by 139.19.94.40 port 22';
+                throw error;
+            }
+
+            return { stdout: 'ok', stderr: '' };
+        };
+
+        const executor = new SshSlurmExecutor({
+            host: 'cluster-login',
+            execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
+            retryDelayMs: () => 0,
+        });
+
+        assert.deepEqual(await executor.run({ command: 'id', args: ['-un'] }), { stdout: 'ok', stderr: '' });
+        assert.equal(attempts, 2);
+    });
+
+    it('reports exhausted transient SSH startup failures with actionable context', async () => {
+        const runner: ExecFileRunner = async () => {
+            const error = new Error('Command failed') as Error & { stderr: string };
+            error.stderr = 'kex_exchange_identification: Connection closed by remote host';
+            throw error;
+        };
+
+        const executor = new SshSlurmExecutor({
+            host: 'cluster-login',
+            execFileRunner: runner,
+            prepareControlDirectory: noopPrepareControlDirectory,
+            retryDelayMs: () => 0,
+        });
+
+        await assert.rejects(
+            () => executor.run({ command: 'id', args: ['-un'] }),
+            /retries.*connection still failed|retried automatically/i
+        );
+    });
+
+    it('detects transient SSH startup failures from OpenSSH stderr', () => {
+        const error = new Error('Command failed') as Error & { stderr: string };
+        error.stderr = 'kex_exchange_identification: Connection closed by remote host\nConnection closed by 139.19.94.40 port 22';
+
+        assert.equal(isTransientSshStartupError(error), true);
+        assert.equal(isTransientSshStartupError(new Error('Permission denied (publickey,password).')), false);
     });
 
     it('quotes remote arguments with spaces and single quotes', () => {

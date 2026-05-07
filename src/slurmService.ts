@@ -1396,6 +1396,7 @@ export class SlurmService {
     private mockModeProvider: SlurmMockModeProvider;
     private mockJobs?: SlurmJob[];
     private currentUsername?: string;
+    private currentUsernamePromise?: Promise<string>;
 
     constructor(
         pathCache?: JobPathCache,
@@ -1412,6 +1413,7 @@ export class SlurmService {
     setExecutor(executor: SlurmExecutor): void {
         this.executor = executor;
         this.currentUsername = undefined;
+        this.currentUsernamePromise = undefined;
     }
 
     isRemoteMode(): boolean {
@@ -1451,6 +1453,19 @@ export class SlurmService {
             return this.currentUsername;
         }
 
+        if (this.currentUsernamePromise) {
+            return this.currentUsernamePromise;
+        }
+
+        this.currentUsernamePromise = this.resolveCurrentUsername();
+        try {
+            return await this.currentUsernamePromise;
+        } finally {
+            this.currentUsernamePromise = undefined;
+        }
+    }
+
+    private async resolveCurrentUsername(): Promise<string> {
         try {
             const { stdout } = await this.executor.run({ command: 'id', args: ['-un'] });
             const username = stdout.trim();

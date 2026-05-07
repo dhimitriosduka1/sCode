@@ -16,6 +16,9 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Remote Submit UX**: In SSH mode, the editor title action is now labeled **Submit Remote Script** and requires an explicit remote path instead of implying the local editor path will be submitted.
 - **Multiple Cluster Profiles**: Added named local/SSH cluster profiles and a switcher command for moving between Slurm clusters without editing settings manually.
 
+### Improved
+- **SSH Connection Stability**: SSH Slurm commands are now serialized and transient `kex_exchange_identification` startup failures are retried automatically, reducing random failures when a ControlMaster session expires and multiple sidebar views refresh at once.
+
 ### Security
 - **Structured Command Execution**: Slurm commands now go through a local/SSH executor abstraction using structured arguments instead of shell-string command construction.
 - **SSH Safety Defaults**: SSH mode uses `BatchMode=yes`, keeps OpenSSH host-key verification enabled, rejects unsafe command arguments, and does not collect or store SSH passwords.

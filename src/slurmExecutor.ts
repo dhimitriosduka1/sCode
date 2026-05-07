@@ -39,6 +39,7 @@ export const ALLOWED_SLURM_COMMANDS = new Set([
 ]);
 
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
+const SSH_TRANSIENT_RETRY_DELAYS_MS = [250, 750];
 
 const defaultExecFileRunner: ExecFileRunner = (file, args, options) => new Promise((resolve, reject) => {
     execFile(file, [...args], options, (error, stdout, stderr) => {
@@ -74,6 +75,23 @@ function cloneExecutorError(message: string, source: unknown): ExecutorError {
     error.stderr = sourceError.stderr ?? '';
     error.code = sourceError.code;
     return error;
+}
+
+export function isTransientSshStartupError(error: unknown): boolean {
+    const executorError = error as Partial<ExecutorError>;
+    const text = [
+        executorError.stderr,
+        executorError.stdout,
+        error instanceof Error ? error.message : String(error),
+    ].filter(Boolean).join('\n');
+
+    return /kex_exchange_identification/i.test(text) ||
+        /connection closed by remote host/i.test(text) ||
+        /connection closed by .* port 22/i.test(text) ||
+        /connection reset by peer/i.test(text) ||
+        /banner exchange/i.test(text) ||
+        /mux_client_request_session.*(?:read from master failed|connection failed)/i.test(text) ||
+        /control socket connect.*no such file/i.test(text);
 }
 
 function normalizeExecutorError(error: unknown, executable: string, requestedCommand: string, kind: SlurmExecutor['kind']): Error {
@@ -113,6 +131,14 @@ function normalizeExecutorError(error: unknown, executable: string, requestedCom
     if (kind === 'ssh' && stderr && /\b(command not found|not found)\b/i.test(stderr)) {
         return cloneExecutorError(
             `Remote Slurm command not found: ${requestedCommand}. Make sure Slurm commands are available on the remote host PATH for non-interactive SSH sessions. Details: ${stderr}`,
+            error
+        );
+    }
+
+    if (kind === 'ssh' && isTransientSshStartupError(error)) {
+        const details = stderr || (error instanceof Error ? error.message : String(error));
+        return cloneExecutorError(
+            `SSH connection was closed by the remote host during startup. SLURM Cluster Manager retried automatically, but the connection still failed. This is often caused by login-node connection limits or an expired SSH ControlMaster session. Try again, or start a fresh SSH login session if it persists. Details: ${details}`,
             error
         );
     }
@@ -181,6 +207,10 @@ function normalizeMaxBuffer(maxBuffer: number | undefined): number {
     return Math.max(1024, Math.floor(maxBuffer));
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function validateInvocation(invocation: SlurmCommandInvocation): { command: string; args: string[] } {
     validateSlurmCommand(invocation.command);
     const args = invocation.args ?? [];
@@ -223,6 +253,7 @@ export interface SshSlurmExecutorOptions {
     connectTimeoutSeconds?: number;
     execFileRunner?: ExecFileRunner;
     prepareControlDirectory?: () => void;
+    retryDelayMs?: (retryIndex: number) => number;
 }
 
 export class SshSlurmExecutor implements SlurmExecutor {
@@ -233,16 +264,55 @@ export class SshSlurmExecutor implements SlurmExecutor {
     private readonly connectTimeoutSeconds: number;
     private readonly execFileRunner: ExecFileRunner;
     private readonly prepareControlDirectory: () => void;
+    private readonly retryDelayMs: (retryIndex: number) => number;
+    private runQueue: Promise<void> = Promise.resolve();
 
     constructor(options: SshSlurmExecutorOptions) {
         this.host = options.host.trim();
         this.connectTimeoutSeconds = normalizeTimeoutSeconds(options.connectTimeoutSeconds ?? 10);
         this.execFileRunner = options.execFileRunner ?? defaultExecFileRunner;
         this.prepareControlDirectory = options.prepareControlDirectory ?? ensureDefaultSshControlDirectory;
+        this.retryDelayMs = options.retryDelayMs ?? ((retryIndex: number) => SSH_TRANSIENT_RETRY_DELAYS_MS[retryIndex] ?? 0);
         this.connectionKey = `ssh:${this.host}`;
     }
 
     async run(invocation: SlurmCommandInvocation): Promise<SlurmCommandResult> {
+        const previousRun = this.runQueue;
+        let releaseRun = () => {};
+        this.runQueue = new Promise<void>(resolve => {
+            releaseRun = resolve;
+        });
+
+        await previousRun;
+        try {
+            return await this.runWithTransientRetry(invocation);
+        } finally {
+            releaseRun();
+        }
+    }
+
+    private async runWithTransientRetry(invocation: SlurmCommandInvocation): Promise<SlurmCommandResult> {
+        const maxAttempts = SSH_TRANSIENT_RETRY_DELAYS_MS.length + 1;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            try {
+                return await this.runOnce(invocation);
+            } catch (error) {
+                if (!isTransientSshStartupError(error) || attempt === maxAttempts - 1) {
+                    throw normalizeExecutorError(error, 'ssh', invocation.command, this.kind);
+                }
+
+                const delayMs = Math.max(0, this.retryDelayMs(attempt));
+                if (delayMs > 0) {
+                    await sleep(delayMs);
+                }
+            }
+        }
+
+        throw new Error('Unreachable SSH retry state');
+    }
+
+    private async runOnce(invocation: SlurmCommandInvocation): Promise<SlurmCommandResult> {
         this.validateHost();
         this.prepareControlDirectory();
         const remoteCommand = this.buildRemoteCommand(invocation);
