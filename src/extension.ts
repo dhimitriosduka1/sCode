@@ -1572,110 +1572,114 @@ async function testRemoteConnectionCommand(slurmService: SlurmService): Promise<
 }
 
 /**
- * Troubleshoot connection menu command
+ * Troubleshoot connection menu command — context-aware, minimal UI.
+ *
+ * Local mode   → 2 items: "Connect to remote" + mock mode toggle
+ * Remote error → 4 items: retry, reconfigure, local, guide
+ * Remote ok    → 3 items: status, change host, local
  */
 async function troubleshootConnectionCommand(slurmService: SlurmService): Promise<void> {
     const host = slurmService.getRemoteHost();
     const isRemote = slurmService.isRemoteMode();
-    const items: vscode.QuickPickItem[] = [];
-
-    items.push({
-        label: 'Status Details',
-        kind: vscode.QuickPickItemKind.Separator
-    });
-
-    if (isRemote) {
-        let statusIcon = '$(sync~spin)';
-        let statusText = 'Checking...';
-        if (sshConnectionState === 'online') {
-            statusIcon = '$(cloud)';
-            statusText = 'Online & Connected';
-        } else if (sshConnectionState === 'error') {
-            statusIcon = '$(cloud-offline)';
-            statusText = 'Disconnected / Connection Error';
-        }
-        items.push({
-            label: `${statusIcon} Current Host: ${host}`,
-            description: `State: ${statusText}`
-        });
-    } else {
-        items.push({
-            label: '$(server) Execution Mode: Local',
-            description: 'Running SLURM commands directly on your local system'
-        });
-    }
-
-    items.push({
-        label: 'Diagnostic Actions',
-        kind: vscode.QuickPickItemKind.Separator
-    });
-
-    if (isRemote) {
-        items.push({
-            label: '$(debug) Test Connection & Retrieve Version',
-            description: 'Verifies SSH multiplexing & runs squeue --version'
-        });
-    }
-
-    items.push({
-        label: '$(settings-gear) Configure / Setup Remote SSH...',
-        description: 'Launch the stepped remote SSH configuration wizard'
-    });
-
-    items.push({
-        label: '$(terminal) Open local ~/.ssh/config',
-        description: 'Open your SSH configuration file to inspect or edit connection aliases'
-    });
-
-    items.push({
-        label: '$(question) Open SSH Troubleshooting Guide',
-        description: 'Show tips for public key authentication, ssh-agent, and firewalls'
-    });
-
-    if (isRemote) {
-        items.push({
-            label: '$(play) Switch to Local Execution Mode',
-            description: 'Disable SSH remote connection and run commands locally'
-        });
-    }
-
     const config = vscode.workspace.getConfiguration('slurmClusterManager');
     const mockMode = config.get<boolean>('mockMode', false);
-    items.push({
-        label: mockMode ? '$(beaker) Disable Mock Mode' : '$(beaker) Enable Mock Mode',
-        description: mockMode ? 'Turn off mock mode and run real SLURM commands' : 'Simulate SLURM environment with offline mock data'
-    });
 
-    const selected = await vscode.window.showQuickPick(items, {
-        title: 'SLURM Cluster Manager: Connection Diagnostics & Troubleshooting',
-        placeHolder: 'Select a troubleshooting action'
-    });
+    // ── Local mode: single clear CTA ─────────────────────────────────────────
+    if (!isRemote) {
+        const localItems: vscode.QuickPickItem[] = [
+            {
+                label: '$(settings-gear) Connect to a Remote SLURM Cluster...',
+                description: 'Set up passwordless SSH to a remote cluster',
+                alwaysShow: true
+            },
+            {
+                label: mockMode ? '$(beaker) Disable Mock Mode' : '$(beaker) Enable Mock Mode',
+                description: mockMode ? 'Switch back to real SLURM commands' : 'Simulate cluster data without SSH',
+                alwaysShow: true
+            }
+        ];
 
-    if (!selected) {
+        const localSelected = await vscode.window.showQuickPick(localItems, {
+            title: 'SLURM: Running Locally',
+            placeHolder: 'No remote host configured'
+        });
+        if (!localSelected) { return; }
+
+        if (localSelected.label.includes('Connect to a Remote')) {
+            vscode.commands.executeCommand('slurmJobs.setupRemoteSSH');
+        } else if (localSelected.label.includes('Mock Mode')) {
+            await config.update('mockMode', !mockMode, vscode.ConfigurationTarget.Global);
+        }
         return;
     }
 
-    if (selected.label.includes('Test Connection')) {
+    // ── Remote mode: state-aware items ───────────────────────────────────────
+    const isError = sshConnectionState === 'error';
+    const remoteItems: vscode.QuickPickItem[] = [];
+
+    if (isError) {
+        remoteItems.push({
+            label: `$(cloud-offline) ${host}`,
+            description: 'Connection failed — select a recovery action below',
+            alwaysShow: true
+        });
+        remoteItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        remoteItems.push({
+            label: '$(refresh) Retry Connection',
+            description: `Re-test SSH access to '${host}'`,
+            alwaysShow: true
+        });
+        remoteItems.push({
+            label: '$(settings-gear) Reconfigure SSH Connection...',
+            description: 'Change host, working directory, or key settings',
+            alwaysShow: true
+        });
+        remoteItems.push({
+            label: '$(debug-disconnect) Switch to Local Mode',
+            description: 'Stop using SSH and run SLURM commands locally',
+            alwaysShow: true
+        });
+        remoteItems.push({
+            label: '$(question) View Troubleshooting Guide',
+            description: 'Tips for key auth, ssh-agent, and firewalls',
+            alwaysShow: true
+        });
+    } else {
+        remoteItems.push({
+            label: `$(cloud) ${host}`,
+            description: sshConnectionState === 'connecting' ? 'Verifying connection...' : 'SSH multiplexed connection active',
+            alwaysShow: true
+        });
+        remoteItems.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        remoteItems.push({
+            label: '$(settings-gear) Change Remote Host...',
+            description: 'Configure a different cluster or working directory',
+            alwaysShow: true
+        });
+        remoteItems.push({
+            label: '$(debug-disconnect) Switch to Local Mode',
+            description: 'Disconnect and run SLURM commands locally instead',
+            alwaysShow: true
+        });
+    }
+
+    const remoteSelected = await vscode.window.showQuickPick(remoteItems, {
+        title: `SLURM: Remote Cluster — ${host}`,
+        placeHolder: isError ? 'Connection error — choose a recovery action' : 'Manage your remote connection'
+    });
+
+    if (!remoteSelected) { return; }
+
+    if (remoteSelected.label.includes('Retry Connection')) {
         vscode.commands.executeCommand('slurmJobs.testRemoteConnection');
-    } else if (selected.label.includes('Configure / Setup Remote SSH')) {
+    } else if (remoteSelected.label.includes('Reconfigure SSH') || remoteSelected.label.includes('Change Remote Host')) {
         vscode.commands.executeCommand('slurmJobs.setupRemoteSSH');
-    } else if (selected.label.includes('Open local ~/.ssh/config')) {
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-        if (fs.existsSync(sshConfigPath)) {
-            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(sshConfigPath));
-            await vscode.window.showTextDocument(doc);
-        } else {
-            vscode.window.showErrorMessage(`~/.ssh/config file does not exist at ${sshConfigPath}`);
-        }
-    } else if (selected.label.includes('Open SSH Troubleshooting Guide')) {
-        showSshTroubleshootingGuide();
-    } else if (selected.label.includes('Switch to Local Execution')) {
+    } else if (remoteSelected.label.includes('Switch to Local')) {
         await config.update('remoteHost', '', vscode.ConfigurationTarget.Global);
         await config.update('remoteWorkDir', '', vscode.ConfigurationTarget.Global);
         vscode.window.showInformationMessage('Switched to local execution mode.');
-    } else if (selected.label.includes('Enable Mock Mode') || selected.label.includes('Disable Mock Mode')) {
-        await config.update('mockMode', !mockMode, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`Mock mode ${!mockMode ? 'enabled' : 'disabled'}.`);
+    } else if (remoteSelected.label.includes('View Troubleshooting Guide')) {
+        showSshTroubleshootingGuide();
     }
 }
 
