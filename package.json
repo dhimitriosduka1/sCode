@@ -202,6 +202,16 @@
         "command": "slurmJobs.submitCurrentFile",
         "title": "Submit to SLURM",
         "icon": "$(play)"
+      },
+      {
+        "command": "slurmJobs.submitJobWithDependency",
+        "title": "Submit Job with Dependency...",
+        "icon": "$(link)"
+      },
+      {
+        "command": "slurmJobs.submitCurrentFileWithDependency",
+        "title": "Submit to SLURM with Dependency...",
+        "icon": "$(link)"
       }
     ],
     "menus": {
@@ -209,7 +219,12 @@
         {
           "command": "slurmJobs.submitCurrentFile",
           "when": "slurmJobs.isSlurmScript",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "slurmJobs.submitCurrentFileWithDependency",
+          "when": "slurmJobs.isSlurmScript",
+          "group": "navigation@2"
         }
       ],
       "view/title": [
@@ -249,9 +264,14 @@
           "group": "navigation@5"
         },
         {
-          "command": "slurmJobs.cancelAllJobs",
+          "command": "slurmJobs.submitJobWithDependency",
           "when": "view == slurmJobs",
           "group": "navigation@6"
+        },
+        {
+          "command": "slurmJobs.cancelAllJobs",
+          "when": "view == slurmJobs",
+          "group": "navigation@7"
         },
         {
           "command": "slurmHistory.refresh",

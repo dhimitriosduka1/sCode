@@ -852,7 +852,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register submit job command
+    // Register submit job command (submits immediately)
     const submitJobCommand = vscode.commands.registerCommand('slurmJobs.submitJob', async () => {
         // Check if workspace is open
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -917,7 +917,85 @@ export function activate(context: vscode.ExtensionContext) {
 
         const scriptPath = selected.label;
 
-        // Get job dependencies if configured
+        // Submit the job immediately (no dependency)
+        const result = await slurmService.submitJob(scriptPath, undefined, undefined);
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            // Refresh the job list to show the new job
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Register submit job with dependency command
+    const submitJobWithDependencyCommand = vscode.commands.registerCommand('slurmJobs.submitJobWithDependency', async () => {
+        // Check if workspace is open
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showWarningMessage('Please open a workspace folder to submit jobs.');
+            return;
+        }
+
+        // Find all potential SLURM script files in the workspace
+        const scriptFiles = await vscode.workspace.findFiles(
+            '**/*.{sh,slurm,sbatch}',
+            '**/node_modules/**'
+        );
+
+        if (scriptFiles.length === 0) {
+            vscode.window.showWarningMessage('No script files (.sh, .slurm, .sbatch) found in workspace.');
+            return;
+        }
+
+        // Filter to only files containing #SBATCH directives (actual SLURM scripts)
+        // Read files in parallel for speed
+        const checkResults = await Promise.all(
+            scriptFiles.map(async (uri) => {
+                try {
+                    const content = await fs.promises.readFile(uri.fsPath, 'utf8');
+                    // Check first 2KB for #SBATCH to avoid reading huge files
+                    const header = content.slice(0, 2048);
+                    if (header.includes('#SBATCH')) {
+                        return uri.fsPath;
+                    }
+                } catch {
+                    // Skip files that can't be read
+                }
+                return null;
+            })
+        );
+
+        const slurmScripts = checkResults.filter((path): path is string => path !== null);
+
+        if (slurmScripts.length === 0) {
+            vscode.window.showWarningMessage('No SLURM scripts (containing #SBATCH) found in workspace.');
+            return;
+        }
+
+        // Sort by full path alphabetically and create QuickPick items
+        slurmScripts.sort((a, b) => a.localeCompare(b));
+
+        const items = slurmScripts.map(filePath => ({
+            label: filePath,
+            description: '',
+        }));
+
+        // Show QuickPick
+        const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select a SLURM script to submit',
+            title: 'Submit SLURM Job with Dependency',
+        });
+
+        if (!selected) {
+            return; // User cancelled
+        }
+
+        const scriptPath = selected.label;
+
+        // Get job dependencies
         const dependency = await promptAndGetDependencyString(slurmService);
         if (dependency === null) {
             return; // User cancelled
@@ -936,7 +1014,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register submit current file command (for CodeLens)
+    // Register submit current file command (for CodeLens, submits immediately)
     const submitCurrentFileCommand = vscode.commands.registerCommand('slurmJobs.submitCurrentFile', async (uri?: vscode.Uri) => {
         const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
         if (!fileUri) {
@@ -945,8 +1023,28 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const scriptPath = fileUri.fsPath;
+        const result = await slurmService.submitJob(scriptPath, undefined, undefined);
 
-        // Get job dependencies if configured
+        if (result.success) {
+            vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Register submit current file with dependency command
+    const submitCurrentFileWithDependencyCommand = vscode.commands.registerCommand('slurmJobs.submitCurrentFileWithDependency', async (uri?: vscode.Uri) => {
+        const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
+        if (!fileUri) {
+            vscode.window.showWarningMessage('No file open to submit.');
+            return;
+        }
+
+        const scriptPath = fileUri.fsPath;
+
+        // Get job dependencies
         const dependency = await promptAndGetDependencyString(slurmService);
         if (dependency === null) {
             return; // User cancelled
@@ -1016,7 +1114,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
     context.subscriptions.push(submitJobCommand);
+    context.subscriptions.push(submitJobWithDependencyCommand);
     context.subscriptions.push(submitCurrentFileCommand);
+    context.subscriptions.push(submitCurrentFileWithDependencyCommand);
     context.subscriptions.push(editorChangeListener);
     context.subscriptions.push(docChangeListener);
     context.subscriptions.push(hoverProvider);
@@ -1047,40 +1147,6 @@ export function deactivate() {
  * Returns undefined if no dependencies are configured, or null if the user cancelled.
  */
 async function promptAndGetDependencyString(slurmService: SlurmService): Promise<string | undefined | null> {
-    const config = vscode.workspace.getConfiguration('slurmClusterManager');
-    const behavior = config.get<string>('submitDependencyBehavior', 'prompt');
-
-    if (behavior === 'never') {
-        return undefined;
-    }
-
-    // Step 1: Ask if they want to submit immediately or with dependencies
-    const submitMode = await vscode.window.showQuickPick(
-        [
-            {
-                label: '$(play) Submit immediately',
-                description: 'Run the script on the cluster without any dependencies',
-                value: 'immediate'
-            },
-            {
-                label: '$(link) Submit with dependencies...',
-                description: 'Specify one or more jobs that this job must wait for',
-                value: 'dependencies'
-            }
-        ],
-        {
-            placeHolder: 'Choose submission mode',
-            title: 'Submit SLURM Job'
-        }
-    );
-
-    if (!submitMode) {
-        return null; // User cancelled
-    }
-
-    if (submitMode.value === 'immediate') {
-        return undefined;
-    }
 
     // Step 2: Fetch active jobs to offer as dependency targets
     let activeJobs: SlurmJob[] = [];
