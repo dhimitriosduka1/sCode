@@ -11,7 +11,7 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
@@ -917,8 +917,14 @@ export function activate(context: vscode.ExtensionContext) {
 
         const scriptPath = selected.label;
 
+        // Get job dependencies if configured
+        const dependency = await promptAndGetDependencyString(slurmService);
+        if (dependency === null) {
+            return; // User cancelled
+        }
+
         // Submit the job
-        const result = await slurmService.submitJob(scriptPath);
+        const result = await slurmService.submitJob(scriptPath, undefined, dependency);
 
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
@@ -939,7 +945,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const scriptPath = fileUri.fsPath;
-        const result = await slurmService.submitJob(scriptPath);
+
+        // Get job dependencies if configured
+        const dependency = await promptAndGetDependencyString(slurmService);
+        if (dependency === null) {
+            return; // User cancelled
+        }
+
+        const result = await slurmService.submitJob(scriptPath, undefined, dependency);
 
         if (result.success) {
             vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
@@ -1027,4 +1040,186 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     stopAutoRefresh();
     console.log('SLURM Cluster Manager deactivated');
+}
+
+/**
+ * Prompts the user to configure job dependencies and returns a SLURM dependency string.
+ * Returns undefined if no dependencies are configured, or null if the user cancelled.
+ */
+async function promptAndGetDependencyString(slurmService: SlurmService): Promise<string | undefined | null> {
+    const config = vscode.workspace.getConfiguration('slurmClusterManager');
+    const behavior = config.get<string>('submitDependencyBehavior', 'prompt');
+
+    if (behavior === 'never') {
+        return undefined;
+    }
+
+    // Step 1: Ask if they want to submit immediately or with dependencies
+    const submitMode = await vscode.window.showQuickPick(
+        [
+            {
+                label: '$(play) Submit immediately',
+                description: 'Run the script on the cluster without any dependencies',
+                value: 'immediate'
+            },
+            {
+                label: '$(link) Submit with dependencies...',
+                description: 'Specify one or more jobs that this job must wait for',
+                value: 'dependencies'
+            }
+        ],
+        {
+            placeHolder: 'Choose submission mode',
+            title: 'Submit SLURM Job'
+        }
+    );
+
+    if (!submitMode) {
+        return null; // User cancelled
+    }
+
+    if (submitMode.value === 'immediate') {
+        return undefined;
+    }
+
+    // Step 2: Fetch active jobs to offer as dependency targets
+    let activeJobs: SlurmJob[] = [];
+    try {
+        activeJobs = await slurmService.getJobs();
+    } catch (e) {
+        console.error('Failed to fetch active jobs for dependency selection:', e);
+    }
+
+    let selectedJobIds: string[] = [];
+
+    if (activeJobs.length === 0) {
+        // No active jobs, prompt for manual entry directly
+        const manualInput = await vscode.window.showInputBox({
+            prompt: 'No active jobs found to select. Enter Job ID(s) to depend on (comma-separated):',
+            placeHolder: 'e.g. 12345, 12346',
+            validateInput: (value) => {
+                if (!value.trim()) {
+                    return 'Please enter at least one Job ID';
+                }
+                const ids = value.split(',').map(s => s.trim());
+                for (const id of ids) {
+                    if (!/^\d+$/.test(id)) {
+                        return `Invalid Job ID: "${id}". Must be a number.`;
+                    }
+                }
+                return null;
+            }
+        });
+
+        if (!manualInput) {
+            return null; // User cancelled
+        }
+
+        selectedJobIds = manualInput.split(',').map(s => s.trim());
+    } else {
+        // Show multi-select QuickPick of active jobs + "Enter Custom Job ID(s)..."
+        const items = [
+            {
+                label: '$(edit) Enter Custom Job ID(s)...',
+                description: 'Type in Job IDs not listed below',
+                jobId: 'custom',
+                alwaysShow: true
+            },
+            ...activeJobs.map(job => ({
+                label: `[${job.jobId}] ${job.name}`,
+                description: `State: ${getStateDescription(job.state)} · Partition: ${job.partition}`,
+                jobId: job.jobId,
+                alwaysShow: false
+            }))
+        ];
+
+        const selections = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select one or more jobs to depend on',
+            title: 'Select Job Dependencies',
+            canPickMany: true
+        });
+
+        if (!selections || selections.length === 0) {
+            return null; // User cancelled or selected nothing
+        }
+
+        const isCustomSelected = selections.some(item => item.jobId === 'custom');
+        const activeSelectedIds = selections
+            .filter(item => item.jobId !== 'custom')
+            .map(item => item.jobId);
+
+        if (isCustomSelected) {
+            const manualInput = await vscode.window.showInputBox({
+                prompt: 'Enter custom SLURM Job ID(s) (comma-separated):',
+                placeHolder: 'e.g. 12345, 12346',
+                validateInput: (value) => {
+                    if (!value.trim() && activeSelectedIds.length === 0) {
+                        return 'Please enter at least one Job ID';
+                    }
+                    if (value.trim()) {
+                        const ids = value.split(',').map(s => s.trim());
+                        for (const id of ids) {
+                            if (!/^\d+$/.test(id)) {
+                                return `Invalid Job ID: "${id}". Must be a number.`;
+                            }
+                        }
+                    }
+                    return null;
+                }
+            });
+
+            if (manualInput === undefined) {
+                return null; // User cancelled the input box
+            }
+
+            const customIds = manualInput.trim()
+                ? manualInput.split(',').map(s => s.trim()).filter(Boolean)
+                : [];
+            selectedJobIds = [...activeSelectedIds, ...customIds];
+        } else {
+            selectedJobIds = activeSelectedIds;
+        }
+    }
+
+    if (selectedJobIds.length === 0) {
+        vscode.window.showWarningMessage('No job dependencies specified.');
+        return null;
+    }
+
+    // Step 3: Select dependency condition type
+    const depTypeSelection = await vscode.window.showQuickPick(
+        [
+            {
+                label: 'afterok (Recommended)',
+                description: 'Starts only after the selected jobs successfully complete (exit code 0)',
+                value: 'afterok'
+            },
+            {
+                label: 'afterany',
+                description: 'Starts after the selected jobs terminate (regardless of success/failure)',
+                value: 'afterany'
+            },
+            {
+                label: 'after',
+                description: 'Starts after the selected jobs begin running',
+                value: 'after'
+            },
+            {
+                label: 'afternotok',
+                description: 'Starts only if the selected jobs fail',
+                value: 'afternotok'
+            }
+        ],
+        {
+            placeHolder: 'Select dependency condition',
+            title: 'Choose Dependency Type'
+        }
+    );
+
+    if (!depTypeSelection) {
+        return null; // User cancelled
+    }
+
+    const type = depTypeSelection.value;
+    return `${type}:${selectedJobIds.join(':')}`;
 }

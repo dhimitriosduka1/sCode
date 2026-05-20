@@ -433,6 +433,15 @@
           "minimum": 1,
           "maximum": 100,
           "description": "Number of top GPU users to show in the Hall of Shame. Your own row is still shown when it falls outside this count."
+        },
+        "slurmClusterManager.submitDependencyBehavior": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "never"
+          ],
+          "default": "prompt",
+          "description": "Whether to prompt for job dependencies when submitting a job (e.g. via the play button)"
         }
       }
     }

@@ -1998,9 +1998,10 @@ export class SlurmService {
      * Submit a SLURM job using sbatch
      * @param scriptPath Path to the submit script
      * @param workDir Optional working directory (defaults to script's parent directory)
+     * @param dependency Optional dependency string (e.g. afterok:12345)
      * @returns Object with success status, job ID (if successful), and message
      */
-    async submitJob(scriptPath: string, workDir?: string): Promise<{ success: boolean; jobId?: string; message: string }> {
+    async submitJob(scriptPath: string, workDir?: string, dependency?: string): Promise<{ success: boolean; jobId?: string; message: string }> {
         if (this.isMockMode()) {
             const jobId = String(92000 + this.getMutableMockJobs().length + 1);
             this.getMutableMockJobs().push({
@@ -2016,7 +2017,8 @@ export class SlurmService {
                 startTime: 'Unknown',
                 workDir: workDir || require('path').dirname(scriptPath),
                 submitScript: scriptPath,
-                pendingReason: 'Priority',
+                pendingReason: dependency ? 'Dependency' : 'Priority',
+                dependency: dependency,
             });
             return {
                 success: true,
@@ -2029,9 +2031,9 @@ export class SlurmService {
             // Use the script's directory as working directory if not specified
             const cwd = workDir || require('path').dirname(scriptPath);
 
-            const { stdout, stderr } = await execAsync(`sbatch "${scriptPath}"`, { cwd });
+            const dependencyFlag = dependency ? ` --dependency=${dependency}` : '';
+            const { stdout, stderr } = await execAsync(`sbatch${dependencyFlag} "${scriptPath}"`, { cwd });
 
-            // sbatch typically outputs: "Submitted batch job <jobId>"
             const match = stdout.match(/Submitted batch job (\d+)/);
             if (match) {
                 const jobId = match[1];

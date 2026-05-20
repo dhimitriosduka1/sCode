@@ -4,6 +4,10 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+### Added
+- **Interactive Job Dependency Submission**: Added a step-by-step QuickPick and InputBox UI when submitting active jobs (via the sidebar play button or editor title bar ▶ button). Users can choose to submit immediately, select from active jobs to depend on, input custom Job IDs, and select the dependency type (`afterok`, `afterany`, `after`, `afternotok`).
+- **Dependency Prompt Configuration**: Introduced `slurmClusterManager.submitDependencyBehavior` setting with `"prompt"` (default) and `"never"` options to customize or bypass the dependency prompt entirely.
+
 ### Fixed
 - **Multi-node GPU accounting**: Hall of Shame, Cluster Overview, GPU hog metrics, GPU Partition Usage, and active job details now multiply per-node GPU requests by allocated node count, so jobs using 4 nodes with 4 GPUs each are counted as 16 GPUs instead of 4.
 

@@ -75,6 +75,23 @@ describe('SlurmService mock mode', () => {
         ));
     });
 
+    it('can submit a mock job with a dependency', async () => {
+        const service = createMockService();
+
+        const result = await service.submitJob('/tmp/local-test.sbatch', undefined, 'afterok:91001');
+        const jobs = await service.getJobs();
+
+        assert.equal(result.success, true);
+        assert.ok(result.jobId);
+        assert.ok(jobs.some(job =>
+            job.jobId === result.jobId &&
+            job.name === 'local-test.sbatch' &&
+            job.state === 'PD' &&
+            job.pendingReason === 'Dependency' &&
+            job.dependency === 'afterok:91001'
+        ));
+    });
+
     it('returns mock history and cluster summary data', async () => {
         const service = createMockService();
 
