@@ -440,14 +440,18 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             const filteredJobs = this.getFilteredJobs();
 
-            // Always fetch and show cluster hogs (cluster-wide stats)
-            const { topJobHog, topGpuHog } = await this.slurmService.getClusterHogs();
-            const jobHogItem = topJobHog && topJobHog.jobCount > 1
-                ? new JobHogItem(topJobHog.username, topJobHog.jobCount)
-                : null;
-            const gpuHogItem = topGpuHog && topGpuHog.gpuCount > 0
-                ? new GpuHogItem(topGpuHog.username, topGpuHog.gpuCount)
-                : null;
+            const showClusterHogs = vscode.workspace.getConfiguration('slurmClusterManager').get<boolean>('showClusterHogs', true);
+            let jobHogItem: JobHogItem | null = null;
+            let gpuHogItem: GpuHogItem | null = null;
+            if (showClusterHogs) {
+                const { topJobHog, topGpuHog } = await this.slurmService.getClusterHogs();
+                jobHogItem = topJobHog && topJobHog.jobCount > 1
+                    ? new JobHogItem(topJobHog.username, topJobHog.jobCount)
+                    : null;
+                gpuHogItem = topGpuHog && topGpuHog.gpuCount > 0
+                    ? new GpuHogItem(topGpuHog.username, topGpuHog.gpuCount)
+                    : null;
+            }
 
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
