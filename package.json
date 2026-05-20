@@ -206,12 +206,12 @@
       {
         "command": "slurmJobs.submitJobWithDependency",
         "title": "Submit Job with Dependency...",
-        "icon": "$(link)"
+        "icon": "$(workflow)"
       },
       {
         "command": "slurmJobs.submitCurrentFileWithDependency",
         "title": "Submit to SLURM with Dependency...",
-        "icon": "$(link)"
+        "icon": "$(workflow)"
       }
     ],
     "menus": {
