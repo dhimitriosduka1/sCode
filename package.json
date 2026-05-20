@@ -202,6 +202,21 @@
         "command": "slurmJobs.submitCurrentFile",
         "title": "Submit to SLURM",
         "icon": "$(play)"
+      },
+      {
+        "command": "slurmJobs.setupRemoteSSH",
+        "title": "SLURM: Configure Remote SSH Connection...",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "slurmJobs.testRemoteConnection",
+        "title": "SLURM: Test Remote SSH Connection",
+        "icon": "$(debug)"
+      },
+      {
+        "command": "slurmJobs.troubleshootConnection",
+        "title": "SLURM: Troubleshoot SSH Connection...",
+        "icon": "$(wrench)"
       }
     ],
     "menus": {
@@ -447,6 +462,16 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
+        },
+        "slurmClusterManager.remoteHost": {
+          "type": "string",
+          "default": "",
+          "description": "SSH host alias (from ~/.ssh/config) to connect to a remote SLURM cluster. Leave empty for local execution."
+        },
+        "slurmClusterManager.remoteWorkDir": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory on the remote SLURM host where files will be copied and commands run."
         }
       }
     }

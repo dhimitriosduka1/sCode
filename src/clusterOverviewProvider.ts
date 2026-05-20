@@ -91,6 +91,33 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const isAvailable = await this.slurmService.isAvailable();
+            if (!isAvailable) {
+                const items: vscode.TreeItem[] = [];
+                if (this.slurmService.isRemoteMode()) {
+                    items.push(new ClusterOverviewMessageItem(`SSH connection failed or SLURM not available on '${this.slurmService.getRemoteHost()}'`, 'warning'));
+                    
+                    const troubleshootItem = new vscode.TreeItem('Troubleshoot Connection...', vscode.TreeItemCollapsibleState.None);
+                    troubleshootItem.iconPath = new vscode.ThemeIcon('wrench');
+                    troubleshootItem.command = {
+                        command: 'slurmJobs.troubleshootConnection',
+                        title: 'Troubleshoot Connection...'
+                    };
+                    items.push(troubleshootItem);
+
+                    const configureItem = new vscode.TreeItem('Configure SSH Settings...', vscode.TreeItemCollapsibleState.None);
+                    configureItem.iconPath = new vscode.ThemeIcon('settings-gear');
+                    configureItem.command = {
+                        command: 'slurmJobs.setupRemoteSSH',
+                        title: 'Configure SSH Settings...'
+                    };
+                    items.push(configureItem);
+                } else {
+                    items.push(new ClusterOverviewMessageItem('SLURM not available on this system', 'warning'));
+                }
+                return items;
+            }
+
             if (!this.hasFetchedEntries) {
                 this.cachedEntries = await this.slurmService.getClusterAccountOverview();
                 this.lastRefreshedAt = new Date();
