@@ -442,6 +442,11 @@
           ],
           "default": "prompt",
           "description": "Whether to prompt for job dependencies when submitting a job (e.g. via the play button)"
+        },
+        "slurmClusterManager.showResourceHogs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
         }
       }
     }
