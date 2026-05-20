@@ -991,6 +991,11 @@ function parseGpuAllocations(gres: string): ClusterLeaderboardGpuType[] {
         }
     }
 
+    const hasTyped = allocations.some(alloc => alloc.type !== 'generic');
+    if (hasTyped) {
+        return allocations.filter(alloc => alloc.type !== 'generic');
+    }
+
     return allocations;
 }
 
@@ -1571,10 +1576,20 @@ export class SlurmService {
      * Get detailed job info from scontrol (stdout, stderr, command paths)
      */
     async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }> {
+        const cleanedId = cleanJobIdForScontrol(jobId);
         try {
-            const { stdout } = await execAsync(`scontrol show job ${jobId}`);
+            const { stdout } = await execAsync(`scontrol show job ${cleanedId}`);
             return parseJobDetailsOutput(stdout);
         } catch {
+            const baseId = extractBaseJobId(jobId);
+            if (baseId !== cleanedId) {
+                try {
+                    const { stdout } = await execAsync(`scontrol show job ${baseId}`);
+                    return parseJobDetailsOutput(stdout);
+                } catch {
+                    // fall through
+                }
+            }
             return {
                 stdoutPath: 'N/A',
                 stderrPath: 'N/A',
@@ -2256,4 +2271,19 @@ export function getHistoryStateInfo(state: string, exitCode: number): { icon: st
     }
 
     return { icon: 'circle-outline', color: 'foreground', description: state };
+}
+
+export function cleanJobIdForScontrol(jobId: string): string {
+    // If it contains bracket notation like 269277_[1-10] or 269277_[1-10%5]
+    // Clean it down to the base job ID (e.g., 269277)
+    const bracketMatch = jobId.match(/^([0-9]+)(?:_\[|\[)/);
+    if (bracketMatch) {
+        return bracketMatch[1];
+    }
+    return jobId;
+}
+
+export function extractBaseJobId(jobId: string): string {
+    const match = jobId.match(/^([0-9]+)/);
+    return match ? match[1] : jobId;
 }

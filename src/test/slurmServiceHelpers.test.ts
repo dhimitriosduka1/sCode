@@ -14,6 +14,8 @@ import {
     normalizeSlurmPathValue,
     parseJobDetailsOutput,
     parseTimeToSeconds,
+    cleanJobIdForScontrol,
+    extractBaseJobId,
 } from '../slurmService';
 
 describe('Slurm service helper functions', () => {
@@ -234,5 +236,34 @@ describe('Slurm service helper functions', () => {
             color: 'foreground',
             description: 'SITE_CUSTOM',
         });
+    });
+
+    it('handles duplicate generic and specific GRES allocations without double counting GPUs', () => {
+        const details = parseJobDetailsOutput([
+            'JobId=555 JobName=double-count-test',
+            'NumNodes=1',
+            'AllocTRES=cpu=96,mem=1000G,node=1,billing=96,gres/gpu=8,gres/gpu:b200=8',
+            'StdOut=/logs/out',
+            'StdErr=/logs/err',
+            'Command=train.sbatch',
+            'WorkDir=/scratch/run',
+        ].join(' '));
+
+        assert.equal(details.gpuCount, 8);
+        assert.equal(details.gpuType, 'B200');
+    });
+
+    it('cleans job IDs correctly for scontrol queries', () => {
+        assert.equal(cleanJobIdForScontrol('269277_[1-10]'), '269277');
+        assert.equal(cleanJobIdForScontrol('269277_[1-10%5]'), '269277');
+        assert.equal(cleanJobIdForScontrol('269277_[1]'), '269277');
+        assert.equal(cleanJobIdForScontrol('269277_1'), '269277_1');
+        assert.equal(cleanJobIdForScontrol('269277'), '269277');
+    });
+
+    it('extracts base job ID correctly', () => {
+        assert.equal(extractBaseJobId('269277_1'), '269277');
+        assert.equal(extractBaseJobId('269277_[1-10]'), '269277');
+        assert.equal(extractBaseJobId('269277'), '269277');
     });
 });

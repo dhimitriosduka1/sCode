@@ -11,7 +11,7 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
@@ -1085,6 +1085,24 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Unpinned job: ${item.job.name}`);
     });
 
+    // Register copy Job ID command
+    const copyJobIdCommand = vscode.commands.registerCommand('slurmJobs.copyJobId', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId = item.job.jobId;
+        const baseJobId = extractBaseJobId(jobId);
+
+        try {
+            await vscode.env.clipboard.writeText(baseJobId);
+            vscode.window.showInformationMessage(`Copied Job ID ${baseJobId} to clipboard`);
+        } catch (error) {
+            vscode.window.showErrorMessage('Failed to copy Job ID to clipboard');
+        }
+    });
+
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
@@ -1125,6 +1143,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(decorDocListener);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
+    context.subscriptions.push(copyJobIdCommand);
 
     // Initialize autorefresh based on saved settings
     startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);

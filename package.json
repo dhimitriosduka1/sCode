@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.4.0",
+  "version": "1.5.2",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -197,6 +197,11 @@
         "command": "slurmLeaderboard.setTopUserCount",
         "title": "Set Hall of Shame Size",
         "icon": "$(list-ordered)"
+      },
+      {
+        "command": "slurmJobs.copyJobId",
+        "title": "Copy Job ID",
+        "icon": "$(copy)"
       },
       {
         "command": "slurmJobs.submitCurrentFile",
@@ -419,6 +424,56 @@
           "command": "slurmJobs.cancelJob",
           "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
           "group": "actions@1"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJob",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPending",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPending",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "actions@5"
         }
       ]
     },
