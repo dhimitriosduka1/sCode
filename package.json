@@ -211,12 +211,12 @@
       {
         "command": "slurmJobs.submitJobWithDependency",
         "title": "Submit Job with Dependency...",
-        "icon": "$(workflow)"
+        "icon": "$(link)"
       },
       {
         "command": "slurmJobs.submitCurrentFileWithDependency",
         "title": "Submit to SLURM with Dependency...",
-        "icon": "$(workflow)"
+        "icon": "$(link)"
       }
     ],
     "menus": {
@@ -267,11 +267,6 @@
           "command": "slurmJobs.submitJob",
           "when": "view == slurmJobs",
           "group": "navigation@5"
-        },
-        {
-          "command": "slurmJobs.submitJobWithDependency",
-          "when": "view == slurmJobs",
-          "group": "navigation@6"
         },
         {
           "command": "slurmJobs.cancelAllJobs",
