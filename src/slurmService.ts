@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, ExecOptions } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,12 +6,13 @@ import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 
 const execAsync = promisify(exec);
+const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
 
-export type SlurmCommandRunner = (command: string) => Promise<{ stdout: string; stderr: string }>;
+export type SlurmCommandRunner = (command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>;
 export type SlurmMockModeProvider = () => boolean;
 
-const defaultCommandRunner: SlurmCommandRunner = async (command: string) => {
-    const { stdout, stderr } = await execAsync(command);
+const defaultCommandRunner: SlurmCommandRunner = async (command: string, options?: ExecOptions) => {
+    const { stdout, stderr } = await execAsync(command, options);
     return {
         stdout: stdout.toString(),
         stderr: stderr.toString(),
@@ -2090,8 +2091,9 @@ export class SlurmService {
             const startDateStr = startDate.toISOString().split('T')[0];
 
             // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
-            const { stdout } = await execAsync(
-                `sacct -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`
+            const { stdout } = await this.commandRunner(
+                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
+                { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
             );
 
             const jobs: HistoryJob[] = [];
