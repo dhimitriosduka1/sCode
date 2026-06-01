@@ -97,6 +97,8 @@ export class HistoryFileItem extends vscode.TreeItem {
             title: 'Open File',
             arguments: [filePath],
         };
+
+        this.description = filePath;
     }
 }
 
