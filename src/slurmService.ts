@@ -1443,6 +1443,19 @@ export class SlurmService {
     private commandRunner: SlurmCommandRunner;
     private mockModeProvider: SlurmMockModeProvider;
     private mockJobs?: SlurmJob[];
+    private activePromises = new Map<string, Promise<any>>();
+
+    private async runSingle<T>(key: string, fn: () => Promise<T>): Promise<T> {
+        const active = this.activePromises.get(key);
+        if (active) {
+            return active;
+        }
+        const promise = fn().finally(() => {
+            this.activePromises.delete(key);
+        });
+        this.activePromises.set(key, promise);
+        return promise;
+    }
 
     constructor(
         pathCache?: JobPathCache,
@@ -1481,123 +1494,127 @@ export class SlurmService {
      * Uses squeue command with custom format for parsing
      */
     async getJobs(): Promise<SlurmJob[]> {
-        if (this.isMockMode()) {
-            return this.getMockJobsSnapshot();
-        }
-
-        try {
-            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason
-            const { stdout } = await execAsync(
-                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r"'
-            );
-
-            const jobs: SlurmJob[] = [];
-            const lines = stdout.trim().split('\n');
-
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-
-                const parts = line.split('|');
-                if (parts.length >= 8) {
-                    const jobId = parts[0].trim();
-                    const state = parts[2].trim();
-                    const job: SlurmJob = {
-                        jobId: jobId,
-                        name: parts[1].trim(),
-                        state,
-                        time: parts[3].trim(),
-                        partition: parts[4].trim(),
-                        nodes: parts[5].trim() || 'N/A',
-                        timeLimit: parts[6].trim() || 'N/A',
-                        startTime: parts[7].trim() || 'N/A',
-                        // These will be fetched from scontrol
-                        stdoutPath: 'N/A',
-                        stderrPath: 'N/A',
-                        submitScript: 'N/A',
-                        workDir: 'N/A',
-                    };
-
-                    if (state === 'PD') {
-                        job.pendingReason = normalizePendingReason(parts[8]);
-                    }
-
-                    jobs.push(job);
-                }
+        return this.runSingle('getJobs', async () => {
+            if (this.isMockMode()) {
+                return this.getMockJobsSnapshot();
             }
 
-            // Fetch detailed info (stdout, stderr, command) from scontrol for all jobs in parallel
-            await Promise.all(jobs.map(async (job) => {
-                const details = await this.getJobDetails(job.jobId);
-                // Expand any remaining placeholders in paths
-                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir);
-                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir);
-                job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir);
-                job.workDir = details.workDir;
-                job.gpuCount = details.gpuCount;
-                job.gpuType = details.gpuType;
-                job.memory = details.memory;
-                job.dependency = details.dependency;
+            try {
+                // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason
+                const { stdout } = await execAsync(
+                    'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r"'
+                );
 
-                // Cache the paths for later use in history
-                if (this.pathCache && shouldUseCachedOutputPaths(job)) {
-                    const cacheablePaths = sanitizeOutputPathsForCache(job);
-                    await this.pathCache.set(job.jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
-                }
+                const jobs: SlurmJob[] = [];
+                const lines = stdout.trim().split('\n');
 
-                // Cache the submit script if not already cached
-                if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
-                    job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
-                }
-            }));
+                for (const line of lines) {
+                    if (!line.trim()) {
+                        continue;
+                    }
 
-            // Fetch GPU info once (for running jobs on this node)
-            const gpuInfo = await this.getGpuInfo();
-            if (gpuInfo) {
-                // Apply GPU info to running jobs
-                for (const job of jobs) {
-                    if (job.state === 'R') {
-                        job.gpuName = gpuInfo.gpuName;
-                        job.gpuMemory = gpuInfo.gpuMemory;
+                    const parts = line.split('|');
+                    if (parts.length >= 8) {
+                        const jobId = parts[0].trim();
+                        const state = parts[2].trim();
+                        const job: SlurmJob = {
+                            jobId: jobId,
+                            name: parts[1].trim(),
+                            state,
+                            time: parts[3].trim(),
+                            partition: parts[4].trim(),
+                            nodes: parts[5].trim() || 'N/A',
+                            timeLimit: parts[6].trim() || 'N/A',
+                            startTime: parts[7].trim() || 'N/A',
+                            // These will be fetched from scontrol
+                            stdoutPath: 'N/A',
+                            stderrPath: 'N/A',
+                            submitScript: 'N/A',
+                            workDir: 'N/A',
+                        };
+
+                        if (state === 'PD') {
+                            job.pendingReason = normalizePendingReason(parts[8]);
+                        }
+
+                        jobs.push(job);
                     }
                 }
-            }
 
-            return jobs;
-        } catch (error) {
-            // If squeue is not available or fails, return empty array
-            // This allows the extension to work gracefully when not on a cluster
-            console.error('Failed to fetch SLURM jobs:', error);
-            return [];
-        }
+                // Fetch detailed info (stdout, stderr, command) from scontrol for all jobs in parallel
+                await Promise.all(jobs.map(async (job) => {
+                    const details = await this.getJobDetails(job.jobId);
+                    // Expand any remaining placeholders in paths
+                    job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir);
+                    job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir);
+                    job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir);
+                    job.workDir = details.workDir;
+                    job.gpuCount = details.gpuCount;
+                    job.gpuType = details.gpuType;
+                    job.memory = details.memory;
+                    job.dependency = details.dependency;
+
+                    // Cache the paths for later use in history
+                    if (this.pathCache && shouldUseCachedOutputPaths(job)) {
+                        const cacheablePaths = sanitizeOutputPathsForCache(job);
+                        await this.pathCache.set(job.jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+                    }
+
+                    // Cache the submit script if not already cached
+                    if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
+                        job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
+                    }
+                }));
+
+                // Fetch GPU info once (for running jobs on this node)
+                const gpuInfo = await this.getGpuInfo();
+                if (gpuInfo) {
+                    // Apply GPU info to running jobs
+                    for (const job of jobs) {
+                        if (job.state === 'R') {
+                            job.gpuName = gpuInfo.gpuName;
+                            job.gpuMemory = gpuInfo.gpuMemory;
+                        }
+                    }
+                }
+
+                return jobs;
+            } catch (error) {
+                // If squeue is not available or fails, return empty array
+                // This allows the extension to work gracefully when not on a cluster
+                console.error('Failed to fetch SLURM jobs:', error);
+                return [];
+            }
+        });
     }
 
     /**
      * Get detailed job info from scontrol (stdout, stderr, command paths)
      */
     async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }> {
-        const cleanedId = cleanJobIdForScontrol(jobId);
-        try {
-            const { stdout } = await execAsync(`scontrol show job ${cleanedId}`);
-            return parseJobDetailsOutput(stdout);
-        } catch {
-            const baseId = extractBaseJobId(jobId);
-            if (baseId !== cleanedId) {
-                try {
-                    const { stdout } = await execAsync(`scontrol show job ${baseId}`);
-                    return parseJobDetailsOutput(stdout);
-                } catch {
-                    // fall through
+        return this.runSingle(`getJobDetails:${jobId}`, async () => {
+            const cleanedId = cleanJobIdForScontrol(jobId);
+            try {
+                const { stdout } = await execAsync(`scontrol show job ${cleanedId}`);
+                return parseJobDetailsOutput(stdout);
+            } catch {
+                const baseId = extractBaseJobId(jobId);
+                if (baseId !== cleanedId) {
+                    try {
+                        const { stdout } = await execAsync(`scontrol show job ${baseId}`);
+                        return parseJobDetailsOutput(stdout);
+                    } catch {
+                        // fall through
+                    }
                 }
+                return {
+                    stdoutPath: 'N/A',
+                    stderrPath: 'N/A',
+                    submitScript: 'N/A',
+                    workDir: 'N/A',
+                };
             }
-            return {
-                stdoutPath: 'N/A',
-                stderrPath: 'N/A',
-                submitScript: 'N/A',
-                workDir: 'N/A',
-            };
-        }
+        });
     }
 
     /**
@@ -1643,24 +1660,26 @@ export class SlurmService {
      * @returns Object with top job hog and top GPU hog, or null if unavailable
      */
     async getClusterHogs(): Promise<ClusterHogSummary> {
-        if (this.isMockMode()) {
-            return {
-                topJobHog: { username: 'nova42', jobCount: 8 },
-                topGpuHog: { username: 'nova42', gpuCount: 24 },
-            };
-        }
+        return this.runSingle('getClusterHogs', async () => {
+            if (this.isMockMode()) {
+                return {
+                    topJobHog: { username: 'nova42', jobCount: 8 },
+                    topGpuHog: { username: 'nova42', gpuCount: 24 },
+                };
+            }
 
-        try {
-            // %D = node count. %b is a per-node GPU request on common Slurm setups.
-            const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%D|%b"'
-            );
+            try {
+                // %D = node count. %b is a per-node GPU request on common Slurm setups.
+                const { stdout } = await execAsync(
+                    'squeue --noheader --state=R --format="%u|%D|%b"'
+                );
 
-            return parseClusterHogsOutput(stdout);
-        } catch (error) {
-            console.error('Failed to get cluster hogs:', error);
-            return { topJobHog: null, topGpuHog: null };
-        }
+                return parseClusterHogsOutput(stdout);
+            } catch (error) {
+                console.error('Failed to get cluster hogs:', error);
+                return { topJobHog: null, topGpuHog: null };
+            }
+        });
     }
 
     /**
@@ -1668,20 +1687,22 @@ export class SlurmService {
      * @returns Array of { username, accounts, gpuCount, gpuJobCount, gpuTypes }
      */
     async getClusterLeaderboard(): Promise<ClusterLeaderboardEntry[]> {
-        if (this.isMockMode()) {
-            return createMockLeaderboardEntries();
-        }
+        return this.runSingle('getClusterLeaderboard', async () => {
+            if (this.isMockMode()) {
+                return createMockLeaderboardEntries();
+            }
 
-        try {
-            const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
-            );
+            try {
+                const { stdout } = await execAsync(
+                    'squeue --noheader --state=R --format="%u|%a|%D|%b"'
+                );
 
-            return parseClusterLeaderboardOutput(stdout);
-        } catch (error) {
-            console.error('Failed to get cluster leaderboard:', error);
-            return [];
-        }
+                return parseClusterLeaderboardOutput(stdout);
+            } catch (error) {
+                console.error('Failed to get cluster leaderboard:', error);
+                return [];
+            }
+        });
     }
 
     /**
@@ -1689,20 +1710,22 @@ export class SlurmService {
      * @returns Array of { account, gpuCount, gpuJobCount, gpuTypes, users }
      */
     async getClusterAccountOverview(): Promise<ClusterAccountOverviewEntry[]> {
-        if (this.isMockMode()) {
-            return createMockAccountOverviewEntries();
-        }
+        return this.runSingle('getClusterAccountOverview', async () => {
+            if (this.isMockMode()) {
+                return createMockAccountOverviewEntries();
+            }
 
-        try {
-            const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
-            );
+            try {
+                const { stdout } = await execAsync(
+                    'squeue --noheader --state=R --format="%u|%a|%D|%b"'
+                );
 
-            return parseClusterAccountOverviewOutput(stdout);
-        } catch (error) {
-            console.error('Failed to get cluster account overview:', error);
-            return [];
-        }
+                return parseClusterAccountOverviewOutput(stdout);
+            } catch (error) {
+                console.error('Failed to get cluster account overview:', error);
+                return [];
+            }
+        });
     }
 
     /**
@@ -1710,30 +1733,32 @@ export class SlurmService {
      * Combines sinfo capacity/node state data with squeue job pressure.
      */
     async getPartitionUsage(): Promise<PartitionUsageEntry[]> {
-        if (this.isMockMode()) {
-            return createMockPartitionUsageEntries();
-        }
-
-        try {
-            const { stdout: sinfoStdout } = await execAsync(
-                'sinfo --noheader --format="%P|%D|%F|%G"'
-            );
-
-            let squeueStdout = '';
-            try {
-                const squeueResult = await execAsync(
-                    'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
-                );
-                squeueStdout = squeueResult.stdout;
-            } catch {
-                // Capacity information is still useful when queue pressure cannot be fetched.
+        return this.runSingle('getPartitionUsage', async () => {
+            if (this.isMockMode()) {
+                return createMockPartitionUsageEntries();
             }
 
-            return parsePartitionUsageOutput(sinfoStdout, squeueStdout);
-        } catch (error) {
-            console.error('Failed to get partition usage:', error);
-            return [];
-        }
+            try {
+                const { stdout: sinfoStdout } = await execAsync(
+                    'sinfo --noheader --format="%P|%D|%F|%G"'
+                );
+
+                let squeueStdout = '';
+                try {
+                    const squeueResult = await execAsync(
+                        'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
+                    );
+                    squeueStdout = squeueResult.stdout;
+                } catch {
+                    // Capacity information is still useful when queue pressure cannot be fetched.
+                }
+
+                return parsePartitionUsageOutput(sinfoStdout, squeueStdout);
+            } catch (error) {
+                console.error('Failed to get partition usage:', error);
+                return [];
+            }
+        });
     }
 
     /**
@@ -2080,79 +2105,81 @@ export class SlurmService {
      * Shows recently completed/failed/cancelled jobs
      */
     async getJobHistory(days: number = 7): Promise<HistoryJob[]> {
-        if (this.isMockMode()) {
-            return createMockHistoryJobs().map(job => ({ ...job }));
-        }
-
-        try {
-            // Calculate start date (N days ago)
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() - days);
-            const startDateStr = startDate.toISOString().split('T')[0];
-
-            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
-            const { stdout } = await this.commandRunner(
-                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
-                { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
-            );
-
-            const jobs: HistoryJob[] = [];
-            const lines = stdout.trim().split('\n');
-
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-
-                const parts = line.split('|');
-                if (parts.length >= 9) {
-                    const jobId = parts[0].trim();
-
-                    // Skip job steps (they contain a dot, like "12345.batch" or "12345.0")
-                    if (jobId.includes('.')) {
-                        continue;
-                    }
-
-                    const state = parts[2].trim();
-
-                    // Skip jobs that are still running or pending
-                    if (state === 'RUNNING' || state === 'PENDING') {
-                        continue;
-                    }
-
-                    const exitCodeParts = parts[3].trim().split(':');
-                    const exitCode = parseInt(exitCodeParts[0], 10) || 0;
-
-                    jobs.push({
-                        jobId: jobId,
-                        name: parts[1].trim() || 'N/A',
-                        state: state,
-                        exitCode: exitCode,
-                        startTime: parts[4].trim() || 'N/A',
-                        endTime: parts[5].trim() || 'N/A',
-                        elapsed: parts[6].trim() || 'N/A',
-                        partition: parts[7].trim() || 'N/A',
-                        nodes: parts[8].trim() || 'N/A',
-                        cpus: parts[9]?.trim() || 'N/A',
-                        maxMemory: parts[10]?.trim() || 'N/A',
-                        stdoutPath: 'N/A',
-                        stderrPath: 'N/A',
-                    });
-                }
+        return this.runSingle(`getJobHistory:${days}`, async () => {
+            if (this.isMockMode()) {
+                return createMockHistoryJobs().map(job => ({ ...job }));
             }
 
-            // Sort by end time (most recent first)
-            jobs.sort((a, b) => {
-                if (a.endTime === 'N/A') return 1;
-                if (b.endTime === 'N/A') return -1;
-                return new Date(b.endTime).getTime() - new Date(a.endTime).getTime();
-            });
+            try {
+                // Calculate start date (N days ago)
+                const startDate = new Date();
+                startDate.setDate(startDate.getDate() - days);
+                const startDateStr = startDate.toISOString().split('T')[0];
 
-            return jobs;
-        } catch (error) {
-            console.error('Failed to fetch job history:', error);
-            return [];
-        }
+                // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
+                const { stdout } = await this.commandRunner(
+                    `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
+                    { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
+                );
+
+                const jobs: HistoryJob[] = [];
+                const lines = stdout.trim().split('\n');
+
+                for (const line of lines) {
+                    if (!line.trim()) {
+                        continue;
+                    }
+
+                    const parts = line.split('|');
+                    if (parts.length >= 9) {
+                        const jobId = parts[0].trim();
+
+                        // Skip job steps (they contain a dot, like "12345.batch" or "12345.0")
+                        if (jobId.includes('.')) {
+                            continue;
+                        }
+
+                        const state = parts[2].trim();
+
+                        // Skip jobs that are still running or pending
+                        if (state === 'RUNNING' || state === 'PENDING') {
+                            continue;
+                        }
+
+                        const exitCodeParts = parts[3].trim().split(':');
+                        const exitCode = parseInt(exitCodeParts[0], 10) || 0;
+
+                        jobs.push({
+                            jobId: jobId,
+                            name: parts[1].trim() || 'N/A',
+                            state: state,
+                            exitCode: exitCode,
+                            startTime: parts[4].trim() || 'N/A',
+                            endTime: parts[5].trim() || 'N/A',
+                            elapsed: parts[6].trim() || 'N/A',
+                            partition: parts[7].trim() || 'N/A',
+                            nodes: parts[8].trim() || 'N/A',
+                            cpus: parts[9]?.trim() || 'N/A',
+                            maxMemory: parts[10]?.trim() || 'N/A',
+                            stdoutPath: 'N/A',
+                            stderrPath: 'N/A',
+                        });
+                    }
+                }
+
+                // Sort by end time (most recent first)
+                jobs.sort((a, b) => {
+                    if (a.endTime === 'N/A') return 1;
+                    if (b.endTime === 'N/A') return -1;
+                    return new Date(b.endTime).getTime() - new Date(a.endTime).getTime();
+                });
+
+                return jobs;
+            } catch (error) {
+                console.error('Failed to fetch job history:', error);
+                return [];
+            }
+        });
     }
 
     /**

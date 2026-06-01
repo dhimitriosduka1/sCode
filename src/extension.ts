@@ -71,16 +71,21 @@ function startAutoRefresh(
     const { enabled, interval } = getAutoRefreshConfig();
 
     if (enabled && interval >= 5) {
-        autoRefreshTimer = setInterval(() => {
-            slurmJobProvider.refresh();
-            jobHistoryProvider.refresh();
-            // Update context key after refresh (provider prunes stale checked IDs)
-            if (checkedJobIds) {
-                vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-            }
-        }, interval * 1000);
+        // Only start timer if VSCode window is currently focused
+        if (vscode.window.state.focused) {
+            autoRefreshTimer = setInterval(() => {
+                slurmJobProvider.refresh();
+                jobHistoryProvider.refresh();
+                // Update context key after refresh (provider prunes stale checked IDs)
+                if (checkedJobIds) {
+                    vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
+                }
+            }, interval * 1000);
 
-        console.log(`Auto-refresh started: every ${interval} seconds`);
+            console.log(`Auto-refresh started: every ${interval} seconds`);
+        } else {
+            console.log(`Auto-refresh active but suspended because window is unfocused`);
+        }
     }
 
     updateStatusBar(enabled, interval);
@@ -1156,6 +1161,22 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
     context.subscriptions.push(copyJobIdCommand);
+    // Listen for window state changes (focus/blur) to pause/resume auto-refresh
+    const windowStateListener = vscode.window.onDidChangeWindowState((windowState) => {
+        if (windowState.focused) {
+            // When window is focused, restart the auto-refresh timer (performing immediate refresh if configured)
+            startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+            
+            // Trigger a single refresh on focus to make sure the user immediately sees up-to-date data
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            // Stop the auto-refresh timer when the window loses focus
+            stopAutoRefresh();
+            console.log('Auto-refresh paused (window lost focus)');
+        }
+    });
+    context.subscriptions.push(windowStateListener);
 
     // Initialize autorefresh based on saved settings
     startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
