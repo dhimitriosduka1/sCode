@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.5.2",
+  "version": "1.6.2",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -517,6 +517,11 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
+        },
+        "slurmClusterManager.openOutputAsPreview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open stdout/stderr logs in preview mode (meaning clicking another file replaces the current tab)."
         }
       }
     }

@@ -324,9 +324,12 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
+            const config = vscode.workspace.getConfiguration('slurmClusterManager');
+            const openAsPreview = config.get<boolean>('openOutputAsPreview', false);
+
             const uri = vscode.Uri.file(normalizedFilePath);
             const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: true });
+            await vscode.window.showTextDocument(doc, { preview: openAsPreview });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
