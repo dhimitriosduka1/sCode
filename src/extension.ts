@@ -337,12 +337,19 @@ export function activate(context: vscode.ExtensionContext) {
             const doc = await vscode.workspace.openTextDocument(uri);
             const editor = await vscode.window.showTextDocument(doc, { preview: openAsPreview });
 
-            if (scrollToBottom && doc.lineCount > 0) {
-                const lastLine = doc.lineCount - 1;
-                const lastLineLength = doc.lineAt(lastLine).text.length;
-                const position = new vscode.Position(lastLine, lastLineLength);
-                editor.selection = new vscode.Selection(position, position);
-                editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            if (scrollToBottom) {
+                setTimeout(() => {
+                    if (editor && !doc.isClosed) {
+                        const lineCount = doc.lineCount;
+                        if (lineCount > 0) {
+                            const lastLine = lineCount - 1;
+                            const lastLineLength = doc.lineAt(lastLine).text.length;
+                            const position = new vscode.Position(lastLine, lastLineLength);
+                            editor.selection = new vscode.Selection(position, position);
+                            editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.Default);
+                        }
+                    }
+                }, 100);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
