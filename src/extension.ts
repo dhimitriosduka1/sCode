@@ -11,7 +11,7 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
+import { expandPathPlaceholders, hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
@@ -360,15 +360,43 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register command to open stdout file
     const openStdoutCommand = vscode.commands.registerCommand('slurmJobs.openStdout', async (item: any) => {
-        if (item?.job?.stdoutPath) {
-            await vscode.commands.executeCommand('slurmJobs.openFile', item.job.stdoutPath);
+        if (!item?.job) {
+            return;
+        }
+        let stdoutPath = item.job.stdoutPath;
+        if ((!stdoutPath || stdoutPath === 'N/A') && item.job.jobId) {
+            const paths = await slurmService.getHistoryJobPaths(item.job.jobId, {
+                jobName: item.job.name,
+                nodes: item.job.nodes,
+            });
+            stdoutPath = expandPathPlaceholders(paths.stdoutPath, item.job.jobId, item.job.name, item.job.nodes);
+            item.job.stdoutPath = stdoutPath;
+        }
+        if (stdoutPath && stdoutPath !== 'N/A') {
+            await vscode.commands.executeCommand('slurmJobs.openFile', stdoutPath);
+        } else {
+            vscode.window.showWarningMessage('Stdout path not available');
         }
     });
 
     // Register command to open stderr file
     const openStderrCommand = vscode.commands.registerCommand('slurmJobs.openStderr', async (item: any) => {
-        if (item?.job?.stderrPath) {
-            await vscode.commands.executeCommand('slurmJobs.openFile', item.job.stderrPath);
+        if (!item?.job) {
+            return;
+        }
+        let stderrPath = item.job.stderrPath;
+        if ((!stderrPath || stderrPath === 'N/A') && item.job.jobId) {
+            const paths = await slurmService.getHistoryJobPaths(item.job.jobId, {
+                jobName: item.job.name,
+                nodes: item.job.nodes,
+            });
+            stderrPath = expandPathPlaceholders(paths.stderrPath, item.job.jobId, item.job.name, item.job.nodes);
+            item.job.stderrPath = stderrPath;
+        }
+        if (stderrPath && stderrPath !== 'N/A') {
+            await vscode.commands.executeCommand('slurmJobs.openFile', stderrPath);
+        } else {
+            vscode.window.showWarningMessage('Stderr path not available');
         }
     });
 

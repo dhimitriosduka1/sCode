@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.6.2",
+  "version": "1.6.21",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -459,6 +459,26 @@
           "command": "slurmJobs.copyJobId",
           "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
           "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "inline@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.openStdout",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "output@1"
+        },
+        {
+          "command": "slurmJobs.openStderr",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "output@2"
         },
         {
           "command": "slurmJobs.copyJobId",
