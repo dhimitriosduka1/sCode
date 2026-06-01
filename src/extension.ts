@@ -17,9 +17,26 @@ import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
 import * as fs from 'fs';
 
-// Auto-refresh timer
+// Auto-refresh timer and state tracking
 let autoRefreshTimer: NodeJS.Timeout | undefined;
 let statusBarItem: vscode.StatusBarItem;
+let lastRefreshTime = 0;
+
+/**
+ * Triggers a unified refresh of providers and updates state
+ */
+function performRefresh(
+    slurmJobProvider: SlurmJobProvider,
+    jobHistoryProvider: JobHistoryProvider,
+    checkedJobIds?: Set<string>
+): void {
+    slurmJobProvider.refresh();
+    jobHistoryProvider.refresh();
+    lastRefreshTime = Date.now();
+    if (checkedJobIds) {
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
+    }
+}
 
 /**
  * Get autorefresh configuration
@@ -74,12 +91,7 @@ function startAutoRefresh(
         // Only start timer if VSCode window is currently focused
         if (vscode.window.state.focused) {
             autoRefreshTimer = setInterval(() => {
-                slurmJobProvider.refresh();
-                jobHistoryProvider.refresh();
-                // Update context key after refresh (provider prunes stale checked IDs)
-                if (checkedJobIds) {
-                    vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-                }
+                performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
             }, interval * 1000);
 
             console.log(`Auto-refresh started: every ${interval} seconds`);
@@ -238,12 +250,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
-        slurmJobProvider.refresh();
-        // Update context key after refresh (provider prunes stale checked IDs)
-        // Use setTimeout to let the tree data provider finish its async work
-        setTimeout(() => {
-            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-        }, 500);
+        performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
     });
 
     // Register the refresh history command
@@ -1199,12 +1206,17 @@ export function activate(context: vscode.ExtensionContext) {
     // Listen for window state changes (focus/blur) to pause/resume auto-refresh
     const windowStateListener = vscode.window.onDidChangeWindowState((windowState) => {
         if (windowState.focused) {
-            // When window is focused, restart the auto-refresh timer (performing immediate refresh if configured)
-            startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-            
-            // Trigger a single refresh on focus to make sure the user immediately sees up-to-date data
-            slurmJobProvider.refresh();
-            jobHistoryProvider.refresh();
+            const { enabled, interval } = getAutoRefreshConfig();
+            if (enabled && interval >= 5) {
+                // When window is focused, restart the auto-refresh timer
+                startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+                
+                // Only refresh immediately if the data is stale (time since last refresh > interval)
+                const timeSinceLastRefresh = Date.now() - lastRefreshTime;
+                if (timeSinceLastRefresh >= interval * 1000) {
+                    performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+                }
+            }
         } else {
             // Stop the auto-refresh timer when the window loses focus
             stopAutoRefresh();
