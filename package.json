@@ -522,6 +522,11 @@
           "type": "boolean",
           "default": false,
           "description": "Open stdout/stderr logs in preview mode (meaning clicking another file replaces the current tab)."
+        },
+        "slurmClusterManager.scrollToBottom": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scroll to the bottom (tail) of the file when opening stdout or stderr logs."
         }
       }
     }

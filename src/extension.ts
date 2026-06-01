@@ -326,10 +326,19 @@ export function activate(context: vscode.ExtensionContext) {
 
             const config = vscode.workspace.getConfiguration('slurmClusterManager');
             const openAsPreview = config.get<boolean>('openOutputAsPreview', false);
+            const scrollToBottom = config.get<boolean>('scrollToBottom', true);
 
             const uri = vscode.Uri.file(normalizedFilePath);
             const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: openAsPreview });
+            const editor = await vscode.window.showTextDocument(doc, { preview: openAsPreview });
+
+            if (scrollToBottom && doc.lineCount > 0) {
+                const lastLine = doc.lineCount - 1;
+                const lastLineLength = doc.lineAt(lastLine).text.length;
+                const position = new vscode.Position(lastLine, lastLineLength);
+                editor.selection = new vscode.Selection(position, position);
+                editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
