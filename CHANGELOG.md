@@ -7,13 +7,18 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 ### Added
 - **Copy Job ID Action**: Added inline and context-menu copy actions (`$(copy)`) to quickly copy the master base Job ID (excluding array ranges or indices) to the system clipboard for active jobs and history jobs.
 - **Job Array Dependency Support**: Resolved bracket range notations in pending job arrays during `scontrol show job` queries, successfully restoring dependency tracking and status icons (`🔗`).
-- **Interactive Job Dependency Submission**: Added a dedicated "Submit with Dependency" workflow (`$(link)`) next to the main Play button in the editor titles. The main Play button submits jobs immediately (preserving the fast, 1-click UX), while the Dependency button guides users through step-by-step active job selection, custom ID inputs, and dependency types (`afterok`, `afterany`, `after`, `afternotok`) directly and efficiently.
+- **Interactive Job Dependency Submission**: Added a dedicated "Submit with Dependency" workflow (`$(link)`) next to the main Play button in the editor titles. The main Play button submits jobs immediately (preserving the fast, 1-1 click UX), while the Dependency button guides users through step-by-step active job selection, custom ID inputs, and dependency types (`afterok`, `afterany`, `after`, `afternotok`) directly and efficiently.
 - **Dependency Prompt Configuration**: Introduced `slurmClusterManager.submitDependencyBehavior` setting with `"prompt"` (default) and `"never"` options to customize or bypass the dependency prompt entirely.
 - **Optional Resource Hogs**: Introduced `slurmClusterManager.showResourceHogs` setting with `true` (default) and `false` options to skip fetching and displaying Job Hog and GPU Gobbler stats in the Active Jobs view, saving compute/network resources on every refresh.
+- **Job History Output Logs**: Added inline and context-menu options to directly open stdout and stderr files for historical jobs from the Job History tree view, utilizing on-the-fly lazy path resolution. Displays resolved log file paths as descriptions/subtitles on History File Items.
+- **Configurable Log Tab Preview**: Log files (stdout/stderr) now open in persistent non-preview tabs by default. Introduced `slurmClusterManager.openOutputAsPreview` (default `false`) configuration setting to allow opening log files in preview mode if desired.
+- **Scroll to Bottom on Log Open**: Output/error logs now open pre-scrolled/aligned to the bottom (tail) of the document. Added `slurmClusterManager.scrollToBottom` setting (default `true`) to toggle or disable automatic scrolling, utilizing deferred range selection to prevent layout settlement jumps.
 
 ### Fixed
 - **GPU Double-Counting**: Fixed a bug in GRES resource parsing where requesting a generic GPU count alongside a specific GPU type resulted in twice the actual allocated count (e.g. showing `16x B200` instead of `8x B200`).
 - **Multi-node GPU accounting**: Hall of Shame, Cluster Overview, GPU hog metrics, GPU Partition Usage, and active job details now multiply per-node GPU requests by allocated node count, so jobs using 4 nodes with 4 GPUs each are counted as 16 GPUs instead of 4.
+- **Large sacct Output Handling**: Solved child process execution buffer limit issues for large job histories by adding the `-X` flag to `sacct` calls and raising the execution maxBuffer limit to 16MB to prevent `"stdout maxBuffer length exceeded"` errors.
+- **Debounced Focus Refreshes**: Prevented multiple duplicate/parallel refresh requests when the VS Code window regains focus. Conserves cluster resources by pausing auto-refresh when the window is unfocused and limiting focus refreshes to when data is actually stale.
 
 ## [1.4.0] - 2026-04-28
 
