@@ -5,6 +5,8 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 ## [Unreleased]
 
 ### Added
+- **Freeze All / Selected Pending Jobs Action**: Added an inline freeze/hold action (`$(debug-pause)`) next to the play and cancel actions at the top of the Pending category header. This allows users to easily freeze (hold) all pending jobs at once, or freeze only the checked/selected pending jobs if checkboxes are active.
+- **Unfreeze All / Selected Held Jobs Action**: Added an inline play action (`$(play)`) next to the cancel action at the top of the Pending category header. This allows users to easily unfreeze (release) all held jobs at once, or unfreeze only the checked/selected held jobs if checkboxes are active.
 - **Copy Job ID Action**: Added inline and context-menu copy actions (`$(copy)`) to quickly copy the master base Job ID (excluding array ranges or indices) to the system clipboard for active jobs and history jobs.
 - **Job Array Dependency Support**: Resolved bracket range notations in pending job arrays during `scontrol show job` queries, successfully restoring dependency tracking and status icons (`🔗`).
 - **Interactive Job Dependency Submission**: Added a dedicated "Submit with Dependency" workflow (`$(link)`) next to the main Play button in the editor titles. The main Play button submits jobs immediately (preserving the fast, 1-1 click UX), while the Dependency button guides users through step-by-step active job selection, custom ID inputs, and dependency types (`afterok`, `afterany`, `after`, `afternotok`) directly and efficiently.
@@ -15,6 +17,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Scroll to Bottom on Log Open**: Output/error logs now open pre-scrolled/aligned to the bottom (tail) of the document. Added `slurmClusterManager.scrollToBottom` setting (default `true`) to toggle or disable automatic scrolling, utilizing deferred range selection to prevent layout settlement jumps.
 
 ### Fixed
+- **Duplicate Snowflake Indicators**: Resolved an issue where held jobs showed duplicate snowflake (`❄️`) indicators by removing the redundant snowflake prefix from the text label, keeping only the right-aligned file decoration badge.
 - **GPU Double-Counting**: Fixed a bug in GRES resource parsing where requesting a generic GPU count alongside a specific GPU type resulted in twice the actual allocated count (e.g. showing `16x B200` instead of `8x B200`).
 - **Multi-node GPU accounting**: Hall of Shame, Cluster Overview, GPU hog metrics, GPU Partition Usage, and active job details now multiply per-node GPU requests by allocated node count, so jobs using 4 nodes with 4 GPUs each are counted as 16 GPUs instead of 4.
 - **Large sacct Output Handling**: Solved child process execution buffer limit issues for large job histories by adding the `-X` flag to `sacct` calls and raising the execution maxBuffer limit to 16MB to prevent `"stdout maxBuffer length exceeded"` errors.

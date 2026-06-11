@@ -73,14 +73,21 @@ export class SlurmJobItem extends vscode.TreeItem {
         isChecked: boolean = false,
     ) {
         const rowParts = getSlurmJobRowParts(job);
+        const isHeld = job.state === 'PD' && (job.pendingReason === 'JobHeldUser' || job.pendingReason === 'JobHeldAdmin');
         super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
+
+        this.resourceUri = vscode.Uri.parse(`slurm-job://job/${job.jobId}?state=${isHeld ? 'held' : 'normal'}`);
 
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         // Use pending-specific context values so package.json can hide stdout/stderr/pin icons
         if (job.state === 'PD') {
-            this.contextValue = isPinned ? 'slurmJobPendingPinned' : 'slurmJobPending';
+            if (isHeld) {
+                this.contextValue = isPinned ? 'slurmJobPendingHeldPinned' : 'slurmJobPendingHeld';
+            } else {
+                this.contextValue = isPinned ? 'slurmJobPendingPinned' : 'slurmJobPending';
+            }
         } else {
             this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
         }
@@ -154,7 +161,13 @@ export class SlurmJobItem extends vscode.TreeItem {
             case 'R':  // Running
                 return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green'));
             case 'PD': // Pending
-                return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
+                {
+                    const isHeld = this.job.pendingReason === 'JobHeldUser' || this.job.pendingReason === 'JobHeldAdmin';
+                    if (isHeld) {
+                        return new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('charts.red'));
+                    }
+                    return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
+                }
             case 'CG': // Completing
                 return new vscode.ThemeIcon('sync', new vscode.ThemeColor('charts.blue'));
             case 'CD': // Completed
@@ -331,12 +344,20 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
+    private decorationProvider?: SlurmJobDecorationProvider;
 
     constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache, checkedJobIds?: Set<string>) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.pinnedCache = pinnedCache;
         this.checkedJobIds = checkedJobIds;
+    }
+
+    /**
+     * Set the file decoration provider to refresh decorations when the tree is refreshed
+     */
+    setDecorationProvider(provider: SlurmJobDecorationProvider): void {
+        this.decorationProvider = provider;
     }
 
     /**
@@ -624,5 +645,32 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
 
         return children;
+    }
+}
+
+/**
+ * FileDecorationProvider for SLURM jobs
+ * Displays a snowflake badge and dims the text for held/frozen jobs.
+ */
+export class SlurmJobDecorationProvider implements vscode.FileDecorationProvider {
+    private _onDidChangeFileDecorations: vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined> =
+        new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+
+    readonly onDidChangeFileDecorations: vscode.Event<vscode.Uri | vscode.Uri[] | undefined> =
+        this._onDidChangeFileDecorations.event;
+
+    refresh(): void {
+        this._onDidChangeFileDecorations.fire(undefined);
+    }
+
+    provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+        if (uri.scheme === 'slurm-job' && uri.query.includes('state=held')) {
+            return {
+                badge: '❄️',
+                color: new vscode.ThemeColor('gitDecoration.ignoredResourceForeground'),
+                tooltip: 'Job is Held (Frozen)'
+            };
+        }
+        return undefined;
     }
 }

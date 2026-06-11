@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.6.21",
+  "version": "1.6.53",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -144,6 +144,16 @@
         "icon": "$(trash)"
       },
       {
+        "command": "slurmJobs.holdJob",
+        "title": "Hold Job",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "slurmJobs.releaseJob",
+        "title": "Release Job",
+        "icon": "$(play)"
+      },
+      {
         "command": "slurmJobs.cancelAllJobs",
         "title": "Cancel All Jobs",
         "icon": "$(trash)"
@@ -152,6 +162,16 @@
         "command": "slurmJobs.cancelAllPendingJobs",
         "title": "Cancel All Pending Jobs",
         "icon": "$(trash)"
+      },
+      {
+        "command": "slurmJobs.unfreezeAllJobs",
+        "title": "Unfreeze Held Jobs",
+        "icon": "$(play)"
+      },
+      {
+        "command": "slurmJobs.holdAllPendingJobs",
+        "title": "Freeze Pending Jobs",
+        "icon": "$(debug-pause)"
       },
       {
         "command": "slurmHistory.search",
@@ -321,6 +341,16 @@
           "group": "inline@1"
         },
         {
+          "command": "slurmJobs.unfreezeAllJobs",
+          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.holdAllPendingJobs",
+          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "group": "inline@3"
+        },
+        {
           "command": "slurmJobs.openStdout",
           "when": "view == slurmJobs && viewItem == slurmJob",
           "group": "inline@1"
@@ -421,6 +451,66 @@
           "group": "actions@1"
         },
         {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "inline@1"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "actions@1"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
+          "group": "inline@1"
+        },
+        {
+          "command": "slurmJobs.cancelJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
+          "group": "actions@1"
+        },
+        {
           "command": "slurmJobs.copyJobId",
           "when": "view == slurmJobs && viewItem == slurmJob",
           "group": "inline@5"
@@ -458,6 +548,26 @@
         {
           "command": "slurmJobs.copyJobId",
           "when": "view == slurmJobs && viewItem == slurmJobPendingPinned",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld",
+          "group": "actions@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
+          "group": "inline@5"
+        },
+        {
+          "command": "slurmJobs.copyJobId",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeldPinned",
           "group": "actions@5"
         },
         {
