@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLURM Cluster Manager — VS Code Extension</title>
+    <meta name="description" content="Manage, monitor, and submit SLURM jobs directly from VS Code. Active jobs monitoring, GPU partition sorting, leaderboard, and integrated log tailing.">
+    
+    <!-- OpenGraph Metadata -->
+    <meta property="og:title" content="SLURM Cluster Manager — VS Code Extension">
+    <meta property="og:description" content="Monitor jobs, compare partition loads, and view logs inside VS Code.">
+    <meta property="og:image" content="assets/screenshots/full_sidebar_overview.png">
+    <meta property="og:type" content="website">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Header / Navbar -->
+    <header class="navbar">
+        <div class="nav-container">
+            <a href="#" class="nav-logo">
+                <img src="assets/icon.svg" alt="SLURM Cluster Manager Logo" class="logo-img">
+                <span class="logo-text">SLURM Cluster Manager</span>
+            </a>
+            <nav class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#demo">Interface Demo</a>
+                <a href="#settings">Settings</a>
+                <a href="#setup">Setup Guide</a>
+            </nav>
+            <div class="nav-actions">
+                <!-- Theme Toggle Button -->
+                <button class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme">
+                    <!-- Sun Icon (visible in dark mode) -->
+                    <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    <!-- Moon Icon (visible in light mode) -->
+                    <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                </button>
+                <a href="https://github.com/dhimitriosduka1/sCode" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" id="github-link">
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.35 3.12.88.01.64.01 1.25.01 1.48 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8z"></path></svg>
+                    <span>GitHub</span>
+                </a>
+                <a href="https://marketplace.visualstudio.com" target="_blank" rel="noopener" class="btn btn-primary btn-sm" id="install-nav-link">Install</a>
+            </div>
+            <button class="mobile-menu-toggle" aria-label="Toggle navigation menu">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero-section">
+        <div class="hero-container">
+            <div class="hero-content">
+                <div class="release-tag">v1.6.53 release</div>
+                <h1>A Slurm interface built for VS Code</h1>
+                <p class="hero-subtitle">Monitor job queues, compare partition allocations, inspect logs, and submit scripts without leaving the editor.</p>
+                <div class="hero-buttons">
+                    <a href="https://marketplace.visualstudio.com" target="_blank" class="btn btn-primary btn-lg">Install Extension</a>
+                    <div class="copy-command-container">
+                        <code id="install-cmd">ext install DhimitriosDuka.slurm-cluster-manager</code>
+                        <button class="copy-btn" id="btn-copy-install" aria-label="Copy installation command">
+                            <svg class="copy-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            <svg class="check-icon hidden" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="hero-stats">
+                    <div class="stat-item">
+                        <span class="stat-val">SSH Remote</span>
+                        <span class="stat-lbl">Deployment Ready</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-val">GRES Aware</span>
+                        <span class="stat-lbl">GPU Monitoring</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-val">Low Overhead</span>
+                        <span class="stat-lbl">Manual & Auto Refresh</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="hero-visual">
+                <div class="vscode-card">
+                    <div class="vscode-header">
+                        <div class="window-controls">
+                            <span class="control-dot close"></span>
+                            <span class="control-dot minimize"></span>
+                            <span class="control-dot maximize"></span>
+                        </div>
+                        <div class="window-title">VS Code — Slurm Explorer</div>
+                        <div class="window-actions"></div>
+                    </div>
+                    <div class="vscode-body">
+                        <div class="vscode-icon-bar">
+                            <div class="sidebar-icon active">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="2 2"></rect><circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="8" r="2"></circle><circle cx="8" cy="16" r="2"></circle><circle cx="16" cy="16" r="2"></circle></svg>
+                            </div>
+                            <div class="sidebar-icon">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3zM9 3v18M3 9h18"></path></svg>
+                            </div>
+                        </div>
+                        
+                        <div class="vscode-sidebar">
+                            <div class="sidebar-header">
+                                <span>SLURM EXPLORER</span>
+                                <span class="sidebar-actions">↻</span>
+                            </div>
+                            
+                            <div class="sidebar-menu">
+                                <div class="accordion-tab active">
+                                    <span class="chevron">▼</span>
+                                    <span class="title">Active Jobs</span>
+                                    <span class="badge-count">4</span>
+                                </div>
+                                <div class="accordion-tab">
+                                    <span class="chevron">▶</span>
+                                    <span class="title">GPU Partition Usage</span>
+                                </div>
+                                <div class="accordion-tab">
+                                    <span class="chevron">▶</span>
+                                    <span class="title">Hall of Shame</span>
+                                </div>
+                                <div class="accordion-tab">
+                                    <span class="chevron">▶</span>
+                                    <span class="title">Cluster Overview</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="vscode-editor-area">
+                            <div class="editor-tabs">
+                                <div class="tab-item active">job_logs_stdout.txt</div>
+                                <div class="tab-item">submit_train.sh</div>
+                            </div>
+                            
+                            <div class="editor-content">
+                                <pre><code class="code-lines"><span class="line-num">1</span><span class="comment"># Submitted job 548910 to GPU partition 'gpu_a100'</span>
+<span class="line-num">2</span>[2026-06-14 02:05:12] Initializing CUDA devices...
+<span class="line-num">3</span>[2026-06-14 02:05:15] Found 4x NVIDIA A100-SXM4-80GB (GRES: gpu:4)
+<span class="line-num">4</span>[2026-06-14 02:05:16] Allocating shared memory: 256GB
+<span class="line-num">5</span>[2026-06-14 02:05:18] Training model 'hpc-trans-v4' with batch size 64
+<span class="line-num">6</span>[2026-06-14 02:05:30] Epoch 1/100 completed. Loss: 2.8451 | GPU Temp: 68C
+<span class="line-num">7</span>[2026-06-14 02:06:00] Epoch 2/100 completed. Loss: 1.9542 | GPU Temp: 71C
+<span class="line-num">8</span>[2026-06-14 02:06:30] Epoch 3/100 completed. Loss: 1.4120 | GPU Temp: 71C
+<span class="line-num">9</span>[2026-06-14 02:07:00] Epoch 4/100 completed. Loss: 1.1023 | GPU Temp: 73C
+<span class="line-num">10</span>[2026-06-14 02:07:30] Epoch 5/100 completed. Loss: 0.9852 | GPU Temp: 72C
+<span class="line-num">11</span><span class="cursor-line">_</span></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="vscode-statusbar">
+                        <div class="status-left">
+                            <span class="status-mode">Remote-SSH: hpc-head.university.edu</span>
+                            <span class="status-sync">Auto-Refresh: 30s</span>
+                        </div>
+                        <div class="status-right">
+                            <span>UTF-8</span>
+                            <span>TypeScript</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features-section">
+        <div class="container">
+            <div class="section-header">
+                <h2>Features</h2>
+                <p>Core functionality built for querying clusters with minimal manual terminal interaction.</p>
+            </div>
+            
+            <div class="features-grid">
+                <!-- Card 1 -->
+                <div class="feature-card">
+                    <h3>Active Job Dashboard</h3>
+                    <p>Track running, pending, and completing jobs. Visual progress bars display elapsed wall time against requested limits alongside core configurations.</p>
+                </div>
+                
+                <!-- Card 2 -->
+                <div class="feature-card">
+                    <h3>Partition Allocations</h3>
+                    <p>View GPU partition resources sorted by utilization. Displays total allocations, node status details, and queue pressure.</p>
+                </div>
+                
+                <!-- Card 3 -->
+                <div class="feature-card">
+                    <h3>Leaderboard & Accounting</h3>
+                    <p>Monitor cluster GPU utilization trends across users and accounts. Progress bars highlight overall cluster share per queue.</p>
+                </div>
+                
+                <!-- Card 4 -->
+                <div class="feature-card">
+                    <h3>SBATCH Script Tooltips</h3>
+                    <p>Hover partition arguments within SBATCH scripts to fetch live partition capacity. Submit directly via the editor title-bar buttons.</p>
+                </div>
+
+                <!-- Card 5 -->
+                <div class="feature-card">
+                    <h3>Integrated Log Tailing</h3>
+                    <p>Open stderr and stdout log files directly. Resolves relative logs directories and template patterns automatically from sbatch properties.</p>
+                </div>
+
+                <!-- Card 6 -->
+                <div class="feature-card">
+                    <h3>Batch Operations</h3>
+                    <p>Select multiple items to dispatch batch cancel operations. Handles pending array ranges without halting active parent processes.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interface Demo Section -->
+    <section id="demo" class="demo-section">
+        <div class="container">
+            <div class="section-header">
+                <h2>Interface Demo</h2>
+                <p>Explore the extension's views and controls below. Click tabs, expand list rows, and inspect logs to see how it operates.</p>
+            </div>
+            
+            <div class="emulator-wrapper">
+                <div class="emulator-container">
+                    <div class="vscode-header">
+                        <div class="window-controls">
+                            <span class="control-dot close"></span>
+                            <span class="control-dot minimize"></span>
+                            <span class="control-dot maximize"></span>
+                        </div>
+                        <div class="window-title">VS Code — Slurm Workspace</div>
+                    </div>
+                    
+                    <div class="emulator-body">
+                        <!-- Extension Sidebar -->
+                        <div class="emulator-sidebar">
+                            <div class="sidebar-views-header">
+                                <span class="title">SLURM EXPLORER</span>
+                                <div class="header-actions">
+                                    <button class="action-btn" id="btn-emulator-refresh" title="Refresh">
+                                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l.56-.56"></path></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Toggle Tabs -->
+                            <div class="emulator-tabs-list">
+                                <button class="tab-trigger active" data-tab="tab-active-jobs">
+                                    Active Jobs <span class="badge" id="active-jobs-badge">3</span>
+                                </button>
+                                <button class="tab-trigger" data-tab="tab-gpu-partitions">
+                                    GPU Partitions
+                                </button>
+                                <button class="tab-trigger" data-tab="tab-hall-shame">
+                                    Leaderboard
+                                </button>
+                            </div>
+
+                            <!-- Panel 1: Active Jobs -->
+                            <div class="emulator-panel active" id="tab-active-jobs">
+                                <div class="panel-section-header">
+                                    <span class="label">ACTIVE QUEUE</span>
+                                </div>
+                                <div class="job-list">
+                                    <!-- Job Item 1 (Running) -->
+                                    <div class="job-item running expanded" data-job-id="548910">
+                                        <div class="job-header">
+                                            <span class="status-indicator"></span>
+                                            <span class="job-name">hpc_train_trans</span>
+                                            <span class="job-id">548910</span>
+                                            <span class="job-actions">
+                                                <button class="job-action-btn cancel-btn" title="Cancel Job">✖</button>
+                                                <button class="job-action-btn pin-btn pinned" title="Unpin Job">📌</button>
+                                            </span>
+                                        </div>
+                                        <div class="job-details">
+                                            <div class="detail-row">
+                                                <span class="lbl">Partition:</span> <span class="val">gpu_a100</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Cores / Mem:</span> <span class="val">32 Cores / 256 GB</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Wall Time:</span>
+                                                <div class="progress-container">
+                                                    <div class="progress-bar running" style="width: 65%;"></div>
+                                                    <span class="progress-label">04:32:15 / 07:00:00</span>
+                                                </div>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Allocation:</span> <span class="val">4x A100 (68% GPU load)</span>
+                                            </div>
+                                            <div class="detail-row logs-row">
+                                                <span class="lbl">Logs:</span>
+                                                <button class="btn-open-log" data-log="stdout">stdout</button>
+                                                <button class="btn-open-log" data-log="stderr">stderr</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Job Item 2 (Running) -->
+                                    <div class="job-item running" data-job-id="548915">
+                                        <div class="job-header">
+                                            <span class="status-indicator"></span>
+                                            <span class="job-name">infer_run_v3</span>
+                                            <span class="job-id">548915</span>
+                                            <span class="job-actions">
+                                                <button class="job-action-btn cancel-btn" title="Cancel Job">✖</button>
+                                                <button class="job-action-btn pin-btn" title="Pin Job">📌</button>
+                                            </span>
+                                        </div>
+                                        <div class="job-details">
+                                            <div class="detail-row">
+                                                <span class="lbl">Partition:</span> <span class="val">gpu_h200</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Cores / Mem:</span> <span class="val">16 Cores / 128 GB</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Wall Time:</span>
+                                                <div class="progress-container">
+                                                    <div class="progress-bar running" style="width: 12%;"></div>
+                                                    <span class="progress-label">00:15:30 / 02:00:00</span>
+                                                </div>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Allocation:</span> <span class="val">1x H200 (89% GPU load)</span>
+                                            </div>
+                                            <div class="detail-row logs-row">
+                                                <span class="lbl">Logs:</span>
+                                                <button class="btn-open-log" data-log="infer_stdout">stdout</button>
+                                                <button class="btn-open-log" data-log="infer_stderr">stderr</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Job Item 3 (Pending) -->
+                                    <div class="job-item pending" data-job-id="548922">
+                                        <div class="job-header">
+                                            <span class="status-indicator"></span>
+                                            <span class="job-name">eval_dataset_5</span>
+                                            <span class="job-id">548922</span>
+                                            <span class="job-actions">
+                                                <button class="job-action-btn cancel-btn" title="Cancel Job">✖</button>
+                                                <button class="job-action-btn pin-btn" title="Pin Job">📌</button>
+                                            </span>
+                                        </div>
+                                        <div class="job-details">
+                                            <div class="detail-row">
+                                                <span class="lbl">Partition:</span> <span class="val">gpu_a100</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Reason:</span> <span class="val warning-text">Resources (GPU unavailable)</span>
+                                            </div>
+                                            <div class="detail-row">
+                                                <span class="lbl">Dependency:</span> <span class="val">afterok:548910</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Panel 2: GPU Partitions -->
+                            <div class="emulator-panel" id="tab-gpu-partitions">
+                                <div class="panel-section-header">
+                                    <span class="label">PARTITION GPU ALLOCATIONS</span>
+                                </div>
+                                <div class="partition-list">
+                                    <div class="partition-item">
+                                        <div class="partition-info">
+                                            <span class="partition-name">gpu_h200</span>
+                                            <span class="partition-count">1 / 8 GPUs</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-green" style="width: 12.5%;"></div>
+                                        </div>
+                                        <div class="partition-hover-details">
+                                            <span>Running: 1 | Pending: 0</span>
+                                            <span>NVIDIA H200 (141GB)</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="partition-item">
+                                        <div class="partition-info">
+                                            <span class="partition-name">gpu_a100</span>
+                                            <span class="partition-count">12 / 16 GPUs</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-orange" style="width: 75%;"></div>
+                                        </div>
+                                        <div class="partition-hover-details">
+                                            <span>Running: 3 | Pending: 1</span>
+                                            <span>NVIDIA A100 (80GB)</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="partition-item">
+                                        <div class="partition-info">
+                                            <span class="partition-name">gpu_l40s</span>
+                                            <span class="partition-count">32 / 32 GPUs</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-red" style="width: 100%;"></div>
+                                        </div>
+                                        <div class="partition-hover-details">
+                                            <span>Running: 8 | Pending: 4</span>
+                                            <span>NVIDIA L40S (48GB)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Panel 3: Hall of Shame -->
+                            <div class="emulator-panel" id="tab-hall-shame">
+                                <div class="panel-section-header">
+                                    <span class="label">GPU ALLOCATIONS LEADERBOARD</span>
+                                </div>
+                                <div class="leaderboard-list">
+                                    <div class="leader-item highlight">
+                                        <div class="leader-rank">1</div>
+                                        <div class="leader-info">
+                                            <span class="leader-user font-bold">Dhimitrios (You)</span>
+                                            <span class="leader-detail">5 GPUs (4x A100, 1x H200)</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-blue" style="width: 52%;"></div>
+                                            <span class="progress-bar-text">52% cluster share</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="leader-item">
+                                        <div class="leader-rank">2</div>
+                                        <div class="leader-info">
+                                            <span class="leader-user">alice.w</span>
+                                            <span class="leader-detail">4 GPUs (4x A100)</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-blue-secondary" style="width: 40%;"></div>
+                                            <span class="progress-bar-text">40% cluster share</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="leader-item">
+                                        <div class="leader-rank">3</div>
+                                        <div class="leader-info">
+                                            <span class="leader-user">bob_researcher</span>
+                                            <span class="leader-detail">1 GPU (1x L40S)</span>
+                                        </div>
+                                        <div class="progress-container">
+                                            <div class="progress-bar fill-blue-secondary" style="width: 8%;"></div>
+                                            <span class="progress-bar-text">8% cluster share</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Editor Output Pane -->
+                        <div class="emulator-editor">
+                            <div class="editor-tabs">
+                                <div class="tab-item active" id="emulator-tab-title">hpc_train_trans_stdout.log</div>
+                                <div class="editor-actions">
+                                    <span class="action-btn-mini">Close Log</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Logs Viewer -->
+                            <div class="editor-content" id="emulator-editor-log">
+                                <pre><code class="code-lines-log" id="log-content-body">
+<span class="comment"># Tail of output logs for job 548910 (Updated 3 seconds ago)</span>
+[Epoch 14/100] training_loss: 0.4561 | validation_loss: 0.5122
+[Epoch 14] Batch 1500/2300: loss=0.4501, lr=1e-4
+[Epoch 14] Batch 2000/2300: loss=0.4320, lr=1e-4
+[Epoch 15/100] training_loss: 0.4109 | validation_loss: 0.4902
+[Epoch 15] Batch 500/2300: loss=0.4022, lr=1e-4
+[Epoch 15] Batch 1000/2300: loss=0.3951, lr=1e-4
+[2026-06-14 02:08:44] Evaluation step completed.
+[2026-06-14 02:08:45] Validation Accuracy: 94.21%
+[2026-06-14 02:09:00] Saving checkpoint model_epoch_15.pt ...
+[2026-06-14 02:09:12] Saved successfully. Moving to epoch 16.
+<span class="cursor-line">_</span></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="vscode-statusbar">
+                        <div class="status-left">
+                            <span class="status-mode">Remote-SSH: hpc-head.university.edu</span>
+                            <span class="status-sync" id="lbl-emulator-last-update">Connected • Refreshed just now</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Settings Section -->
+    <section id="settings" class="settings-section">
+        <div class="container">
+            <div class="settings-layout">
+                <div class="settings-info">
+                    <h2>Configuration</h2>
+                    <p>Customize the query rate, refresh behaviors, and listings bounds to balance data freshness against Slurm controller load.</p>
+                    <p class="settings-desc">Adjust the variables on the right to see simulated VS Code configuration properties.</p>
+                </div>
+                
+                <div class="settings-panel-container">
+                    <div class="settings-mock-panel">
+                        <div class="settings-title">Settings: SLURM Cluster Manager</div>
+                        
+                        <div class="setting-item">
+                            <label for="cfg-interval">Auto-Refresh Interval (seconds)</label>
+                            <span class="setting-desc">Sets how frequently the extension queries Slurm. (Range: 5s - 3600s)</span>
+                            <div class="input-control">
+                                <input type="range" id="cfg-interval" min="5" max="120" value="30">
+                                <span class="val-display" id="cfg-interval-val">30s</span>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-refresh-enabled">
+                                <span class="checkbox-custom"></span>
+                                <span>Auto Refresh Enabled on Load</span>
+                            </label>
+                            <span class="setting-desc">Enables polling active jobs automatically on window workspace load.</span>
+                        </div>
+
+                        <div class="setting-item">
+                            <label for="cfg-shame-size">Leaderboard Top User Count</label>
+                            <span class="setting-desc">Number of top GPU users to list on the leaderboard dashboard view.</span>
+                            <div class="input-control">
+                                <input type="number" id="cfg-shame-size" min="1" max="50" value="10">
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-mock-mode">
+                                <span class="checkbox-custom"></span>
+                                <span>Enable Mock Mode</span>
+                            </label>
+                            <span class="setting-desc">Use simulated Slurm data for offline extension testing without cluster access.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Setup Guide Section -->
+    <section id="setup" class="setup-section">
+        <div class="container">
+            <div class="section-header">
+                <h2>Setup Guide</h2>
+                <p>Deploy the extension to match your development workflow.</p>
+            </div>
+            
+            <div class="setup-tabs">
+                <button class="setup-tab-btn active" data-setup="setup-ssh">Remote SSH (Recommended)</button>
+                <button class="setup-tab-btn" data-setup="setup-local">Local Node Development</button>
+            </div>
+
+            <div class="setup-panels">
+                <!-- SSH panel -->
+                <div class="setup-content-panel active" id="setup-ssh">
+                    <div class="step-list">
+                        <div class="step-card">
+                            <span class="step-number">1</span>
+                            <h4>Connect via Remote SSH</h4>
+                            <p>Connect your local VS Code environment to the remote cluster login node using the official VS Code Remote SSH extension.</p>
+                        </div>
+                        <div class="step-card">
+                            <span class="step-number">2</span>
+                            <h4>Install Extension Remote</h4>
+                            <p>Search for <code>SLURM Cluster Manager</code> in the Extensions pane. Click <strong>Install on SSH: [host]</strong> to install it directly on the remote server.</p>
+                        </div>
+                        <div class="step-card">
+                            <span class="step-number">3</span>
+                            <h4>Open Workspace Folder</h4>
+                            <p>Open a folder containing your SBATCH submit scripts. The Slurm Explorer view will initialize in the sidebar and query Slurm binaries.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Local panel -->
+                <div class="setup-content-panel" id="setup-local">
+                    <div class="step-list">
+                        <div class="step-card">
+                            <span class="step-number">1</span>
+                            <h4>Check Binary Access</h4>
+                            <p>Verify that your local system has direct command-line access to standard Slurm binaries (<code>squeue</code>, <code>sinfo</code>, <code>scontrol</code>).</p>
+                        </div>
+                        <div class="step-card">
+                            <span class="step-number">2</span>
+                            <h4>Install Locally</h4>
+                            <p>Open the Extensions view, search for <code>SLURM Cluster Manager</code>, and click <strong>Install</strong> to add it to your local environment.</p>
+                        </div>
+                        <div class="step-card">
+                            <span class="step-number">3</span>
+                            <h4>Configure Refresh Settings</h4>
+                            <p>Open settings to customize the refresh rates if you are querying highly populated clusters to minimize background network queries.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container footer-container">
+            <div class="footer-left">
+                <img src="assets/icon.svg" alt="SLURM Cluster Manager Logo" class="footer-logo">
+                <p>A developer-focused tool designed to simplify cluster monitoring and optimize partition resource allocation.</p>
+            </div>
+            <div class="footer-right">
+                <div class="footer-links-group">
+                    <h4>Repository</h4>
+                    <a href="https://github.com/dhimitriosduka1/sCode" target="_blank" rel="noopener">GitHub</a>
+                    <a href="https://github.com/dhimitriosduka1/sCode/issues" target="_blank" rel="noopener">Issue Tracker</a>
+                    <a href="LICENSE" target="_blank" rel="noopener">License</a>
+                </div>
+                <div class="footer-links-group">
+                    <h4>Project Credits</h4>
+                    <span>Author: Dhimitrios Duka</span>
+                    <span>Pair Programmed with Google Antigravity</span>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <div class="container">
+                <p>&copy; 2026 SLURM Cluster Manager. Released under the MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div class="toast-notification hidden" id="toast">
+        <span class="toast-message"></span>
+        <button class="toast-close">✕</button>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="main.js"></script>
+</body>
+</html>
