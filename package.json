@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.9.92",
+  "version": "1.9.93",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -367,132 +367,132 @@
         },
         {
           "command": "slurmJobs.openStdout",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.openStderr",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "inline@2"
         },
         {
           "command": "slurmJobs.openStdout",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "output@1"
         },
         {
           "command": "slurmJobs.openStderr",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "output@2"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "inline@3"
         },
         {
           "command": "slurmJobs.pinJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "inline@4"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "actions@1"
         },
         {
           "command": "slurmJobs.pinJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "actions@2"
         },
         {
           "command": "slurmJobs.openStdout",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.openStderr",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "inline@2"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "inline@3"
         },
         {
           "command": "slurmJobs.unpinJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "inline@4"
         },
         {
           "command": "slurmJobs.openStdout",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "output@1"
         },
         {
           "command": "slurmJobs.openStderr",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "output@2"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "actions@1"
         },
         {
           "command": "slurmJobs.unpinJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPinned(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPinned || view == slurmJobs && viewItem == slurmJobPinnedArray",
           "group": "actions@2"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld",
           "group": "actions@1"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPendingPinned(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.cancelJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPendingPinned(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "actions@1"
         },
         {
           "command": "slurmJobs.holdJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Pinned)?(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
           "group": "inline@3"
         },
         {
           "command": "slurmJobs.holdJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Pinned)?(Array)?$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
           "group": "actions@3"
         },
         {
           "command": "slurmJobs.releaseJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Pinned)?(Array)?Held$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "inline@3"
         },
         {
           "command": "slurmJobs.releaseJob",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJobPending(Pinned)?(Array)?Held$/",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "actions@3"
         },
         {
           "command": "slurmJobs.copyJobId",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Pending)?(Pinned)?(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem =~ /slurmJob/",
           "group": "inline@5"
         },
         {
           "command": "slurmJobs.copyJobId",
-          "when": "view == slurmJobs && viewItem =~ /^slurmJob(Pending)?(Pinned)?(Array)?(Held)?$/",
+          "when": "view == slurmJobs && viewItem =~ /slurmJob/",
           "group": "actions@5"
         },
         {
@@ -507,7 +507,7 @@
         },
         {
           "command": "slurmJobs.updateArrayThrottle",
-          "when": "view == slurmJobs && viewItem =~ /Array(Held)?$/",
+          "when": "view == slurmJobs && viewItem =~ /Array/",
           "group": "inline@6"
         },
         {
