@@ -4,6 +4,8 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-27
+
 ### Added
 - **Copy Job ID Action**: Added inline and context-menu copy actions (`$(copy)`) to quickly copy the master base Job ID (excluding array ranges or indices) to the system clipboard for active jobs and history jobs.
 - **Job Array Dependency Support**: Resolved bracket range notations in pending job arrays during `scontrol show job` queries, successfully restoring dependency tracking and status icons (`🔗`).
@@ -16,6 +18,10 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Pin/Unpin Pending Jobs**: Added pin and unpin inline actions for pending jobs (all variants: held, array, pinned), consistent with the existing behaviour for running jobs.
 - **Held Job Visual Indicator**: Held pending jobs now display a distinct lock icon (orange) in the tree view, making their frozen state immediately visible without needing to expand the job details.
 - **Cancel All Running Jobs**: Added a "Cancel All Running Jobs" inline button (bin icon `$(trash)`) and context menu option directly on the `"Running (x)"` category header row (visible only when there is at least 1 running job) to safely batch cancel all running jobs with a double-confirmation modal.
+
+### Improved
+- **Optimized sacct Performance**: Configured `sacct` history queries to run with the `-X` flag (fetching only parent jobs/steps) and increased command execution buffer size limit to 16MB to prevent buffer overflow crashes on large active clusters.
+- **Job History File Path Descriptions**: Display resolved stdout/stderr log file paths as descriptions directly next to log items in the Job History sidebar tree view.
 
 ### Fixed
 - **GPU Double-Counting**: Fixed a bug in GRES resource parsing where requesting a generic GPU count alongside a specific GPU type resulted in twice the actual allocated count (e.g. showing `16x B200` instead of `8x B200`).

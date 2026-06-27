@@ -31,6 +31,10 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
 - **One-Click Actions**: Cancel or pin jobs directly from the UI.
+- **Hold and Release**: Freeze pending jobs (`$(lock)`) to hold them, or unfreeze (`$(unlock)`) to release them back to the queue. Supports bulk hold and release on the `"Pending"` category header.
+- **Pin Pending Jobs**: Pin pending jobs to keep them visible at the top of the tree view, consistent with running jobs.
+- **Held Job Visual Indicator**: Held pending jobs display a distinct lock icon (orange) in the tree view to make their status immediately visible.
+- **Cancel All Running Jobs**: Cancel all running jobs at once via the bin icon (`$(trash)`) on the `"Running"` category header row.
 - **Copy Job ID**: Copy the master base Job ID (excluding array ranges/indices) to the clipboard using the inline/context-menu `$(copy)` action.
 - **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
 - **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
@@ -40,7 +44,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 ![Active SLURM jobs with progress, pending reasons, and expanded job details](screenshots/active_jobs.png)
 
 ### Job Array Management
-Smart handling of SLURM job arrays with flexible cancellation options:
+Smart handling of SLURM job arrays with flexible cancellation and modification options:
 - **Cancel entire array**: Remove all jobs in the array at once
 - **Cancel pending jobs**: Cancel only pending jobs, keep running ones
 - **Cancel specific job(s)**: Flexible input supporting:
@@ -50,6 +54,7 @@ Smart handling of SLURM job arrays with flexible cancellation options:
   - List: `1,3,5,7` (non-contiguous jobs)
 - **Bounds validation**: Automatically validates against actual array range
 - **Safety warnings**: Extra confirmation when cancelling >100 jobs
+- **Array Throttle Modification**: Update the concurrent task limit (`ArrayTaskThrottle`) of active/pending job arrays via the hashtag icon (`$(hash)`) on hover.
 
 > **Note:** Array-level cancel options only appear for pending jobs. Running array tasks are cancelled directly like any individual job.
 
@@ -59,6 +64,7 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 - **Job History Range Control**: Use the toolbar action to switch between common lookback windows or enter a custom range.
 - **Refresh Awareness**: Job History includes a "last refreshed" row so you know when the data was fetched.
 - **Instant Log Access**: Right-click any job (active or historical) to open its `stdout` / `stderr`.
+- **Log Path Descriptions**: Displays resolved stdout/stderr file paths directly in the Job History sidebar tree view.
 - **Smart Path Resolution**: Automatically resolves log locations from `sbatch` directives and `scontrol` metadata, including relative paths, `~`, Slurm filename placeholders, array IDs, escaped spaces, and unavailable paths like `(null)`.
 
 ![Job History grouped by date with expanded job details and stdout/stderr access](screenshots/job_history.png)
