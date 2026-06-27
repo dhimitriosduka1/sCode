@@ -231,22 +231,22 @@
       {
         "command": "slurmJobs.holdJob",
         "title": "Hold Job",
-        "icon": "$(snowflake)"
+        "icon": "$(lock)"
       },
       {
         "command": "slurmJobs.releaseJob",
         "title": "Release Job",
-        "icon": "$(flame)"
+        "icon": "$(unlock)"
       },
       {
         "command": "slurmJobs.holdAllPendingJobs",
         "title": "Hold All Pending Jobs",
-        "icon": "$(snowflake)"
+        "icon": "$(lock)"
       },
       {
         "command": "slurmJobs.releaseAllPendingJobs",
         "title": "Release All Pending Jobs",
-        "icon": "$(flame)"
+        "icon": "$(unlock)"
       }
     ],
     "menus": {
@@ -451,9 +451,39 @@
           "group": "inline@1"
         },
         {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
+          "group": "inline@2"
+        },
+        {
+          "command": "slurmJobs.pinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld",
+          "group": "inline@3"
+        },
+        {
           "command": "slurmJobs.cancelJob",
           "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld",
           "group": "actions@1"
+        },
+        {
+          "command": "slurmJobs.holdJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.releaseJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
+          "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.pinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld",
+          "group": "actions@3"
         },
         {
           "command": "slurmJobs.cancelJob",
@@ -461,28 +491,18 @@
           "group": "inline@1"
         },
         {
+          "command": "slurmJobs.unpinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
+          "group": "inline@3"
+        },
+        {
           "command": "slurmJobs.cancelJob",
           "when": "view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "actions@1"
         },
         {
-          "command": "slurmJobs.holdJob",
-          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
-          "group": "inline@3"
-        },
-        {
-          "command": "slurmJobs.holdJob",
-          "when": "view == slurmJobs && viewItem == slurmJobPending || view == slurmJobs && viewItem == slurmJobPendingArray || view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray",
-          "group": "actions@3"
-        },
-        {
-          "command": "slurmJobs.releaseJob",
-          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
-          "group": "inline@3"
-        },
-        {
-          "command": "slurmJobs.releaseJob",
-          "when": "view == slurmJobs && viewItem == slurmJobPendingHeld || view == slurmJobs && viewItem == slurmJobPendingArrayHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
+          "command": "slurmJobs.unpinJob",
+          "when": "view == slurmJobs && viewItem == slurmJobPendingPinned || view == slurmJobs && viewItem == slurmJobPendingPinnedArray || view == slurmJobs && viewItem == slurmJobPendingPinnedHeld || view == slurmJobs && viewItem == slurmJobPendingPinnedArrayHeld",
           "group": "actions@3"
         },
         {

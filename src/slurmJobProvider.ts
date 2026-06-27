@@ -173,6 +173,11 @@ export class SlurmJobItem extends vscode.TreeItem {
     }
 
     private getStateIcon(): vscode.ThemeIcon {
+        // Held pending jobs take priority — show lock icon regardless of pinned state
+        if (this.job.state === 'PD' && isJobHeld(this.job.pendingReason)) {
+            return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange'));
+        }
+
         // Pinned jobs get a special icon
         if (this.isPinned) {
             return new vscode.ThemeIcon('pinned', new vscode.ThemeColor('charts.blue'));
