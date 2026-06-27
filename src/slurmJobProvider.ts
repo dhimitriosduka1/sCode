@@ -51,6 +51,7 @@ export class StatusCategoryItem extends vscode.TreeItem {
     constructor(
         public readonly category: StatusCategory,
         public readonly jobCount: number,
+        public readonly jobs?: SlurmJob[],
     ) {
         const info = CATEGORIES[category];
         super(
@@ -60,7 +61,14 @@ export class StatusCategoryItem extends vscode.TreeItem {
 
         this.iconPath = info.icon;
         if (category === 'pending' && jobCount > 0) {
-            this.contextValue = 'statusCategoryPending';
+            let context = 'statusCategoryPending';
+            if (jobs) {
+                const hasNonHeld = jobs.some(j => !isJobHeld(j.pendingReason));
+                const hasHeld = jobs.some(j => isJobHeld(j.pendingReason));
+                if (hasNonHeld) { context += 'HasNonHeld'; }
+                if (hasHeld) { context += 'HasHeld'; }
+            }
+            this.contextValue = context;
         } else if (category === 'running' && jobCount > 0) {
             this.contextValue = 'statusCategoryRunning';
         } else {
@@ -504,23 +512,25 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             // Add Pinned category first if there are pinned jobs
             if (this.pinnedCache) {
-                const pinnedCount = filteredJobs.filter(job =>
+                const pinnedJobs = filteredJobs.filter(job =>
                     this.pinnedCache!.isPinned(job.jobId)
-                ).length;
+                );
+                const pinnedCount = pinnedJobs.length;
 
                 if (pinnedCount > 0) {
-                    categories.push(new StatusCategoryItem('pinned', pinnedCount));
+                    categories.push(new StatusCategoryItem('pinned', pinnedCount, pinnedJobs));
                 }
             }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
                 const info = CATEGORIES[categoryKey];
-                const jobCount = filteredJobs.filter(job =>
+                const jobsInCat = filteredJobs.filter(job =>
                     info.states.includes(job.state)
-                ).length;
+                );
+                const jobCount = jobsInCat.length;
 
                 if (jobCount > 0) {
-                    categories.push(new StatusCategoryItem(categoryKey, jobCount));
+                    categories.push(new StatusCategoryItem(categoryKey, jobCount, jobsInCat));
                 }
             }
 

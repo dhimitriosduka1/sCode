@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.9.91",
+  "version": "1.9.92",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -347,12 +347,12 @@
       "view/item/context": [
         {
           "command": "slurmJobs.cancelAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending/",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.cancelAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending/",
           "group": "actions@1"
         },
         {
@@ -512,23 +512,23 @@
         },
         {
           "command": "slurmJobs.holdAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
-          "group": "inline@1"
-        },
-        {
-          "command": "slurmJobs.holdAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
-          "group": "actions@1"
-        },
-        {
-          "command": "slurmJobs.releaseAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasNonHeld/",
           "group": "inline@2"
         },
         {
-          "command": "slurmJobs.releaseAllPendingJobs",
-          "when": "view == slurmJobs && viewItem == statusCategoryPending",
+          "command": "slurmJobs.holdAllPendingJobs",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasNonHeld/",
           "group": "actions@2"
+        },
+        {
+          "command": "slurmJobs.releaseAllPendingJobs",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasHeld/",
+          "group": "inline@3"
+        },
+        {
+          "command": "slurmJobs.releaseAllPendingJobs",
+          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasHeld/",
+          "group": "actions@3"
         }
       ]
     },
