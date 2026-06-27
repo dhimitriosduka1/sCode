@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.9.93",
+  "version": "1.9.94",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -347,12 +347,12 @@
       "view/item/context": [
         {
           "command": "slurmJobs.cancelAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPending || viewItem == statusCategoryPendingHasNonHeld || viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "inline@1"
         },
         {
           "command": "slurmJobs.cancelAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPending || viewItem == statusCategoryPendingHasNonHeld || viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "actions@1"
         },
         {
@@ -487,12 +487,12 @@
         },
         {
           "command": "slurmJobs.copyJobId",
-          "when": "view == slurmJobs && viewItem =~ /slurmJob/",
+          "when": "view == slurmJobs && (viewItem == slurmJob || viewItem == slurmJobArray || viewItem == slurmJobPinned || viewItem == slurmJobPinnedArray || viewItem == slurmJobPending || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingHeld || viewItem == slurmJobPendingArrayHeld || viewItem == slurmJobPendingPinned || viewItem == slurmJobPendingPinnedArray || viewItem == slurmJobPendingPinnedHeld || viewItem == slurmJobPendingPinnedArrayHeld)",
           "group": "inline@5"
         },
         {
           "command": "slurmJobs.copyJobId",
-          "when": "view == slurmJobs && viewItem =~ /slurmJob/",
+          "when": "view == slurmJobs && (viewItem == slurmJob || viewItem == slurmJobArray || viewItem == slurmJobPinned || viewItem == slurmJobPinnedArray || viewItem == slurmJobPending || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingHeld || viewItem == slurmJobPendingArrayHeld || viewItem == slurmJobPendingPinned || viewItem == slurmJobPendingPinnedArray || viewItem == slurmJobPendingPinnedHeld || viewItem == slurmJobPendingPinnedArrayHeld)",
           "group": "actions@5"
         },
         {
@@ -507,27 +507,27 @@
         },
         {
           "command": "slurmJobs.updateArrayThrottle",
-          "when": "view == slurmJobs && viewItem =~ /Array/",
+          "when": "view == slurmJobs && (viewItem == slurmJobArray || viewItem == slurmJobPinnedArray || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingArrayHeld || viewItem == slurmJobPendingPinnedArray || viewItem == slurmJobPendingPinnedArrayHeld)",
           "group": "inline@6"
         },
         {
           "command": "slurmJobs.holdAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasNonHeld/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasNonHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "inline@2"
         },
         {
           "command": "slurmJobs.holdAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasNonHeld/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasNonHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "actions@2"
         },
         {
           "command": "slurmJobs.releaseAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasHeld/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "inline@3"
         },
         {
           "command": "slurmJobs.releaseAllPendingJobs",
-          "when": "view == slurmJobs && viewItem =~ /statusCategoryPending.*HasHeld/",
+          "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "actions@3"
         }
       ]
