@@ -151,12 +151,12 @@
       {
         "command": "slurmJobs.cancelAllPendingJobs",
         "title": "Cancel All Pending Jobs",
-        "icon": "$(circle-slash)"
+        "icon": "$(trash)"
       },
       {
         "command": "slurmJobs.cancelAllRunningJobs",
         "title": "Cancel All Running Jobs",
-        "icon": "$(circle-slash)"
+        "icon": "$(trash)"
       },
       {
         "command": "slurmHistory.search",
