@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { SlurmCommandRunner, SlurmService } from '../slurmService';
+import { SlurmCommandRunner, SlurmService, isJobHeld } from '../slurmService';
 
 function createMockService(): SlurmService {
     const commandRunner: SlurmCommandRunner = async (command) => {
@@ -162,4 +162,122 @@ describe('SlurmService mock mode', () => {
             nodeStates: '5/6',
         });
     });
+
+    it('can get and update array task throttle in mock mode', async () => {
+        const service = createMockService();
+
+        // The mock job array is 91004_[3-10%2]
+        const initialThrottle = await service.getArrayThrottle('91004');
+        assert.equal(initialThrottle, 2);
+
+        // Update throttle
+        const updateResult = await service.updateArrayThrottle('91004', 5);
+        assert.deepEqual(updateResult, {
+            success: true,
+            message: 'Array task throttle for job 91004 updated to 5 successfully (Mock)'
+        });
+
+        // Fetch again, should be 5
+        const newThrottle = await service.getArrayThrottle('91004');
+        assert.equal(newThrottle, 5);
+    });
+
+    it('can hold and release pending jobs in mock mode', async () => {
+        const service = createMockService();
+
+        // Check helper first
+        assert.equal(isJobHeld('JobHeldUser'), true);
+        assert.equal(isJobHeld('JobHeldAdmin'), true);
+        assert.equal(isJobHeld('JobHoldMaxRequeue'), true);
+        assert.equal(isJobHeld('Resources'), false);
+
+        // Fetch mock job 91002 (pending sweep, not held initially)
+        let jobs = await service.getJobs();
+        let sweepJob = jobs.find(j => j.jobId === '91002');
+        assert.ok(sweepJob);
+        assert.equal(sweepJob.pendingReason, 'Resources');
+        assert.equal(isJobHeld(sweepJob.pendingReason), false);
+
+        // Hold job
+        const holdResult = await service.holdJob('91002');
+        assert.deepEqual(holdResult, {
+            success: true,
+            message: 'Job 91002 held successfully (Mock)'
+        });
+
+        jobs = await service.getJobs();
+        sweepJob = jobs.find(j => j.jobId === '91002');
+        assert.ok(sweepJob);
+        assert.equal(sweepJob.pendingReason, 'JobHeldUser');
+        assert.equal(isJobHeld(sweepJob.pendingReason), true);
+
+        // Release job
+        const releaseResult = await service.releaseJob('91002');
+        assert.deepEqual(releaseResult, {
+            success: true,
+            message: 'Job 91002 released successfully (Mock)'
+        });
+
+        jobs = await service.getJobs();
+        sweepJob = jobs.find(j => j.jobId === '91002');
+        assert.ok(sweepJob);
+        assert.equal(sweepJob.pendingReason, 'Priority');
+        assert.equal(isJobHeld(sweepJob.pendingReason), false);
+    });
+
+    it('can bulk hold and release pending jobs in mock mode', async () => {
+        const service = createMockService();
+
+        // Initially we have four pending jobs in mock mode
+        let jobs = await service.getJobs();
+        let pending = jobs.filter(j => j.state === 'PD');
+        assert.equal(pending.length, 4);
+        assert.equal(pending.every(j => !isJobHeld(j.pendingReason)), true);
+
+        // Bulk hold
+        const holdAllResult = await service.holdAllPendingJobs();
+        assert.equal(holdAllResult.success, true);
+        assert.equal(holdAllResult.message.includes('Successfully held all pending jobs'), true);
+
+        jobs = await service.getJobs();
+        pending = jobs.filter(j => j.state === 'PD');
+        assert.equal(pending.length, 4);
+        assert.equal(pending.every(j => isJobHeld(j.pendingReason)), true);
+
+        // Bulk release
+        const releaseAllResult = await service.releaseAllPendingJobs();
+        assert.equal(releaseAllResult.success, true);
+        assert.equal(releaseAllResult.message.includes('Successfully released all held jobs'), true);
+
+        jobs = await service.getJobs();
+        pending = jobs.filter(j => j.state === 'PD');
+        assert.equal(pending.length, 4);
+        assert.equal(pending.every(j => !isJobHeld(j.pendingReason)), true);
+    });
+
+    it('can cancel all running jobs in mock mode', async () => {
+        const service = createMockService();
+
+        // Check initial running jobs count (only 1 running job: 91001)
+        let jobs = await service.getJobs();
+        let running = jobs.filter(j => j.state === 'R');
+        assert.equal(running.length, 1);
+
+        // Cancel all running
+        const cancelResult = await service.cancelAllRunningJobs();
+        assert.deepEqual(cancelResult, {
+            success: true,
+            message: 'All running jobs cancelled successfully (Mock)'
+        });
+
+        // Verify running jobs are removed
+        jobs = await service.getJobs();
+        running = jobs.filter(j => j.state === 'R');
+        assert.equal(running.length, 0);
+
+        // Verify pending jobs are still intact
+        let pending = jobs.filter(j => j.state === 'PD');
+        assert.equal(pending.length, 4);
+    });
 });
+

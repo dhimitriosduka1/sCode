@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime } from './slurmService';
+import { SlurmJob, SlurmService, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import { getSlurmJobRowParts } from './slurmJobRow';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
@@ -59,7 +59,13 @@ export class StatusCategoryItem extends vscode.TreeItem {
         );
 
         this.iconPath = info.icon;
-        this.contextValue = category === 'pending' ? 'statusCategoryPending' : 'statusCategory';
+        if (category === 'pending' && jobCount > 0) {
+            this.contextValue = 'statusCategoryPending';
+        } else if (category === 'running' && jobCount > 0) {
+            this.contextValue = 'statusCategoryRunning';
+        } else {
+            this.contextValue = 'statusCategory';
+        }
     }
 }
 
@@ -73,23 +79,30 @@ export class SlurmJobItem extends vscode.TreeItem {
         isChecked: boolean = false,
     ) {
         const rowParts = getSlurmJobRowParts(job);
-        const isHeld = job.state === 'PD' && (job.pendingReason === 'JobHeldUser' || job.pendingReason === 'JobHeldAdmin');
         super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
-
-        this.resourceUri = vscode.Uri.parse(`slurm-job://job/${job.jobId}?state=${isHeld ? 'held' : 'normal'}`);
 
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
         // Use pending-specific context values so package.json can hide stdout/stderr/pin icons
+        const isMainJobArray = job.jobId.includes('[');
+        const isHeld = isJobHeld(job.pendingReason);
         if (job.state === 'PD') {
-            if (isHeld) {
-                this.contextValue = isPinned ? 'slurmJobPendingHeldPinned' : 'slurmJobPendingHeld';
+            if (isMainJobArray) {
+                this.contextValue = isPinned
+                    ? (isHeld ? 'slurmJobPendingPinnedArrayHeld' : 'slurmJobPendingPinnedArray')
+                    : (isHeld ? 'slurmJobPendingArrayHeld' : 'slurmJobPendingArray');
             } else {
-                this.contextValue = isPinned ? 'slurmJobPendingPinned' : 'slurmJobPending';
+                this.contextValue = isPinned
+                    ? (isHeld ? 'slurmJobPendingPinnedHeld' : 'slurmJobPendingPinned')
+                    : (isHeld ? 'slurmJobPendingHeld' : 'slurmJobPending');
             }
         } else {
-            this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
+            if (isMainJobArray) {
+                this.contextValue = isPinned ? 'slurmJobPinnedArray' : 'slurmJobArray';
+            } else {
+                this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
+            }
         }
         this.checkboxState = isChecked
             ? vscode.TreeItemCheckboxState.Checked
@@ -161,13 +174,7 @@ export class SlurmJobItem extends vscode.TreeItem {
             case 'R':  // Running
                 return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green'));
             case 'PD': // Pending
-                {
-                    const isHeld = this.job.pendingReason === 'JobHeldUser' || this.job.pendingReason === 'JobHeldAdmin';
-                    if (isHeld) {
-                        return new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('charts.red'));
-                    }
-                    return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
-                }
+                return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
             case 'CG': // Completing
                 return new vscode.ThemeIcon('sync', new vscode.ThemeColor('charts.blue'));
             case 'CD': // Completed
@@ -344,20 +351,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private searchFilter: string = '';
-    private decorationProvider?: SlurmJobDecorationProvider;
 
     constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache, checkedJobIds?: Set<string>) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.pinnedCache = pinnedCache;
         this.checkedJobIds = checkedJobIds;
-    }
-
-    /**
-     * Set the file decoration provider to refresh decorations when the tree is refreshed
-     */
-    setDecorationProvider(provider: SlurmJobDecorationProvider): void {
-        this.decorationProvider = provider;
     }
 
     /**
@@ -645,32 +644,5 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
 
         return children;
-    }
-}
-
-/**
- * FileDecorationProvider for SLURM jobs
- * Displays a snowflake badge and dims the text for held/frozen jobs.
- */
-export class SlurmJobDecorationProvider implements vscode.FileDecorationProvider {
-    private _onDidChangeFileDecorations: vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined> =
-        new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
-
-    readonly onDidChangeFileDecorations: vscode.Event<vscode.Uri | vscode.Uri[] | undefined> =
-        this._onDidChangeFileDecorations.event;
-
-    refresh(): void {
-        this._onDidChangeFileDecorations.fire(undefined);
-    }
-
-    provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
-        if (uri.scheme === 'slurm-job' && uri.query.includes('state=held')) {
-            return {
-                badge: '❄️',
-                color: new vscode.ThemeColor('gitDecoration.ignoredResourceForeground'),
-                tooltip: 'Job is Held (Frozen)'
-            };
-        }
-        return undefined;
     }
 }

@@ -31,6 +31,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
 - **One-Click Actions**: Cancel or pin jobs directly from the UI.
+- **Copy Job ID**: Copy the master base Job ID (excluding array ranges/indices) to the clipboard using the inline/context-menu `$(copy)` action.
 - **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
 - **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
 - **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show human-readable pending reasons, estimated start time, and dependency indicators (🔗).
@@ -98,7 +99,8 @@ Smart handling of SLURM job arrays with flexible cancellation options:
 - **Last refreshed timestamp**: Shows when the Cluster Overview was fetched.
 
 ### Script Intelligence
-- **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit — no dialogs.
+- **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit immediately.
+- **Submit with Dependency**: A link button next to Quick Submit starts an interactive workflow guiding you through selecting active dependency jobs and types (`afterok`, `afterany`, etc.).
 - **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` to see real-time GPU usage, running/pending jobs, and node availability with a visual usage bar.
 - **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
 
@@ -116,6 +118,9 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
 | `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
+| `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
+| `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
+| `mockMode` | `false` | Enable local mock data for development and testing without requiring Slurm |
 
 > Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
 

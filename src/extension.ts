@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJobProvider, SlurmJobItem, SlurmJobDecorationProvider } from './slurmJobProvider';
+import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { PartitionUsageProvider } from './partitionUsageProvider';
 import { ClusterOverviewProvider } from './clusterOverviewProvider';
@@ -11,32 +11,15 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { expandPathPlaceholders, hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { PinnedJobsCache } from './pinnedJobsCache';
 import * as fs from 'fs';
 
-// Auto-refresh timer and state tracking
+// Auto-refresh timer
 let autoRefreshTimer: NodeJS.Timeout | undefined;
 let statusBarItem: vscode.StatusBarItem;
-let lastRefreshTime = 0;
-
-/**
- * Triggers a unified refresh of providers and updates state
- */
-function performRefresh(
-    slurmJobProvider: SlurmJobProvider,
-    jobHistoryProvider: JobHistoryProvider,
-    checkedJobIds?: Set<string>
-): void {
-    slurmJobProvider.refresh();
-    jobHistoryProvider.refresh();
-    lastRefreshTime = Date.now();
-    if (checkedJobIds) {
-        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-    }
-}
 
 /**
  * Get autorefresh configuration
@@ -88,16 +71,16 @@ function startAutoRefresh(
     const { enabled, interval } = getAutoRefreshConfig();
 
     if (enabled && interval >= 5) {
-        // Only start timer if VSCode window is currently focused
-        if (vscode.window.state.focused) {
-            autoRefreshTimer = setInterval(() => {
-                performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-            }, interval * 1000);
+        autoRefreshTimer = setInterval(() => {
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+            // Update context key after refresh (provider prunes stale checked IDs)
+            if (checkedJobIds) {
+                vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
+            }
+        }, interval * 1000);
 
-            console.log(`Auto-refresh started: every ${interval} seconds`);
-        } else {
-            console.log(`Auto-refresh active but suspended because window is unfocused`);
-        }
+        console.log(`Auto-refresh started: every ${interval} seconds`);
     }
 
     updateStatusBar(enabled, interval);
@@ -142,11 +125,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Create the job provider with shared service and caches
     const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, pinnedJobsCache, checkedJobIds);
-
-    // Create and register file decoration provider for held jobs
-    const slurmJobDecorationProvider = new SlurmJobDecorationProvider();
-    slurmJobProvider.setDecorationProvider(slurmJobDecorationProvider);
-    context.subscriptions.push(vscode.window.registerFileDecorationProvider(slurmJobDecorationProvider));
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
@@ -255,7 +233,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
-        performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+        slurmJobProvider.refresh();
+        // Update context key after refresh (provider prunes stale checked IDs)
+        // Use setTimeout to let the tree data provider finish its async work
+        setTimeout(() => {
+            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
+        }, 500);
     });
 
     // Register the refresh history command
@@ -341,25 +324,9 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            const config = vscode.workspace.getConfiguration('slurmClusterManager');
-            const openAsPreview = config.get<boolean>('openOutputAsPreview', false);
-            const scrollToBottom = config.get<boolean>('scrollToBottom', true);
-
             const uri = vscode.Uri.file(normalizedFilePath);
             const doc = await vscode.workspace.openTextDocument(uri);
-
-            let selectionRange: vscode.Range | undefined;
-            if (scrollToBottom && doc.lineCount > 0) {
-                const lastLine = doc.lineCount - 1;
-                const lastLineLength = doc.lineAt(lastLine).text.length;
-                const position = new vscode.Position(lastLine, lastLineLength);
-                selectionRange = new vscode.Range(position, position);
-            }
-
-            await vscode.window.showTextDocument(doc, {
-                preview: openAsPreview,
-                selection: selectionRange
-            });
+            await vscode.window.showTextDocument(doc, { preview: true });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
@@ -369,43 +336,15 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register command to open stdout file
     const openStdoutCommand = vscode.commands.registerCommand('slurmJobs.openStdout', async (item: any) => {
-        if (!item?.job) {
-            return;
-        }
-        let stdoutPath = item.job.stdoutPath;
-        if ((!stdoutPath || stdoutPath === 'N/A') && item.job.jobId) {
-            const paths = await slurmService.getHistoryJobPaths(item.job.jobId, {
-                jobName: item.job.name,
-                nodes: item.job.nodes,
-            });
-            stdoutPath = expandPathPlaceholders(paths.stdoutPath, item.job.jobId, item.job.name, item.job.nodes);
-            item.job.stdoutPath = stdoutPath;
-        }
-        if (stdoutPath && stdoutPath !== 'N/A') {
-            await vscode.commands.executeCommand('slurmJobs.openFile', stdoutPath);
-        } else {
-            vscode.window.showWarningMessage('Stdout path not available');
+        if (item?.job?.stdoutPath) {
+            await vscode.commands.executeCommand('slurmJobs.openFile', item.job.stdoutPath);
         }
     });
 
     // Register command to open stderr file
     const openStderrCommand = vscode.commands.registerCommand('slurmJobs.openStderr', async (item: any) => {
-        if (!item?.job) {
-            return;
-        }
-        let stderrPath = item.job.stderrPath;
-        if ((!stderrPath || stderrPath === 'N/A') && item.job.jobId) {
-            const paths = await slurmService.getHistoryJobPaths(item.job.jobId, {
-                jobName: item.job.name,
-                nodes: item.job.nodes,
-            });
-            stderrPath = expandPathPlaceholders(paths.stderrPath, item.job.jobId, item.job.name, item.job.nodes);
-            item.job.stderrPath = stderrPath;
-        }
-        if (stderrPath && stderrPath !== 'N/A') {
-            await vscode.commands.executeCommand('slurmJobs.openFile', stderrPath);
-        } else {
-            vscode.window.showWarningMessage('Stderr path not available');
+        if (item?.job?.stderrPath) {
+            await vscode.commands.executeCommand('slurmJobs.openFile', item.job.stderrPath);
         }
     });
 
@@ -889,7 +828,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
     });
- 
+
     // Register cancel all pending jobs command
     const cancelAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllPendingJobs', async () => {
         const confirmation = await vscode.window.showWarningMessage(
@@ -897,13 +836,13 @@ export function activate(context: vscode.ExtensionContext) {
             { modal: true },
             'Cancel Pending Jobs'
         );
- 
+
         if (confirmation !== 'Cancel Pending Jobs') {
             return;
         }
- 
+
         const result = await slurmService.cancelAllPendingJobs();
- 
+
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
             slurmJobProvider.refresh();
@@ -912,192 +851,27 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showErrorMessage(result.message);
         }
     });
- 
-    // Register unfreeze all/selected held jobs command
-    const unfreezeAllJobsCommand = vscode.commands.registerCommand('slurmJobs.unfreezeAllJobs', async () => {
-        // Fetch active jobs first
-        let jobs: SlurmJob[] = [];
-        try {
-            jobs = await slurmService.getJobs();
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to fetch active jobs: ${error instanceof Error ? error.message : String(error)}`);
+
+    // Register cancel all running jobs command
+    const cancelAllRunningJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllRunningJobs', async () => {
+        const confirmation = await vscode.window.showWarningMessage(
+            'Are you sure you want to cancel ALL your running jobs? Pending jobs will be kept.',
+            { modal: true },
+            'Cancel Running Jobs'
+        );
+
+        if (confirmation !== 'Cancel Running Jobs') {
             return;
         }
- 
-        const isHeldFilter = (job: SlurmJob) =>
-            job.state === 'PD' && (job.pendingReason === 'JobHeldUser' || job.pendingReason === 'JobHeldAdmin');
- 
-        if (checkedJobIds.size > 0) {
-            // Unfreeze only selected held jobs
-            const heldCheckedJobs = jobs.filter(job => checkedJobIds.has(job.jobId) && isHeldFilter(job));
- 
-            if (heldCheckedJobs.length === 0) {
-                vscode.window.showWarningMessage('No held jobs are currently selected.');
-                return;
-            }
- 
-            const jobCount = heldCheckedJobs.length;
-            const confirmation = await vscode.window.showWarningMessage(
-                `Are you sure you want to unfreeze ${jobCount} selected held job${jobCount > 1 ? 's' : ''}?`,
-                { modal: true },
-                'Unfreeze Selected'
-            );
- 
-            if (confirmation !== 'Unfreeze Selected') {
-                return;
-            }
- 
-            const results = await Promise.all(
-                heldCheckedJobs.map(job => slurmService.releaseJob(job.jobId))
-            );
- 
-            const succeeded = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
- 
-            if (failed === 0) {
-                vscode.window.showInformationMessage(`Successfully unfroze ${succeeded} job${succeeded > 1 ? 's' : ''}.`);
-            } else {
-                vscode.window.showWarningMessage(
-                    `Unfroze ${succeeded} job${succeeded > 1 ? 's' : ''}, ${failed} failed.`
-                );
-            }
- 
-            // Remove unfroze jobs from checked list
-            for (const job of heldCheckedJobs) {
-                checkedJobIds.delete(job.jobId);
-            }
-            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+
+        const result = await slurmService.cancelAllRunningJobs();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
         } else {
-            // Unfreeze all held jobs
-            const heldJobs = jobs.filter(isHeldFilter);
- 
-            if (heldJobs.length === 0) {
-                vscode.window.showInformationMessage('No held jobs found.');
-                return;
-            }
- 
-            const jobCount = heldJobs.length;
-            const confirmation = await vscode.window.showWarningMessage(
-                `Are you sure you want to unfreeze ALL ${jobCount} held job${jobCount > 1 ? 's' : ''}?`,
-                { modal: true },
-                'Unfreeze All'
-            );
- 
-            if (confirmation !== 'Unfreeze All') {
-                return;
-            }
- 
-            const results = await Promise.all(
-                heldJobs.map(job => slurmService.releaseJob(job.jobId))
-            );
- 
-            const succeeded = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
- 
-            if (failed === 0) {
-                vscode.window.showInformationMessage(`Successfully unfroze all ${succeeded} held job${succeeded > 1 ? 's' : ''}.`);
-            } else {
-                vscode.window.showWarningMessage(
-                    `Unfroze ${succeeded} held job${succeeded > 1 ? 's' : ''}, ${failed} failed.`
-                );
-            }
- 
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-        }
-    });
- 
-    // Register freeze/hold all or selected pending jobs command
-    const holdAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.holdAllPendingJobs', async () => {
-        // Fetch active jobs first
-        let jobs: SlurmJob[] = [];
-        try {
-            jobs = await slurmService.getJobs();
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to fetch active jobs: ${error instanceof Error ? error.message : String(error)}`);
-            return;
-        }
- 
-        const isPendingNotHeldFilter = (job: SlurmJob) =>
-            job.state === 'PD' && job.pendingReason !== 'JobHeldUser' && job.pendingReason !== 'JobHeldAdmin';
- 
-        if (checkedJobIds.size > 0) {
-            // Freeze only selected pending jobs
-            const pendingCheckedJobs = jobs.filter(job => checkedJobIds.has(job.jobId) && isPendingNotHeldFilter(job));
- 
-            if (pendingCheckedJobs.length === 0) {
-                vscode.window.showWarningMessage('No pending, non-held jobs are currently selected.');
-                return;
-            }
- 
-            const jobCount = pendingCheckedJobs.length;
-            const confirmation = await vscode.window.showWarningMessage(
-                `Are you sure you want to freeze ${jobCount} selected pending job${jobCount > 1 ? 's' : ''}?`,
-                { modal: true },
-                'Freeze Selected'
-            );
- 
-            if (confirmation !== 'Freeze Selected') {
-                return;
-            }
- 
-            const results = await Promise.all(
-                pendingCheckedJobs.map(job => slurmService.holdJob(job.jobId))
-            );
- 
-            const succeeded = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
- 
-            if (failed === 0) {
-                vscode.window.showInformationMessage(`Successfully froze ${succeeded} job${succeeded > 1 ? 's' : ''}.`);
-            } else {
-                vscode.window.showWarningMessage(
-                    `Froze ${succeeded} job${succeeded > 1 ? 's' : ''}, ${failed} failed.`
-                );
-            }
- 
-            // Remove froze jobs from checked list
-            for (const job of pendingCheckedJobs) {
-                checkedJobIds.delete(job.jobId);
-            }
-            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-        } else {
-            // Freeze all pending jobs
-            const pendingJobs = jobs.filter(isPendingNotHeldFilter);
- 
-            if (pendingJobs.length === 0) {
-                vscode.window.showInformationMessage('No pending, non-held jobs found.');
-                return;
-            }
- 
-            const jobCount = pendingJobs.length;
-            const confirmation = await vscode.window.showWarningMessage(
-                `Are you sure you want to freeze ALL ${jobCount} pending job${jobCount > 1 ? 's' : ''}?`,
-                { modal: true },
-                'Freeze All'
-            );
- 
-            if (confirmation !== 'Freeze All') {
-                return;
-            }
- 
-            const results = await Promise.all(
-                pendingJobs.map(job => slurmService.holdJob(job.jobId))
-            );
- 
-            const succeeded = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
- 
-            if (failed === 0) {
-                vscode.window.showInformationMessage(`Successfully froze all ${succeeded} pending job${succeeded > 1 ? 's' : ''}.`);
-            } else {
-                vscode.window.showWarningMessage(
-                    `Froze ${succeeded} pending job${succeeded > 1 ? 's' : ''}, ${failed} failed.`
-                );
-            }
- 
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
+            vscode.window.showErrorMessage(result.message);
         }
     });
 
@@ -1334,38 +1108,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Unpinned job: ${item.job.name}`);
     });
 
-    // Register hold job command
-    const holdJobCommand = vscode.commands.registerCommand('slurmJobs.holdJob', async (item: any) => {
-        if (!item?.job?.jobId) {
-            vscode.window.showWarningMessage('No job selected');
-            return;
-        }
-
-        const result = await slurmService.holdJob(item.job.jobId);
-        if (result.success) {
-            vscode.window.showInformationMessage(result.message);
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-        } else {
-            vscode.window.showErrorMessage(result.message);
-        }
-    });
-
-    // Register release job command
-    const releaseJobCommand = vscode.commands.registerCommand('slurmJobs.releaseJob', async (item: any) => {
-        if (!item?.job?.jobId) {
-            vscode.window.showWarningMessage('No job selected');
-            return;
-        }
-
-        const result = await slurmService.releaseJob(item.job.jobId);
-        if (result.success) {
-            vscode.window.showInformationMessage(result.message);
-            performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-        } else {
-            vscode.window.showErrorMessage(result.message);
-        }
-    });
-
     // Register copy Job ID command
     const copyJobIdCommand = vscode.commands.registerCommand('slurmJobs.copyJobId', async (item: any) => {
         if (!item?.job?.jobId) {
@@ -1381,6 +1123,128 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(`Copied Job ID ${baseJobId} to clipboard`);
         } catch (error) {
             vscode.window.showErrorMessage('Failed to copy Job ID to clipboard');
+        }
+    });
+
+    // Register update array throttle command
+    const updateArrayThrottleCommand = vscode.commands.registerCommand('slurmJobs.updateArrayThrottle', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId = item.job.jobId;
+        const jobName = item.job.name;
+
+        // Check if this is a job array (contains underscore or bracket)
+        if (!jobId.includes('_') && !jobId.includes('[')) {
+            vscode.window.showWarningMessage(`Job "${jobName}" (${jobId}) is not a job array.`);
+            return;
+        }
+
+        const baseJobId = extractBaseJobId(jobId);
+        
+        // Fetch current throttle (if any)
+        const currentThrottle = await slurmService.getArrayThrottle(jobId);
+
+        const input = await vscode.window.showInputBox({
+            prompt: `Enter new array task throttle limit for job array ${baseJobId}`,
+            placeHolder: 'e.g., 20',
+            value: currentThrottle !== null ? String(currentThrottle) : '',
+            validateInput: (value) => {
+                const num = parseInt(value, 10);
+                if (isNaN(num) || num <= 0) {
+                    return 'Please enter a positive integer greater than 0';
+                }
+                return null;
+            },
+        });
+
+        if (input !== undefined) {
+            const newThrottle = parseInt(input, 10);
+            const result = await slurmService.updateArrayThrottle(jobId, newThrottle);
+            if (result.success) {
+                vscode.window.showInformationMessage(result.message);
+                slurmJobProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage(result.message);
+            }
+        }
+    });
+
+    // Register hold job command
+    const holdJobCommand = vscode.commands.registerCommand('slurmJobs.holdJob', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId = item.job.jobId;
+        const result = await slurmService.holdJob(jobId);
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Register release job command
+    const releaseJobCommand = vscode.commands.registerCommand('slurmJobs.releaseJob', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId = item.job.jobId;
+        const result = await slurmService.releaseJob(jobId);
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Register hold all pending jobs command
+    const holdAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.holdAllPendingJobs', async () => {
+        const confirmation = await vscode.window.showWarningMessage(
+            'Are you sure you want to hold ALL your pending jobs?',
+            { modal: true },
+            'Hold Pending Jobs'
+        );
+
+        if (confirmation !== 'Hold Pending Jobs') {
+            return;
+        }
+
+        const result = await slurmService.holdAllPendingJobs();
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Register release all pending jobs command
+    const releaseAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.releaseAllPendingJobs', async () => {
+        const confirmation = await vscode.window.showWarningMessage(
+            'Are you sure you want to release ALL your held pending jobs?',
+            { modal: true },
+            'Release Pending Jobs'
+        );
+
+        if (confirmation !== 'Release Pending Jobs') {
+            return;
+        }
+
+        const result = await slurmService.releaseAllPendingJobs();
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
         }
     });
 
@@ -1412,8 +1276,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
-    context.subscriptions.push(unfreezeAllJobsCommand);
-    context.subscriptions.push(holdAllPendingJobsCommand);
+    context.subscriptions.push(cancelAllRunningJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(submitJobWithDependencyCommand);
     context.subscriptions.push(submitCurrentFileCommand);
@@ -1426,30 +1289,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(decorDocListener);
     context.subscriptions.push(pinJobCommand);
     context.subscriptions.push(unpinJobCommand);
+    context.subscriptions.push(copyJobIdCommand);
+    context.subscriptions.push(updateArrayThrottleCommand);
     context.subscriptions.push(holdJobCommand);
     context.subscriptions.push(releaseJobCommand);
-    context.subscriptions.push(copyJobIdCommand);
-    // Listen for window state changes (focus/blur) to pause/resume auto-refresh
-    const windowStateListener = vscode.window.onDidChangeWindowState((windowState) => {
-        if (windowState.focused) {
-            const { enabled, interval } = getAutoRefreshConfig();
-            if (enabled && interval >= 5) {
-                // When window is focused, restart the auto-refresh timer
-                startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-                
-                // Only refresh immediately if the data is stale (time since last refresh > interval)
-                const timeSinceLastRefresh = Date.now() - lastRefreshTime;
-                if (timeSinceLastRefresh >= interval * 1000) {
-                    performRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
-                }
-            }
-        } else {
-            // Stop the auto-refresh timer when the window loses focus
-            stopAutoRefresh();
-            console.log('Auto-refresh paused (window lost focus)');
-        }
-    });
-    context.subscriptions.push(windowStateListener);
+    context.subscriptions.push(holdAllPendingJobsCommand);
+    context.subscriptions.push(releaseAllPendingJobsCommand);
 
     // Initialize autorefresh based on saved settings
     startAutoRefresh(slurmJobProvider, jobHistoryProvider, checkedJobIds);
