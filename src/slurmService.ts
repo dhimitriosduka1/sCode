@@ -8,7 +8,10 @@ import { SubmitScriptCache } from './submitScriptCache';
 const execAsync = promisify(exec);
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
 
-export type SlurmCommandRunner = (command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>;
+export type SlurmCommandRunner = ((command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>) & {
+    execute?: (command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>;
+    batchExecute?: (commands: string[]) => Promise<{ stdout: string; stderr: string }[]>;
+};
 export type SlurmMockModeProvider = () => boolean;
 
 const defaultCommandRunner: SlurmCommandRunner = async (command: string, options?: ExecOptions) => {
@@ -474,6 +477,8 @@ export function expandPathPlaceholders(
     jobName: string,
     nodes: string,
     workDir?: string,
+    remoteUsername?: string,
+    remoteHomeDir?: string,
 ): string {
     if (!pathValue) {
         return pathValue;
@@ -488,7 +493,7 @@ export function expandPathPlaceholders(
     // %j - job ID
     // %J - job ID (step ID is not available here, so use the job ID)
     // %x - job name
-    // %u - username (we'll get from os)
+    // %u - username (we'll get from os or remoteUsername)
     // %N - first node name
     // %n - node index (not available here, so use 0)
     // %A - job array master ID
@@ -504,12 +509,14 @@ export function expandPathPlaceholders(
     expanded = expanded.replace(/%x/g, jobName);
 
     // Get username
-    try {
-        const username = os.userInfo().username;
-        expanded = expanded.replace(/%u/g, username);
-    } catch {
-        expanded = expanded.replace(/%u/g, 'user');
-    }
+    const username = remoteUsername || (() => {
+        try {
+            return os.userInfo().username;
+        } catch {
+            return 'user';
+        }
+    })();
+    expanded = expanded.replace(/%u/g, username);
 
     // Node name - use first node if available, otherwise use placeholder
     if (nodes && nodes !== 'N/A') {
@@ -535,8 +542,8 @@ export function expandPathPlaceholders(
     expanded = expanded.replace(/%t/g, '0'); // Task ID
     expanded = expanded.replace(new RegExp(percentSentinel, 'g'), '%'); // Escaped percent
 
-    expanded = normalizeOpenableFilePath(expanded) ?? 'N/A';
-    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '');
+    expanded = normalizeOpenableFilePath(expanded, undefined, remoteHomeDir) ?? 'N/A';
+    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '', undefined, remoteHomeDir);
     if (expanded !== 'N/A' && normalizedWorkDir && !path.isAbsolute(expanded)) {
         expanded = path.resolve(normalizedWorkDir, expanded);
     }
@@ -620,16 +627,17 @@ export function normalizeSlurmPathValue(value: string | undefined): string {
     return isUnavailableSlurmPath(normalized) ? 'N/A' : normalized;
 }
 
-export function normalizeOpenableFilePath(filePath: string, fallbackBaseDir?: string): string | undefined {
+export function normalizeOpenableFilePath(filePath: string, fallbackBaseDir?: string, remoteHomeDir?: string): string | undefined {
     const normalized = normalizeSlurmPathValue(filePath);
     if (normalized === 'N/A') {
         return undefined;
     }
 
+    const homeDir = remoteHomeDir || os.homedir();
     const homeExpanded = normalized === '~'
-        ? os.homedir()
+        ? homeDir
         : normalized.startsWith('~/')
-            ? path.join(os.homedir(), normalized.slice(2))
+            ? path.join(homeDir, normalized.slice(2))
             : normalized;
 
     if (path.isAbsolute(homeExpanded) || !fallbackBaseDir) {
@@ -1462,6 +1470,11 @@ export class SlurmService {
     private mockModeProvider: SlurmMockModeProvider;
     private mockJobs?: SlurmJob[];
 
+    /** Remote username (set when connected over SSH, otherwise local username) */
+    public remoteUsername?: string;
+    /** Remote home directory (set when connected over SSH, otherwise local homedir) */
+    public remoteHomeDir?: string;
+
     constructor(
         pathCache?: JobPathCache,
         scriptCache?: SubmitScriptCache,
@@ -1472,6 +1485,34 @@ export class SlurmService {
         this.scriptCache = scriptCache;
         this.commandRunner = commandRunner;
         this.mockModeProvider = mockModeProvider;
+    }
+
+    /**
+     * Update the command runner (used when switching connection modes)
+     */
+    setCommandRunner(runner: SlurmCommandRunner): void {
+        this.commandRunner = runner;
+    }
+
+    public async runCommand(command: string, options?: ExecOptions): Promise<{ stdout: string; stderr: string }> {
+        if (typeof this.commandRunner === 'function') {
+            return this.commandRunner(command, options);
+        }
+        if (this.commandRunner && typeof (this.commandRunner as any).execute === 'function') {
+            return (this.commandRunner as any).execute(command, options);
+        }
+        const { stdout, stderr } = await execAsync(command, options);
+        return {
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+        };
+    }
+
+    public async runCommandBatch(commands: string[]): Promise<{ stdout: string; stderr: string }[]> {
+        if (this.commandRunner && typeof (this.commandRunner as any).batchExecute === 'function') {
+            return (this.commandRunner as any).batchExecute(commands);
+        }
+        return Promise.all(commands.map(cmd => this.runCommand(cmd)));
     }
 
     private isMockMode(): boolean {
@@ -1505,7 +1546,7 @@ export class SlurmService {
 
         try {
             // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason
-            const { stdout } = await execAsync(
+            const { stdout } = await this.runCommand(
                 'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r"'
             );
 
@@ -1545,13 +1586,21 @@ export class SlurmService {
                 }
             }
 
-            // Fetch detailed info (stdout, stderr, command) from scontrol for all jobs in parallel
-            await Promise.all(jobs.map(async (job) => {
-                const details = await this.getJobDetails(job.jobId);
+            // Fetch detailed info for all jobs in a single bulk scontrol call
+            // This eliminates the N+1 query problem (1 squeue + N scontrol → 1 squeue + 1 scontrol)
+            const detailsMap = await this.getBulkJobDetails(jobs.map(j => j.jobId));
+
+            for (const job of jobs) {
+                const details = detailsMap.get(job.jobId) ?? detailsMap.get(extractBaseJobId(job.jobId)) ?? {
+                    stdoutPath: 'N/A',
+                    stderrPath: 'N/A',
+                    submitScript: 'N/A',
+                    workDir: 'N/A',
+                };
                 // Expand any remaining placeholders in paths
-                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir);
-                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir);
-                job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir);
+                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir, this.remoteUsername, this.remoteHomeDir);
+                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir, this.remoteUsername, this.remoteHomeDir);
+                job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir, this.remoteUsername, this.remoteHomeDir);
                 job.workDir = details.workDir;
                 job.gpuCount = details.gpuCount;
                 job.gpuType = details.gpuType;
@@ -1568,7 +1617,7 @@ export class SlurmService {
                 if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
                     job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
                 }
-            }));
+            }
 
             // Fetch GPU info once (for running jobs on this node)
             const gpuInfo = await this.getGpuInfo();
@@ -1597,13 +1646,13 @@ export class SlurmService {
     async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }> {
         const cleanedId = cleanJobIdForScontrol(jobId);
         try {
-            const { stdout } = await execAsync(`scontrol show job ${cleanedId}`);
+            const { stdout } = await this.runCommand(`scontrol show job ${cleanedId}`);
             return parseJobDetailsOutput(stdout);
         } catch {
             const baseId = extractBaseJobId(jobId);
             if (baseId !== cleanedId) {
                 try {
-                    const { stdout } = await execAsync(`scontrol show job ${baseId}`);
+                    const { stdout } = await this.runCommand(`scontrol show job ${baseId}`);
                     return parseJobDetailsOutput(stdout);
                 } catch {
                     // fall through
@@ -1619,6 +1668,50 @@ export class SlurmService {
     }
 
     /**
+     * Fetch details for multiple jobs in a single scontrol call.
+     * This eliminates the N+1 query pattern — instead of calling scontrol once per job,
+     * we pass all job IDs as a comma-separated list and parse the combined output.
+     */
+    private async getBulkJobDetails(
+        jobIds: string[]
+    ): Promise<Map<string, JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }>> {
+        const result = new Map<string, JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }>();
+        if (jobIds.length === 0) {
+            return result;
+        }
+
+        // Deduplicate: for array jobs (e.g., 123_0, 123_1), scontrol only needs the base ID
+        const uniqueIds = [...new Set(jobIds.map(id => cleanJobIdForScontrol(id)))];
+
+        try {
+            const { stdout } = await this.runCommand(
+                `scontrol show job ${uniqueIds.join(',')}`
+            );
+
+            // scontrol separates job blocks with blank lines
+            const jobBlocks = stdout.split(/\n\n+/).filter(block => block.trim());
+            for (const block of jobBlocks) {
+                const details = parseJobDetailsOutput(block);
+                // Extract JobId from the block
+                const jobIdMatch = block.match(/(?:^|\s)JobId=(\S+)/);
+                if (jobIdMatch) {
+                    result.set(jobIdMatch[1], details);
+                }
+                // Also index by base job ID for array job lookup
+                const baseIdMatch = block.match(/(?:^|\s)JobId=(\d+)/);
+                if (baseIdMatch && baseIdMatch[1] !== jobIdMatch?.[1]) {
+                    result.set(baseIdMatch[1], details);
+                }
+            }
+        } catch {
+            // If bulk fetch fails, fall back to empty map
+            // Individual methods will handle missing entries gracefully
+        }
+
+        return result;
+    }
+
+    /**
      * Check if SLURM is available on this system
      */
     async isAvailable(): Promise<boolean> {
@@ -1627,7 +1720,7 @@ export class SlurmService {
         }
 
         try {
-            await execAsync('which squeue');
+            await this.runCommand('which squeue');
             return true;
         } catch {
             return false;
@@ -1640,10 +1733,10 @@ export class SlurmService {
      */
     async getGpuInfo(): Promise<{ gpuName: string; gpuMemory: string } | null> {
         try {
-            // Run both nvidia-smi commands in parallel
-            const [nameResult, memoryResult] = await Promise.all([
-                execAsync('nvidia-smi --query-gpu=name --format=csv,noheader'),
-                execAsync('nvidia-smi --query-gpu=memory.total --format=csv,noheader'),
+            // Run both nvidia-smi commands in parallel/batch
+            const [nameResult, memoryResult] = await this.runCommandBatch([
+                'nvidia-smi --query-gpu=name --format=csv,noheader',
+                'nvidia-smi --query-gpu=memory.total --format=csv,noheader',
             ]);
 
             const gpuName = nameResult.stdout.trim().split('\n')[0] || 'Unknown';
@@ -1670,7 +1763,7 @@ export class SlurmService {
 
         try {
             // %D = node count. %b is a per-node GPU request on common Slurm setups.
-            const { stdout } = await execAsync(
+            const { stdout } = await this.runCommand(
                 'squeue --noheader --state=R --format="%u|%D|%b"'
             );
 
@@ -1691,7 +1784,7 @@ export class SlurmService {
         }
 
         try {
-            const { stdout } = await execAsync(
+            const { stdout } = await this.runCommand(
                 'squeue --noheader --state=R --format="%u|%a|%D|%b"'
             );
 
@@ -1712,7 +1805,7 @@ export class SlurmService {
         }
 
         try {
-            const { stdout } = await execAsync(
+            const { stdout } = await this.runCommand(
                 'squeue --noheader --state=R --format="%u|%a|%D|%b"'
             );
 
@@ -1733,21 +1826,12 @@ export class SlurmService {
         }
 
         try {
-            const { stdout: sinfoStdout } = await execAsync(
-                'sinfo --noheader --format="%P|%D|%F|%G"'
-            );
+            const [sinfoResult, squeueResult] = await this.runCommandBatch([
+                'sinfo --noheader --format="%P|%D|%F|%G"',
+                'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
+            ]);
 
-            let squeueStdout = '';
-            try {
-                const squeueResult = await execAsync(
-                    'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
-                );
-                squeueStdout = squeueResult.stdout;
-            } catch {
-                // Capacity information is still useful when queue pressure cannot be fetched.
-            }
-
-            return parsePartitionUsageOutput(sinfoStdout, squeueStdout);
+            return parsePartitionUsageOutput(sinfoResult.stdout, squeueResult.stdout);
         } catch (error) {
             console.error('Failed to get partition usage:', error);
             return [];
@@ -1786,14 +1870,14 @@ export class SlurmService {
         }
 
         try {
-            // Run sinfo and squeue in parallel for speed
-            const [sinfoResult, squeueResult, allocGpuResult] = await Promise.all([
+            // Run sinfo and squeue in parallel/batch
+            const [sinfoResult, squeueResult, allocGpuResult] = await this.runCommandBatch([
                 // %D = nodes, %F = nodes state (allocated/idle/other/total), %G = GRES
-                execAsync(`sinfo -p ${partition} --noheader --format="%D %F %G"`),
+                `sinfo -p ${partition} --noheader --format="%D %F %G"`,
                 // Job counts by state
-                execAsync(`squeue -p ${partition} --noheader --format="%t" 2>/dev/null`),
+                `squeue -p ${partition} --noheader --format="%t" 2>/dev/null`,
                 // Running jobs' GPU allocation
-                execAsync(`squeue -p ${partition} --noheader --state=R --format="%D|%b" 2>/dev/null`),
+                `squeue -p ${partition} --noheader --state=R --format="%D|%b" 2>/dev/null`,
             ]);
 
             // Parse sinfo output
@@ -1885,7 +1969,7 @@ export class SlurmService {
             // Clean up job ID for scancel compatibility:
             // squeue may report array IDs with throttle notation (e.g., 12345_[0-100%5])
             // which scancel does not accept — strip the %N part
-            await this.commandRunner(`scancel '${cleanId}'`);
+            await this.runCommand(`scancel '${cleanId}'`);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1911,7 +1995,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner(`scancel --state=${state} '${jobId}'`);
+            await this.runCommand(`scancel --state=${state} '${jobId}'`);
             return { success: true, message: `${state} jobs in ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1931,7 +2015,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner('scancel -u $USER');
+            await this.runCommand('scancel -u $USER');
             return { success: true, message: 'All jobs cancelled successfully' };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1951,7 +2035,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner('scancel --state=PENDING -u $USER');
+            await this.runCommand('scancel --state=PENDING -u $USER');
             return { success: true, message: 'All pending jobs cancelled successfully' };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1970,7 +2054,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner('scancel --state=RUNNING -u $USER');
+            await this.runCommand('scancel --state=RUNNING -u $USER');
             return { success: true, message: 'All running jobs cancelled successfully' };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2002,7 +2086,7 @@ export class SlurmService {
         }
 
         try {
-            const { stdout } = await execAsync(`scontrol show job ${jobId}`);
+            const { stdout } = await this.runCommand(`scontrol show job ${jobId}`);
 
             // Parse the full ArrayTaskId value
             // Possible formats: "0-99", "0-99%10", "0,2,4,6-10", "1,3,5", "0-10:2", etc.
@@ -2085,7 +2169,7 @@ export class SlurmService {
             const cwd = workDir || require('path').dirname(scriptPath);
 
             const dependencyFlag = dependency ? ` --dependency=${dependency}` : '';
-            const { stdout, stderr } = await execAsync(`sbatch${dependencyFlag} "${scriptPath}"`, { cwd });
+            const { stdout, stderr } = await this.runCommand(`sbatch${dependencyFlag} "${scriptPath}"`, { cwd });
 
             const match = stdout.match(/Submitted batch job (\d+)/);
             if (match) {
@@ -2128,7 +2212,7 @@ export class SlurmService {
             const startDateStr = startDate.toISOString().split('T')[0];
 
             // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
-            const { stdout } = await this.commandRunner(
+            const { stdout } = await this.runCommand(
                 `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
                 { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
             );
@@ -2216,19 +2300,19 @@ export class SlurmService {
             const cached = this.pathCache.get(jobId);
             if (cached && shouldUseCachedOutputPaths(cached)) {
                 return sanitizeOutputPathsForCache({
-                    stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes),
-                    stderrPath: expandPathPlaceholders(cached.stderrPath, jobId, jobName, nodes),
+                    stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes, undefined, this.remoteUsername, this.remoteHomeDir),
+                    stderrPath: expandPathPlaceholders(cached.stderrPath, jobId, jobName, nodes, undefined, this.remoteUsername, this.remoteHomeDir),
                 });
             }
         }
 
         // Try scontrol (works for recent jobs still in the controller's memory)
         try {
-            const { stdout } = await execAsync(`scontrol show job ${jobId} 2>/dev/null`);
+            const { stdout } = await this.runCommand(`scontrol show job ${jobId} 2>/dev/null`);
             const details = parseJobDetailsOutput(stdout);
             const paths = {
-                stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir),
-                stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir),
+                stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir, this.remoteUsername, this.remoteHomeDir),
+                stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir, this.remoteUsername, this.remoteHomeDir),
             };
 
             const cacheablePaths = sanitizeOutputPathsForCache(paths);
@@ -2273,7 +2357,7 @@ export class SlurmService {
         }
 
         try {
-            const { stdout } = await execAsync(`scontrol show job ${cleanId}`);
+            const { stdout } = await this.runCommand(`scontrol show job ${cleanId}`);
             
             // Try to parse ArrayTaskThrottle=10
             const throttleMatch = stdout.match(/(?:^|\s)ArrayTaskThrottle=(\d+)/);
@@ -2328,7 +2412,7 @@ export class SlurmService {
         }
 
         try {
-            await execAsync(`scontrol update jobid=${cleanId} ArrayTaskThrottle=${throttle}`);
+            await this.runCommand(`scontrol update jobid=${cleanId} ArrayTaskThrottle=${throttle}`);
             return { success: true, message: `Array task throttle for job ${cleanId} updated to ${throttle} successfully.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2355,7 +2439,7 @@ export class SlurmService {
         }
 
         try {
-            await execAsync(`scontrol hold ${cleanId}`);
+            await this.runCommand(`scontrol hold ${cleanId}`);
             return { success: true, message: `Job ${jobId} held successfully.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2382,7 +2466,7 @@ export class SlurmService {
         }
 
         try {
-            await execAsync(`scontrol release ${cleanId}`);
+            await this.runCommand(`scontrol release ${cleanId}`);
             return { success: true, message: `Job ${jobId} released successfully.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2415,7 +2499,7 @@ export class SlurmService {
             }
 
             const ids = pendingNonHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
-            await this.commandRunner(`scontrol hold ${ids}`);
+            await this.runCommand(`scontrol hold ${ids}`);
             return { success: true, message: `Successfully held all pending jobs (${pendingNonHeld.length} jobs).` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2448,7 +2532,7 @@ export class SlurmService {
             }
 
             const ids = pendingHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
-            await this.commandRunner(`scontrol release ${ids}`);
+            await this.runCommand(`scontrol release ${ids}`);
             return { success: true, message: `Successfully released all held jobs (${pendingHeld.length} jobs).` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);

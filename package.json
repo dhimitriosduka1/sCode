@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -79,6 +79,33 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "slurmJobs",
+        "contents": "No active SLURM connection.\n\nTo view and manage jobs, configure an SSH remote connection profile or switch to a local cluster context.\n\n[Manage Connections...](command:slurmCluster.showConnectionMenu)",
+        "when": "!slurmCluster.connected && !slurmCluster.localAvailable"
+      },
+      {
+        "view": "slurmHistory",
+        "contents": "No active SLURM connection.\n\n[Manage Connections...](command:slurmCluster.showConnectionMenu)",
+        "when": "!slurmCluster.connected && !slurmCluster.localAvailable"
+      },
+      {
+        "view": "slurmPartitionUsage",
+        "contents": "No active SLURM connection.\n\n[Manage Connections...](command:slurmCluster.showConnectionMenu)",
+        "when": "!slurmCluster.connected && !slurmCluster.localAvailable"
+      },
+      {
+        "view": "slurmClusterOverview",
+        "contents": "No active SLURM connection.\n\n[Manage Connections...](command:slurmCluster.showConnectionMenu)",
+        "when": "!slurmCluster.connected && !slurmCluster.localAvailable"
+      },
+      {
+        "view": "slurmLeaderboard",
+        "contents": "No active SLURM connection.\n\n[Manage Connections...](command:slurmCluster.showConnectionMenu)",
+        "when": "!slurmCluster.connected && !slurmCluster.localAvailable"
+      }
+    ],
     "commands": [
       {
         "command": "slurmPartitionUsage.refresh",
@@ -247,6 +274,21 @@
         "command": "slurmJobs.releaseAllPendingJobs",
         "title": "Release All Pending Jobs",
         "icon": "$(unlock)"
+      },
+      {
+        "command": "slurmCluster.showConnectionMenu",
+        "title": "Manage SLURM Connection...",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "slurmCluster.editProfiles",
+        "title": "Delete Connection Profiles...",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "slurmJobs.refreshRemoteFile",
+        "title": "Refresh Remote File",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -597,6 +639,32 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
+        },
+        "slurmClusterManager.sshProfiles": {
+          "type": "array",
+          "default": [],
+          "description": "SSH connection profiles for remote SLURM clusters",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Display name for this connection" },
+              "host": { "type": "string", "description": "Hostname, IP, or SSH config alias" },
+              "username": { "type": "string", "description": "SSH username (optional if in SSH config)" },
+              "port": { "type": "number", "default": 22, "description": "SSH port" },
+              "identityFile": { "type": "string", "description": "Path to private key file (optional)" }
+            },
+            "required": ["name", "host"]
+          }
+        },
+        "slurmClusterManager.activeProfile": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the currently active SSH profile"
+        },
+        "slurmClusterManager.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically reconnect to the last used SSH profile on startup"
         }
       }
     }
