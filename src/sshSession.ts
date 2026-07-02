@@ -51,7 +51,7 @@ export class SSHSession extends EventEmitter {
                 '-o', 'StrictHostKeyChecking=accept-new',
                 '-o', 'BatchMode=yes',
                 '-o', 'ControlMaster=auto',
-                '-o', 'ControlPath=~/.ssh/slurm_control_%r@%h:%p',
+                '-o', 'ControlPath=/tmp/slurm_control_%r@%h:%p',
                 '-o', 'ControlPersist=4h',
             ];
 

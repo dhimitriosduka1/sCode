@@ -128,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         const sshArgs = [
             '-o', 'ControlMaster=yes',
-            '-o', 'ControlPath=~/.ssh/slurm_control_%r@%h:%p',
+            '-o', 'ControlPath=/tmp/slurm_control_%r@%h:%p',
             '-o', 'ControlPersist=4h',
         ];
 
