@@ -226,7 +226,7 @@
       {
         "command": "slurmJobs.updateArrayThrottle",
         "title": "Update Array Throttle...",
-        "icon": "$(hash)"
+        "icon": "$(symbol-number)"
       },
       {
         "command": "slurmJobs.holdJob",

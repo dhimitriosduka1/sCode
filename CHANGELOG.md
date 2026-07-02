@@ -4,6 +4,9 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+### Fixed
+- **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
+
 ## [1.5.0] - 2026-06-27
 
 ### Added
