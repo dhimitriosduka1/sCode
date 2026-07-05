@@ -4,6 +4,12 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+### Added
+- **Job Dependency Management**: Added "Update Dependency..." inline action (`$(link)`) on all pending jobs. Supports adding a new dependency (select from active jobs or enter a custom Job ID), updating an existing one, or clearing it entirely. The current job is automatically excluded from the picker to prevent self-dependency. Pin/unpin for pending jobs is now accessible via right-click only, freeing the inline slot for this action.
+
+### Removed
+- **Pin/Unpin feature**: Removed the ability to pin jobs to a dedicated "Pinned" category at the top of the tree view. The `pinnedJobsCache.ts` module and all associated commands (`slurmJobs.pinJob`, `slurmJobs.unpinJob`) have been deleted.
+
 ### Fixed
 - **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
 

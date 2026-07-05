@@ -2456,7 +2456,47 @@ export class SlurmService {
             return { success: false, message: `Failed to release all held jobs: ${errorMessage}` };
         }
     }
+
+    /**
+     * Update (or clear) the dependency of a pending SLURM job using scontrol
+     * @param jobId The job ID to update
+     * @param dependency The dependency string (e.g., 'afterok:12345'), or empty string to clear
+     * @returns Object with success status and message
+     */
+    async updateJobDependency(jobId: string, dependency: string): Promise<{ success: boolean; message: string }> {
+        const cleanId = cleanJobIdForScontrol(jobId);
+        const depValue = dependency || 'none';
+
+        if (this.isMockMode()) {
+            const job = this.getMutableMockJobs().find(j => j.jobId === jobId || j.jobId.startsWith(`${cleanId}_`));
+            if (!job) {
+                return { success: false, message: `Job ${jobId} not found in mock jobs.` };
+            }
+            if (dependency) {
+                job.dependency = dependency;
+                job.pendingReason = 'Dependency';
+                return { success: true, message: `Dependency for job ${cleanId} set to "${dependency}" (Mock)` };
+            } else {
+                job.dependency = undefined;
+                job.pendingReason = 'Priority';
+                return { success: true, message: `Dependency for job ${cleanId} cleared (Mock)` };
+            }
+        }
+
+        try {
+            await execAsync(`scontrol update jobid=${cleanId} Dependency=${depValue}`);
+            return { success: true, message: dependency
+                ? `Dependency for job ${cleanId} set to "${dependency}" successfully.`
+                : `Dependency for job ${cleanId} cleared successfully.`
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to update dependency for job ${cleanId}:`, error);
+            return { success: false, message: `Failed to update dependency: ${errorMessage}` };
+        }
+    }
 }
+
 
 /**
  * Represents a completed SLURM job from sacct

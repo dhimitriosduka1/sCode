@@ -14,7 +14,7 @@ import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvide
 import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
-import { PinnedJobsCache } from './pinnedJobsCache';
+
 import * as fs from 'fs';
 
 // Auto-refresh timer
@@ -109,8 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Create the submit script cache (persistent storage)
     const submitScriptCache = new SubmitScriptCache(context);
 
-    // Create the pinned jobs cache (persistent storage)
-    const pinnedJobsCache = new PinnedJobsCache(context);
+
 
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(
@@ -124,7 +123,7 @@ export function activate(context: vscode.ExtensionContext) {
     const checkedJobIds = new Set<string>();
 
     // Create the job provider with shared service and caches
-    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, pinnedJobsCache, checkedJobIds);
+    const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, checkedJobIds);
 
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
@@ -1084,29 +1083,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register pin job command
-    const pinJobCommand = vscode.commands.registerCommand('slurmJobs.pinJob', async (item: any) => {
-        if (!item?.job?.jobId) {
-            vscode.window.showWarningMessage('No job selected');
-            return;
-        }
-
-        await pinnedJobsCache.pin(item.job.jobId);
-        slurmJobProvider.refresh();
-        vscode.window.showInformationMessage(`Pinned job: ${item.job.name}`);
-    });
-
-    // Register unpin job command
-    const unpinJobCommand = vscode.commands.registerCommand('slurmJobs.unpinJob', async (item: any) => {
-        if (!item?.job?.jobId) {
-            vscode.window.showWarningMessage('No job selected');
-            return;
-        }
-
-        await pinnedJobsCache.unpin(item.job.jobId);
-        slurmJobProvider.refresh();
-        vscode.window.showInformationMessage(`Unpinned job: ${item.job.name}`);
-    });
 
     // Register copy Job ID command
     const copyJobIdCommand = vscode.commands.registerCommand('slurmJobs.copyJobId', async (item: any) => {
@@ -1248,6 +1224,70 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register update job dependency command
+    const updateJobDependencyCommand = vscode.commands.registerCommand('slurmJobs.updateJobDependency', async (item: any) => {
+        if (!item?.job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId = item.job.jobId;
+        const jobName = item.job.name;
+        const currentDependency: string | undefined = item.job.dependency;
+        const baseJobId = extractBaseJobId(jobId);
+
+        // If there's an existing dependency, offer to clear it or set a new one
+        if (currentDependency) {
+            const action = await vscode.window.showQuickPick(
+                [
+                    {
+                        label: '$(link) Set New Dependency...',
+                        description: 'Replace current dependency with a new one',
+                        value: 'set'
+                    },
+                    {
+                        label: '$(x) Clear Dependency',
+                        description: `Remove: ${currentDependency}`,
+                        value: 'clear'
+                    }
+                ],
+                {
+                    placeHolder: `Job "${jobName}" (${baseJobId}) — current dependency: ${currentDependency}`,
+                    title: 'Update Job Dependency'
+                }
+            );
+
+            if (!action) {
+                return; // User cancelled
+            }
+
+            if (action.value === 'clear') {
+                const result = await slurmService.updateJobDependency(jobId, '');
+                if (result.success) {
+                    vscode.window.showInformationMessage(result.message);
+                    slurmJobProvider.refresh();
+                } else {
+                    vscode.window.showErrorMessage(result.message);
+                }
+                return;
+            }
+        }
+
+        // Prompt for new dependency, excluding the current job to avoid self-dependency
+        const dependency = await promptAndGetDependencyString(slurmService, baseJobId);
+        if (!dependency) {
+            return; // User cancelled or returned nothing
+        }
+
+        const result = await slurmService.updateJobDependency(jobId, dependency);
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Add disposables to context
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
@@ -1287,10 +1327,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(decorationProvider);
     context.subscriptions.push(decorEditorListener);
     context.subscriptions.push(decorDocListener);
-    context.subscriptions.push(pinJobCommand);
-    context.subscriptions.push(unpinJobCommand);
+
     context.subscriptions.push(copyJobIdCommand);
     context.subscriptions.push(updateArrayThrottleCommand);
+    context.subscriptions.push(updateJobDependencyCommand);
     context.subscriptions.push(holdJobCommand);
     context.subscriptions.push(releaseJobCommand);
     context.subscriptions.push(holdAllPendingJobsCommand);
@@ -1316,7 +1356,7 @@ export function deactivate() {
  * Prompts the user to configure job dependencies and returns a SLURM dependency string.
  * Returns undefined if no dependencies are configured, or null if the user cancelled.
  */
-async function promptAndGetDependencyString(slurmService: SlurmService): Promise<string | undefined | null> {
+async function promptAndGetDependencyString(slurmService: SlurmService, excludeJobId?: string): Promise<string | undefined | null> {
 
     // Step 2: Fetch active jobs to offer as dependency targets
     let activeJobs: SlurmJob[] = [];
@@ -1361,7 +1401,9 @@ async function promptAndGetDependencyString(slurmService: SlurmService): Promise
                 jobId: 'custom',
                 alwaysShow: true
             },
-            ...activeJobs.map(job => ({
+            ...activeJobs
+                .filter(job => extractBaseJobId(job.jobId) !== excludeJobId)
+                .map(job => ({
                 label: `[${job.jobId}] ${job.name}`,
                 description: `State: ${getStateDescription(job.state)} · Partition: ${job.partition}`,
                 jobId: job.jobId,
