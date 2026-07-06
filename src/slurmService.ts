@@ -643,10 +643,25 @@ export function hasUnresolvedSlurmPathPlaceholders(filePath: string): boolean {
     return /(^|[^%])%[A-Za-z]/.test(filePath);
 }
 
+export function resolvePathWithoutPlaceholders(filePath: string, workDir: string): string {
+    if (!filePath || filePath === 'N/A') {
+        return 'N/A';
+    }
+    let resolved = normalizeSlurmPathValue(filePath);
+    if (resolved === 'N/A') {
+        return 'N/A';
+    }
+    resolved = normalizeOpenableFilePath(resolved) ?? 'N/A';
+    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '');
+    if (resolved !== 'N/A' && normalizedWorkDir && !path.isAbsolute(resolved)) {
+        resolved = path.resolve(normalizedWorkDir, resolved);
+    }
+    return resolved;
+}
+
 function shouldCacheOutputPath(filePath: string): boolean {
     return !isUnavailableSlurmPath(filePath) &&
-        !filePath.includes('PENDING_NODE') &&
-        !hasUnresolvedSlurmPathPlaceholders(filePath);
+        !filePath.includes('PENDING_NODE');
 }
 
 function shouldUseCachedOutputPaths(paths: { stdoutPath: string; stderrPath: string }): boolean {
@@ -1559,10 +1574,7 @@ export class SlurmService {
                 job.dependency = details.dependency;
 
                 // Cache the paths for later use in history
-                if (this.pathCache && shouldUseCachedOutputPaths(job)) {
-                    const cacheablePaths = sanitizeOutputPathsForCache(job);
-                    await this.pathCache.set(job.jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
-                }
+                await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
 
                 // Cache the submit script if not already cached
                 if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
@@ -2090,6 +2102,12 @@ export class SlurmService {
             const match = stdout.match(/Submitted batch job (\d+)/);
             if (match) {
                 const jobId = match[1];
+
+                // Pre-cache the paths immediately after submission
+                this.preCacheJobPaths(jobId).catch(err => {
+                    console.error(`Failed to pre-cache paths for job ${jobId}:`, err);
+                });
+
                 return {
                     success: true,
                     jobId,
@@ -2193,6 +2211,47 @@ export class SlurmService {
     }
 
     /**
+     * Cache stdout and stderr paths in their raw absolute formats
+     */
+    private async cacheJobPaths(jobId: string, stdoutPath: string, stderrPath: string, workDir: string): Promise<void> {
+        if (!this.pathCache) {
+            return;
+        }
+
+        const rawStdout = resolvePathWithoutPlaceholders(stdoutPath, workDir);
+        const rawStderr = resolvePathWithoutPlaceholders(stderrPath, workDir);
+        const rawPaths = { stdoutPath: rawStdout, stderrPath: rawStderr };
+
+        if (shouldUseCachedOutputPaths(rawPaths)) {
+            const cacheablePaths = sanitizeOutputPathsForCache(rawPaths);
+            await this.pathCache.set(jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+
+            // Also cache under the base ID if different (e.g. array base ID)
+            const cleanId = cleanJobIdForScontrol(jobId);
+            if (cleanId !== jobId) {
+                await this.pathCache.set(cleanId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+            }
+        }
+    }
+
+    /**
+     * Query details from scontrol and pre-cache them immediately
+     */
+    private async preCacheJobPaths(jobId: string): Promise<void> {
+        if (this.isMockMode()) {
+            return;
+        }
+
+        try {
+            const { stdout } = await execAsync(`scontrol show job ${jobId} 2>/dev/null`);
+            const details = parseJobDetailsOutput(stdout);
+            await this.cacheJobPaths(jobId, details.stdoutPath, details.stderrPath, details.workDir);
+        } catch (error) {
+            console.error(`Failed to pre-cache paths for job ${jobId}:`, error);
+        }
+    }
+
+    /**
      * Get stdout and stderr paths for a historical job
      * Tries: 1) local cache, 2) scontrol, 3) returns N/A
      */
@@ -2213,7 +2272,13 @@ export class SlurmService {
 
         // First, check the local cache
         if (this.pathCache) {
-            const cached = this.pathCache.get(jobId);
+            let cached = this.pathCache.get(jobId);
+            if (!cached) {
+                const baseId = extractBaseJobId(jobId);
+                if (baseId !== jobId) {
+                    cached = this.pathCache.get(baseId);
+                }
+            }
             if (cached && shouldUseCachedOutputPaths(cached)) {
                 return sanitizeOutputPathsForCache({
                     stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes),
@@ -2226,20 +2291,14 @@ export class SlurmService {
         try {
             const { stdout } = await execAsync(`scontrol show job ${jobId} 2>/dev/null`);
             const details = parseJobDetailsOutput(stdout);
-            const paths = {
+
+            // Cache these raw paths for future use
+            await this.cacheJobPaths(jobId, details.stdoutPath, details.stderrPath, details.workDir);
+
+            return sanitizeOutputPathsForCache({
                 stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir),
                 stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir),
-            };
-
-            const cacheablePaths = sanitizeOutputPathsForCache(paths);
-            if (shouldUseCachedOutputPaths(cacheablePaths)) {
-                // Cache these for future use
-                if (this.pathCache) {
-                    await this.pathCache.set(jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
-                }
-
-                return cacheablePaths;
-            }
+            });
         } catch {
             // scontrol failed, job may be too old
         }

@@ -13,6 +13,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Pin/Unpin feature**: Removed the ability to pin jobs to a dedicated "Pinned" category at the top of the tree view. The `pinnedJobsCache.ts` module and all associated commands (`slurmJobs.pinJob`, `slurmJobs.unpinJob`) have been deleted.
 
 ### Fixed
+- **Job History Log Path Resolution**: Fixed a bug where stdout/stderr paths occasionally disappeared or showed as 'N/A' in the Job History view for jobs that completed quickly or when auto-refresh was disabled. Resolved this by (1) pre-caching job paths immediately upon submission, (2) caching paths in their raw placeholder format instead of fully expanded formats (allowing node-name `%N` and task-ID `%a` to be resolved dynamically on history lookup), and (3) adding base job ID fallbacks for array task lookups in the cache.
 - **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
 
 ## [1.5.0] - 2026-06-27
