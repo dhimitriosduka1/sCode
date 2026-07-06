@@ -325,7 +325,9 @@ export function activate(context: vscode.ExtensionContext) {
 
             const uri = vscode.Uri.file(normalizedFilePath);
             const doc = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(doc, { preview: true });
+            const config = vscode.workspace.getConfiguration('slurmClusterManager');
+            const preview = config.get<boolean>('openLogFileInPreview', true);
+            await vscode.window.showTextDocument(doc, { preview });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
