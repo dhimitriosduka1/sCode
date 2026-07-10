@@ -1208,7 +1208,50 @@ export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
     return { topJobHog, topGpuHog };
 }
 
-export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: string): PartitionUsageEntry[] {
+/**
+ * Parses `scontrol show node` output and returns a map of nodeName → allocatedGpus.
+ * Uses AllocTRES (e.g. "gres/gpu=8" or "gres/gpu:h200=8") as ground truth —
+ * this captures all GPU allocations regardless of how they were requested
+ * (--gres, --gpus, --gpus-per-node, TRES bindings, etc.).
+ */
+export function parseScontrolNodeOutput(stdout: string): Map<string, number> {
+    const allocatedGpusByNode = new Map<string, number>();
+    // scontrol show node emits key=value tokens separated by whitespace / newlines.
+    // Each node block begins with NodeName=<name>.
+    // We look for AllocTRES=... to sum gres/gpu (with or without a type qualifier).
+    const nodeBlocks = stdout.split(/(?=\bNodeName=)/).filter(block => block.trim());
+    for (const block of nodeBlocks) {
+        const nodeMatch = block.match(/\bNodeName=(\S+)/);
+        if (!nodeMatch) {
+            continue;
+        }
+        const nodeName = nodeMatch[1];
+
+        const allocTresMatch = block.match(/\bAllocTRES=(\S*)/);
+        const allocTresValue = allocTresMatch?.[1] ?? '';
+        const gpuAllocations = parseGpuAllocations(allocTresValue);
+        const totalAllocated = sumGpuAllocations(gpuAllocations);
+        allocatedGpusByNode.set(nodeName, totalAllocated);
+    }
+    return allocatedGpusByNode;
+}
+
+/**
+ * Parses partition usage from:
+ *  - sinfoNodeStdout: `sinfo -N --noheader --format="%N|%P|%T|%G"` (one row per node per partition)
+ *  - scontrolStdout:  `scontrol show node` (per-node AllocTRES)
+ *  - squeueStdout:    `squeue --noheader --format="%P|%t"` (job counts only)
+ *
+ * GPU allocation is sourced from scontrol AllocTRES — the ground truth.
+ * This correctly handles:
+ *   - Jobs that allocate GPUs via --gpus, --gpus-per-node, TRES, etc. (not just --gres)
+ *   - Overlapping partitions sharing the same physical nodes (e.g. gpu / gpudev / rvs)
+ */
+export function parsePartitionUsageOutput(
+    sinfoNodeStdout: string,
+    scontrolStdout: string,
+    squeueStdout: string,
+): PartitionUsageEntry[] {
     const entriesByPartition = new Map<string, PartitionUsageEntry>();
     const gpuTypesByPartition = new Map<string, Map<string, number>>();
 
@@ -1239,37 +1282,101 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         return entry;
     };
 
-    const sinfoLines = sinfoStdout.trim().split('\n').filter(line => line.trim());
+    // --- Phase 1: Build per-node → per-partition capacity from sinfo -N ---
+    // Track which partitions each node belongs to so we can attribute node-level
+    // GPU allocations to all of a node's partitions in phase 3.
+    const nodePartitions = new Map<string, { partition: string; isDefault: boolean }[]>();
+    const nodeGpuConfig = new Map<string, ClusterLeaderboardGpuType[]>(); // GPU config per node
+
+    const sinfoLines = sinfoNodeStdout.trim().split('\n').filter(line => line.trim());
     for (const line of sinfoLines) {
+        // Format: NodeName|Partition(s)|NodeState|GRES
         const parts = line.split('|');
         if (parts.length < 4) {
             continue;
         }
 
-        const partitionInfo = normalizePartitionName(parts[0]);
-        if (!partitionInfo.partition) {
+        const nodeName = parts[0].trim();
+        if (!nodeName) {
             continue;
         }
 
-        const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
-        const nodeCount = parseInt(parts[1].trim(), 10) || 0;
-        const nodeStates = parseSinfoNodeStateSummary(parts[2], nodeCount);
-        entry.allocatedNodes += nodeStates.allocatedNodes;
-        entry.idleNodes += nodeStates.idleNodes;
-        entry.otherNodes += nodeStates.otherNodes;
-        entry.totalNodes += nodeStates.totalNodes;
+        // A node can appear in multiple partitions on separate rows.
+        // parts[1] may itself be comma-separated if the node belongs to multiple partitions.
+        const partitionInfos = parsePartitionList(parts[1]);
+        if (partitionInfos.length === 0) {
+            continue;
+        }
 
+        const nodeState = parts[2].trim().toLowerCase();
         const gpuAllocations = parseGpuAllocations(parts.slice(3).join('|'));
-        const partitionGpuTypes = gpuTypesByPartition.get(entry.partition);
-        for (const allocation of gpuAllocations) {
-            const totalTypeGpus = allocation.count * nodeCount;
-            const availableTypeGpus = allocation.count * (nodeStates.allocatedNodes + nodeStates.idleNodes);
-            entry.totalGpus += totalTypeGpus;
-            entry.availableGpus += availableTypeGpus;
-            partitionGpuTypes?.set(allocation.type, (partitionGpuTypes.get(allocation.type) || 0) + totalTypeGpus);
+
+        // Determine per-node state bucket (mirrors parseSinfoNodeStateSummary logic)
+        const isAllocated = nodeState.startsWith('allocated') || nodeState.startsWith('mixed');
+        const isIdle = nodeState.startsWith('idle');
+
+        for (const partitionInfo of partitionInfos) {
+            const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
+            const partitionGpuTypes = gpuTypesByPartition.get(entry.partition);
+
+            // Only count each node once per partition (guard against duplicate sinfo rows)
+            const existingPartitions = nodePartitions.get(nodeName) ?? [];
+            const alreadyCounted = existingPartitions.some(p => p.partition === partitionInfo.partition);
+            if (!alreadyCounted) {
+                entry.totalNodes += 1;
+                if (isAllocated) { entry.allocatedNodes += 1; }
+                else if (isIdle) { entry.idleNodes += 1; }
+                else { entry.otherNodes += 1; }
+
+                for (const allocation of gpuAllocations) {
+                    entry.totalGpus += allocation.count;
+                    if (isAllocated || isIdle) {
+                        entry.availableGpus += allocation.count;
+                    }
+                    partitionGpuTypes?.set(
+                        allocation.type,
+                        (partitionGpuTypes.get(allocation.type) || 0) + allocation.count
+                    );
+                }
+            }
+        }
+
+        // Record partition membership and GPU config for this node (used in phase 3)
+        if (!nodePartitions.has(nodeName)) {
+            nodePartitions.set(nodeName, []);
+        }
+        for (const p of partitionInfos) {
+            const existing = nodePartitions.get(nodeName)!;
+            if (!existing.some(e => e.partition === p.partition)) {
+                existing.push(p);
+            }
+        }
+        if (gpuAllocations.length > 0 && !nodeGpuConfig.has(nodeName)) {
+            nodeGpuConfig.set(nodeName, gpuAllocations);
         }
     }
 
+    // --- Phase 2: Get ground-truth per-node GPU allocation from scontrol ---
+    const allocatedGpusByNode = parseScontrolNodeOutput(scontrolStdout);
+
+    // --- Phase 3: Attribute node-level GPU allocations to every partition the node belongs to ---
+    for (const [nodeName, allocatedGpus] of allocatedGpusByNode) {
+        if (allocatedGpus === 0) {
+            continue;
+        }
+        const partitions = nodePartitions.get(nodeName);
+        if (!partitions) {
+            continue;
+        }
+        for (const partitionInfo of partitions) {
+            const entry = entriesByPartition.get(partitionInfo.partition);
+            if (entry) {
+                entry.allocatedGpus += allocatedGpus;
+            }
+        }
+    }
+
+    // --- Phase 4: Count running and pending jobs from squeue (no GPU counting here) ---
     const squeueLines = squeueStdout.trim().split('\n').filter(line => line.trim());
     for (const line of squeueLines) {
         const parts = line.split('|');
@@ -1278,20 +1385,14 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         }
 
         const state = parts[1].trim().toUpperCase();
-        const hasNodeColumn = parts.length >= 4;
-        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
-        const gres = parts.slice(hasNodeColumn ? 3 : 2).join('|');
         const partitionInfos = parsePartitionList(parts[0]);
         if (partitionInfos.length === 0) {
             continue;
         }
 
         if (state === 'R' || state === 'RUNNING') {
-            const partitionInfo = partitionInfos[0];
-            const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
+            const entry = getEntry(partitionInfos[0].partition, partitionInfos[0].isDefault);
             entry.runningJobs += 1;
-            const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
-            entry.allocatedGpus += sumGpuAllocations(gpuAllocations);
         } else if (state === 'PD' || state === 'PENDING') {
             for (const partitionInfo of partitionInfos) {
                 const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
@@ -1300,6 +1401,7 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         }
     }
 
+    // --- Phase 5: Derive idle GPUs ---
     for (const entry of entriesByPartition.values()) {
         entry.idleGpus = Math.max(0, entry.availableGpus - entry.allocatedGpus);
         entry.gpuTypes = formatGpuTypeEntries(gpuTypesByPartition.get(entry.partition) || new Map<string, number>());
@@ -1425,29 +1527,134 @@ function createMockAccountOverviewEntries(): ClusterAccountOverviewEntry[] {
 }
 
 function createMockPartitionUsageEntries(): PartitionUsageEntry[] {
-    return parsePartitionUsageOutput([
-        'h200*|6|2/3/1/6|gpu:h200:4',
-        'a100-long|8|4/3/1/8|gpu:a100:4',
-        'a100-short|6|1/5/0/6|gpu:a100:4',
-        'l40s|5|1/4/0/5|gpu:l40s:4',
-        'debug-gpu|2|0/2/0/2|gpu:a100:1',
-        'cpu|8|1/7/0/8|(null)',
-    ].join('\n'), [
-        'h200|R|gpu:h200:2',
-        'h200|R|gpu:h200:4',
-        'h200|PD|gpu:h200:1',
-        'a100-long|R|gpu:a100:8',
-        'a100-long|R|gpu:a100:8',
-        'a100-long|PD|gpu:a100:4',
-        'a100-short,h200|PD|gpu:a100:2',
-        'a100-short|R|gpu:a100:4',
-        'a100-short|PD|gpu:a100:4',
-        'l40s|R|gpu:l40s:4',
-        'l40s|PD|gpu:l40s:2',
-        'debug-gpu|PD|gpu:a100:1',
-        'cpu|R|(null)',
-        'cpu|PD|(null)',
-    ].join('\n'));
+    // sinfo -N --noheader --format="%N|%P|%T|%G"
+    const sinfoNode = [
+        // h200 partition (default): 6 nodes, 2 allocated, 3 idle, 1 other
+        'gpu-h200-01|h200*|allocated|gpu:h200:4',
+        'gpu-h200-02|h200*|allocated|gpu:h200:4',
+        'gpu-h200-03|h200*|idle|gpu:h200:4',
+        'gpu-h200-04|h200*|idle|gpu:h200:4',
+        'gpu-h200-05|h200*|idle|gpu:h200:4',
+        'gpu-h200-06|h200*|drain|gpu:h200:4',
+        // a100-long: 8 nodes, 4 allocated, 3 idle, 1 other
+        'gpu-a100-01|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-02|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-03|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-04|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-05|a100-long|idle|gpu:a100:4',
+        'gpu-a100-06|a100-long|idle|gpu:a100:4',
+        'gpu-a100-07|a100-long|idle|gpu:a100:4',
+        'gpu-a100-08|a100-long|drain|gpu:a100:4',
+        // a100-short: 6 nodes (shares some with a100-long), 1 allocated, 5 idle
+        'gpu-a100-01|a100-short|allocated|gpu:a100:4',
+        'gpu-a100-02|a100-short|idle|gpu:a100:4',
+        'gpu-a100-03|a100-short|idle|gpu:a100:4',
+        'gpu-a100-04|a100-short|idle|gpu:a100:4',
+        'gpu-a100-05|a100-short|idle|gpu:a100:4',
+        'gpu-a100-06|a100-short|idle|gpu:a100:4',
+        // l40s: 5 nodes, 1 allocated, 4 idle
+        'gpu-l40s-01|l40s|allocated|gpu:l40s:4',
+        'gpu-l40s-02|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-03|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-04|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-05|l40s|idle|gpu:l40s:4',
+        // debug-gpu: 2 nodes, both idle
+        'gpu-debug-01|debug-gpu|idle|gpu:a100:1',
+        'gpu-debug-02|debug-gpu|idle|gpu:a100:1',
+        // cpu-only
+        'cpu-01|cpu|allocated|(null)',
+    ].join('\n');
+
+    // scontrol show node (AllocTRES ground truth)
+    const scontrolNodes = [
+        'NodeName=gpu-h200-01 Arch=x86_64 CoresPerSocket=64',
+        ' OS=Linux 5.15.0 #1 SMP',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=cpu=128,mem=1280G,gres/gpu=2,gres/gpu:h200=2',
+        'NodeName=gpu-h200-02 Arch=x86_64 CoresPerSocket=64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        'NodeName=gpu-h200-03 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-04 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-05 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-06 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-01 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-02 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-03 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-04 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=64,mem=512G,gres/gpu=2,gres/gpu:a100=2',
+        'NodeName=gpu-a100-05 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-06 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-07 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-08 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-01 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        'NodeName=gpu-l40s-02 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-03 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-04 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-05 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-debug-01 Arch=x86_64',
+        ' CfgTRES=cpu=32,mem=256G,gres/gpu=1,gres/gpu:a100=1',
+        ' AllocTRES=',
+        'NodeName=gpu-debug-02 Arch=x86_64',
+        ' CfgTRES=cpu=32,mem=256G,gres/gpu=1,gres/gpu:a100=1',
+        ' AllocTRES=',
+        'NodeName=cpu-01 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G',
+        ' AllocTRES=cpu=8,mem=32G',
+    ].join('\n');
+
+    // squeue --noheader --format="%P|%t" (job counts only)
+    const squeueJobs = [
+        'h200|R',
+        'h200|R',
+        'h200|PD',
+        'a100-long|R',
+        'a100-long|R',
+        'a100-long|PD',
+        'a100-short,h200|PD',
+        'a100-short|R',
+        'a100-short|PD',
+        'l40s|R',
+        'l40s|PD',
+        'debug-gpu|PD',
+        'cpu|R',
+        'cpu|PD',
+    ].join('\n');
+
+    return parsePartitionUsageOutput(sinfoNode, scontrolNodes, squeueJobs);
 }
 
 function slurmStateNameToCode(state: string): string {
@@ -1745,21 +1952,36 @@ export class SlurmService {
         }
 
         try {
-            const { stdout: sinfoStdout } = await execAsync(
-                'sinfo --noheader --format="%P|%D|%F|%G"'
+            // Per-node sinfo: NodeName, Partition(s), NodeState, GRES config.
+            // Using -N (node-centric) so we can map each node to its partition(s)
+            // and later attribute scontrol GPU allocations correctly — including
+            // for overlapping partitions that share the same physical nodes.
+            const { stdout: sinfoNodeStdout } = await execAsync(
+                'sinfo -N --noheader --format="%N|%P|%T|%G"'
             );
 
+            // Ground-truth GPU allocation from scontrol: reads AllocTRES per node,
+            // capturing all allocations regardless of how GPUs were requested.
+            let scontrolStdout = '';
+            try {
+                const scontrolResult = await execAsync('scontrol show node 2>/dev/null');
+                scontrolStdout = scontrolResult.stdout;
+            } catch {
+                // Fall back gracefully — allocatedGpus will be 0 if scontrol fails.
+            }
+
+            // squeue for running/pending job counts only (no GPU accounting here).
             let squeueStdout = '';
             try {
                 const squeueResult = await execAsync(
-                    'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
+                    'squeue --noheader --format="%P|%t" 2>/dev/null'
                 );
                 squeueStdout = squeueResult.stdout;
             } catch {
                 // Capacity information is still useful when queue pressure cannot be fetched.
             }
 
-            return parsePartitionUsageOutput(sinfoStdout, squeueStdout);
+            return parsePartitionUsageOutput(sinfoNodeStdout, scontrolStdout, squeueStdout);
         } catch (error) {
             console.error('Failed to get partition usage:', error);
             return [];
