@@ -1002,6 +1002,12 @@ export interface PartitionUsageEntry {
     gpuTypes: ClusterLeaderboardGpuType[];
 }
 
+export interface PartitionUsageResult {
+    entries: PartitionUsageEntry[];
+    clusterAllocatedGpus: number;
+    clusterAvailableGpus: number;
+}
+
 function normalizeSlurmAccount(account: string): string | undefined {
     const trimmed = account.trim();
     if (!trimmed || trimmed === '(null)' || trimmed === 'N/A') {
@@ -1251,9 +1257,12 @@ export function parsePartitionUsageOutput(
     sinfoNodeStdout: string,
     scontrolStdout: string,
     squeueStdout: string,
-): PartitionUsageEntry[] {
+): PartitionUsageResult {
     const entriesByPartition = new Map<string, PartitionUsageEntry>();
     const gpuTypesByPartition = new Map<string, Map<string, number>>();
+    
+    let clusterAvailableGpus = 0;
+    let clusterAllocatedGpus = 0;
 
     const getEntry = (partition: string, isDefault: boolean = false): PartitionUsageEntry => {
         const existing = entriesByPartition.get(partition);
@@ -1287,6 +1296,7 @@ export function parsePartitionUsageOutput(
     // GPU allocations to all of a node's partitions in phase 3.
     const nodePartitions = new Map<string, { partition: string; isDefault: boolean }[]>();
     const nodeGpuConfig = new Map<string, ClusterLeaderboardGpuType[]>(); // GPU config per node
+    const seenNodesForCapacity = new Set<string>();
 
     const sinfoLines = sinfoNodeStdout.trim().split('\n').filter(line => line.trim());
     for (const line of sinfoLines) {
@@ -1314,6 +1324,15 @@ export function parsePartitionUsageOutput(
         // Determine per-node state bucket (mirrors parseSinfoNodeStateSummary logic)
         const isAllocated = nodeState.startsWith('allocated') || nodeState.startsWith('mixed');
         const isIdle = nodeState.startsWith('idle');
+
+        if (!seenNodesForCapacity.has(nodeName)) {
+            seenNodesForCapacity.add(nodeName);
+            if (isAllocated || isIdle) {
+                for (const allocation of gpuAllocations) {
+                    clusterAvailableGpus += allocation.count;
+                }
+            }
+        }
 
         for (const partitionInfo of partitionInfos) {
             const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
@@ -1365,9 +1384,12 @@ export function parsePartitionUsageOutput(
             continue;
         }
         const partitions = nodePartitions.get(nodeName);
-        if (!partitions) {
+        if (!partitions || partitions.length === 0) {
             continue;
         }
+        
+        clusterAllocatedGpus += allocatedGpus;
+
         for (const partitionInfo of partitions) {
             const entry = entriesByPartition.get(partitionInfo.partition);
             if (entry) {
@@ -1407,8 +1429,14 @@ export function parsePartitionUsageOutput(
         entry.gpuTypes = formatGpuTypeEntries(gpuTypesByPartition.get(entry.partition) || new Map<string, number>());
     }
 
-    return Array.from(entriesByPartition.values())
+    const entries = Array.from(entriesByPartition.values())
         .filter(entry => entry.totalGpus > 0);
+
+    return {
+        entries,
+        clusterAllocatedGpus,
+        clusterAvailableGpus,
+    };
 }
 
 function normalizePartitionName(rawPartition: string): { partition: string; isDefault: boolean } {
@@ -1526,7 +1554,7 @@ function createMockAccountOverviewEntries(): ClusterAccountOverviewEntry[] {
     return parseClusterAccountOverviewOutput(rows.join('\n'));
 }
 
-function createMockPartitionUsageEntries(): PartitionUsageEntry[] {
+function createMockPartitionUsageResult(): PartitionUsageResult {
     // sinfo -N --noheader --format="%N|%P|%T|%G"
     const sinfoNode = [
         // h200 partition (default): 6 nodes, 2 allocated, 3 idle, 1 other
@@ -1932,7 +1960,8 @@ export class SlurmService {
 
         try {
             const { stdout } = await execAsync(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
+                'squeue --noheader --state=R --format="%u|%a|%D|%b"',
+                { maxBuffer: 32 * 1024 * 1024 }
             );
 
             return parseClusterAccountOverviewOutput(stdout);
@@ -1946,9 +1975,9 @@ export class SlurmService {
      * Get partition usage across the cluster.
      * Combines sinfo capacity/node state data with squeue job pressure.
      */
-    async getPartitionUsage(): Promise<PartitionUsageEntry[]> {
+    async getPartitionUsage(): Promise<PartitionUsageResult> {
         if (this.isMockMode()) {
-            return createMockPartitionUsageEntries();
+            return createMockPartitionUsageResult();
         }
 
         try {
@@ -1957,14 +1986,15 @@ export class SlurmService {
             // and later attribute scontrol GPU allocations correctly — including
             // for overlapping partitions that share the same physical nodes.
             const { stdout: sinfoNodeStdout } = await execAsync(
-                'sinfo -N --noheader --format="%N|%P|%T|%G"'
+                'sinfo -N --noheader --format="%N|%P|%T|%G"',
+                { maxBuffer: 32 * 1024 * 1024 }
             );
 
             // Ground-truth GPU allocation from scontrol: reads AllocTRES per node,
             // capturing all allocations regardless of how GPUs were requested.
             let scontrolStdout = '';
             try {
-                const scontrolResult = await execAsync('scontrol show node 2>/dev/null');
+                const scontrolResult = await execAsync('scontrol show node 2>/dev/null', { maxBuffer: 32 * 1024 * 1024 });
                 scontrolStdout = scontrolResult.stdout;
             } catch {
                 // Fall back gracefully — allocatedGpus will be 0 if scontrol fails.
@@ -1974,7 +2004,8 @@ export class SlurmService {
             let squeueStdout = '';
             try {
                 const squeueResult = await execAsync(
-                    'squeue --noheader --format="%P|%t" 2>/dev/null'
+                    'squeue --noheader --format="%P|%T" 2>/dev/null',
+                    { maxBuffer: 32 * 1024 * 1024 }
                 );
                 squeueStdout = squeueResult.stdout;
             } catch {
@@ -1984,7 +2015,11 @@ export class SlurmService {
             return parsePartitionUsageOutput(sinfoNodeStdout, scontrolStdout, squeueStdout);
         } catch (error) {
             console.error('Failed to get partition usage:', error);
-            return [];
+            return {
+                entries: [],
+                clusterAllocatedGpus: 0,
+                clusterAvailableGpus: 0,
+            };
         }
     }
 
@@ -2004,7 +2039,7 @@ export class SlurmService {
         nodeStates: string;
     } | null> {
         if (this.isMockMode()) {
-            const entry = createMockPartitionUsageEntries().find(candidate => candidate.partition === partition);
+            const entry = createMockPartitionUsageResult().entries.find(candidate => candidate.partition === partition);
             const nodesUp = entry ? entry.allocatedNodes + entry.idleNodes : 0;
 
             return {

@@ -139,14 +139,14 @@ describe('SlurmService mock mode', () => {
                 { username: 'nova42', gpuCount: 24, gpuJobCount: 3 },
             ],
         });
-        assert.ok(partitionUsage.some(entry =>
+        assert.ok(partitionUsage.entries.some(entry =>
             entry.partition === 'h200' &&
             entry.totalGpus === 24 &&
             entry.availableGpus === 20 &&
             entry.allocatedGpus === 6 &&
             entry.idleGpus === 14
         ));
-        assert.ok(partitionUsage.some(entry =>
+        assert.ok(partitionUsage.entries.some(entry =>
             entry.partition === 'debug-gpu' &&
             entry.availableGpus === 2 &&
             entry.allocatedGpus === 0

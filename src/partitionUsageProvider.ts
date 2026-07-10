@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
-import { PartitionUsageEntry, SlurmService } from './slurmService';
+import { PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import {
     formatPartitionUsageDescription,
     formatPartitionUsageSummary,
@@ -24,14 +24,14 @@ class PartitionUsageRefreshItem extends vscode.TreeItem {
 }
 
 class PartitionUsageSummaryItem extends vscode.TreeItem {
-    constructor(entries: PartitionUsageEntry[]) {
+    constructor(result: PartitionUsageResult) {
         super('GPU partitions', vscode.TreeItemCollapsibleState.None);
-        this.description = formatPartitionUsageSummary(entries);
+        this.description = formatPartitionUsageSummary(result);
         this.iconPath = new vscode.ThemeIcon('server-environment');
         this.contextValue = 'partitionUsageSummary';
         this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
             title: 'GPU Partition Usage',
-            summary: formatPartitionUsageSummary(entries),
+            summary: formatPartitionUsageSummary(result),
             note: 'Rows are sorted from least used to most used by allocated GPU share, with pending jobs used as a tie-breaker.',
         }));
     }
@@ -70,14 +70,14 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    private cachedEntries: PartitionUsageEntry[] = [];
+    private cachedResult: PartitionUsageResult | undefined;
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
 
     constructor(private readonly slurmService: SlurmService) {}
 
     refresh(): void {
-        this.cachedEntries = [];
+        this.cachedResult = undefined;
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
         this._onDidChangeTreeData.fire();
@@ -98,7 +98,7 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                this.cachedEntries = await this.slurmService.getPartitionUsage();
+                this.cachedResult = await this.slurmService.getPartitionUsage();
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }
@@ -108,13 +108,13 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
                 items.push(new PartitionUsageRefreshItem(this.lastRefreshedAt));
             }
 
-            const entries = sortPartitionUsageEntries(this.cachedEntries);
+            const entries = sortPartitionUsageEntries(this.cachedResult!.entries);
             if (entries.length === 0) {
                 items.push(new PartitionUsageMessageItem('No GPU partition usage data available', 'info'));
                 return items;
             }
 
-            items.push(new PartitionUsageSummaryItem(entries));
+            items.push(new PartitionUsageSummaryItem(this.cachedResult!));
             items.push(...entries.map((entry, index) => new PartitionUsageItem(entry, index + 1)));
 
             return items;
