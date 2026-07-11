@@ -14,6 +14,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Pin/Unpin feature**: Removed the ability to pin jobs to a dedicated "Pinned" category at the top of the tree view. The `pinnedJobsCache.ts` module and all associated commands (`slurmJobs.pinJob`, `slurmJobs.unpinJob`) have been deleted.
 
 ### Fixed
+- **Missing Configuring (CF) Jobs**: Fixed jobs in the CF (Configuring) state — including job arrays — not appearing anywhere in the Active Jobs panel. The state was absent from the panel's status categories, so squeue reported these jobs but the tree view silently dropped them. CF jobs now show up under the "Running" category.
 - **GPU Partition Usage Accuracy**: GPU Partition Usage now sources allocated GPU counts from `scontrol show node`'s `AllocTRES` field instead of `squeue`'s GRES field. This correctly counts GPUs requested via `--gpus`/`--gpus-per-node` (not just `--gres`), and correctly attributes allocations to every partition that shares the same physical nodes (e.g. `gpu` / `gpudev`).
 - **GPU Partition Double-Counting**: Fixed the cluster-wide summary row in GPU Partition Usage inflating total GPU counts when overlapping partitions shared the same physical nodes. Cluster-wide totals are now derived from unique nodes rather than summed per-partition.
 - **Large Cluster Buffer Overflow**: Fixed `scontrol`/`sinfo`/`squeue` commands silently failing (reporting 0 allocated GPUs) on large clusters (1500+ nodes) by increasing the exec buffer to 32MB for all cluster-wide commands.

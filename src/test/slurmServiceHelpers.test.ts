@@ -22,6 +22,7 @@ import {
 describe('Slurm service helper functions', () => {
     it('maps active job state codes to readable descriptions', () => {
         assert.equal(getStateDescription('R'), 'Running');
+        assert.equal(getStateDescription('CF'), 'Configuring');
         assert.equal(getStateDescription('PD'), 'Pending');
         assert.equal(getStateDescription('CG'), 'Completing');
         assert.equal(getStateDescription('NF'), 'Node Fail');

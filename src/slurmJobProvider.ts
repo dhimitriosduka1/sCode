@@ -20,7 +20,7 @@ const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
     running: {
         label: 'Running',
         icon: new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green')),
-        states: ['R'],
+        states: ['R', 'CF'],
     },
     pending: {
         label: 'Pending',
@@ -167,6 +167,8 @@ export class SlurmJobItem extends vscode.TreeItem {
         switch (this.job.state) {
             case 'R':  // Running
                 return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green'));
+            case 'CF': // Configuring
+                return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.green'));
             case 'PD': // Pending
                 return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
             case 'CG': // Completing

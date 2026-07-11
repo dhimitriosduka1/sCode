@@ -58,6 +58,7 @@ export interface SlurmJob {
  */
 export enum JobState {
     RUNNING = 'R',
+    CONFIGURING = 'CF',
     PENDING = 'PD',
     COMPLETING = 'CG',
     COMPLETED = 'CD',
@@ -75,6 +76,7 @@ export enum JobState {
 export function getStateDescription(state: string): string {
     const descriptions: Record<string, string> = {
         'R': 'Running',
+        'CF': 'Configuring',
         'PD': 'Pending',
         'CG': 'Completing',
         'CD': 'Completed',
