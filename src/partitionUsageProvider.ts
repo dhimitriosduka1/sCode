@@ -3,12 +3,15 @@ import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from '
 import { PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import {
     formatPartitionUsageDescription,
+    formatPartitionUsageGpuBreakdown,
+    formatPartitionUsageNodeBreakdown,
     formatPartitionUsageSummary,
     formatPartitionUsageTooltipMarkdown,
     formatPartitionUsageTrailingDescription,
     getPartitionUsageLabel,
     sortPartitionUsageEntries,
 } from './partitionUsageRanking';
+import { formatLeaderboardGpuTypeLabel } from './leaderboardRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 class PartitionUsageRefreshItem extends vscode.TreeItem {
@@ -38,12 +41,24 @@ class PartitionUsageSummaryItem extends vscode.TreeItem {
 }
 
 class PartitionUsageItem extends vscode.TreeItem {
+    readonly entry: PartitionUsageEntry;
+
     constructor(entry: PartitionUsageEntry, rank: number) {
-        super(getPartitionUsageLabel(entry, rank), vscode.TreeItemCollapsibleState.None);
+        super(getPartitionUsageLabel(entry, rank), vscode.TreeItemCollapsibleState.Collapsed);
+        this.entry = entry;
         this.description = `${formatPartitionUsageDescription(entry)} · ${formatPartitionUsageTrailingDescription(entry)}`;
         this.iconPath = getPartitionUsageIcon(entry);
         this.contextValue = 'partitionUsageEntry';
         this.tooltip = new vscode.MarkdownString(formatPartitionUsageTooltipMarkdown(entry));
+    }
+}
+
+class PartitionUsageDetailItem extends vscode.TreeItem {
+    constructor(label: string, description: string, icon: string, iconColor?: string) {
+        super(label, vscode.TreeItemCollapsibleState.None);
+        this.description = description;
+        this.iconPath = new vscode.ThemeIcon(icon, iconColor ? new vscode.ThemeColor(iconColor) : undefined);
+        this.contextValue = 'partitionUsageDetail';
     }
 }
 
@@ -60,6 +75,38 @@ function getPartitionUsageIcon(entry: PartitionUsageEntry): vscode.ThemeIcon {
     }
 
     return new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.blue'));
+}
+
+function getPartitionDetailChildren(entry: PartitionUsageEntry): vscode.TreeItem[] {
+    const children: vscode.TreeItem[] = [];
+
+    children.push(new PartitionUsageDetailItem(
+        'GPUs',
+        formatPartitionUsageGpuBreakdown(entry),
+        'chip',
+    ));
+
+    children.push(new PartitionUsageDetailItem(
+        'Nodes',
+        formatPartitionUsageNodeBreakdown(entry),
+        'server',
+    ));
+
+    if (entry.gpuTypes.length > 0) {
+        children.push(new PartitionUsageDetailItem(
+            'GPU types',
+            formatLeaderboardGpuTypeLabel(entry.gpuTypes),
+            'tag',
+        ));
+    }
+
+    children.push(new PartitionUsageDetailItem(
+        'Jobs',
+        `${entry.runningJobs} running, ${entry.pendingJobs} pending`,
+        'play-circle',
+    ));
+
+    return children;
 }
 
 /**
@@ -88,6 +135,10 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
+        if (element instanceof PartitionUsageItem) {
+            return getPartitionDetailChildren(element.entry);
+        }
+
         if (element) {
             return [];
         }

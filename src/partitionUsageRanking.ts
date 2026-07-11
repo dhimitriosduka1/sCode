@@ -26,6 +26,14 @@ export function formatPartitionUsageTrailingDescription(entry: PartitionUsageEnt
     return generateProgressBar(Math.round(getPartitionUsageRatio(entry) * 100), 8);
 }
 
+export function formatPartitionUsageGpuBreakdown(entry: PartitionUsageEntry): string {
+    return `${entry.allocatedGpus} allocated, ${entry.idleGpus} idle, ${entry.availableGpus} available, ${entry.totalGpus} total`;
+}
+
+export function formatPartitionUsageNodeBreakdown(entry: PartitionUsageEntry): string {
+    return `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total`;
+}
+
 export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry): string {
     const loadPercent = Math.round(getPartitionUsageRatio(entry) * 100);
     const details = [
@@ -33,11 +41,11 @@ export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry):
         { label: 'Load', value: `${loadPercent}%` },
         { label: 'Running jobs', value: entry.runningJobs },
         { label: 'Pending jobs', value: entry.pendingJobs },
-        { label: 'Nodes', value: `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total` },
+        { label: 'Nodes', value: formatPartitionUsageNodeBreakdown(entry) },
     ];
 
     details.splice(2, 0,
-        { label: 'GPUs', value: `${entry.allocatedGpus} allocated, ${entry.idleGpus} idle, ${entry.availableGpus} available, ${entry.totalGpus} total` },
+        { label: 'GPUs', value: formatPartitionUsageGpuBreakdown(entry) },
         { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
     );
 
