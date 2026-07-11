@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
-import { PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
+import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { MaintenanceWindow, PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import {
     formatPartitionUsageDescription,
     formatPartitionUsageGpuBreakdown,
@@ -118,6 +119,7 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private cachedResult: PartitionUsageResult | undefined;
+    private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
 
@@ -125,6 +127,7 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
 
     refresh(): void {
         this.cachedResult = undefined;
+        this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
         this._onDidChangeTreeData.fire();
@@ -149,12 +152,20 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                this.cachedResult = await this.slurmService.getPartitionUsage();
+                [this.cachedResult, this.cachedMaintenanceWindows] = await Promise.all([
+                    this.slurmService.getPartitionUsage(),
+                    this.slurmService.getMaintenanceWindows(),
+                ]);
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }
 
             const items: vscode.TreeItem[] = [];
+            const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+            if (maintenanceItem) {
+                items.push(maintenanceItem);
+            }
+
             if (this.lastRefreshedAt) {
                 items.push(new PartitionUsageRefreshItem(this.lastRefreshedAt));
             }

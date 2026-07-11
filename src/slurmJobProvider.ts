@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import { getSlurmJobRowParts } from './slurmJobRow';
+import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { SubmitScriptCache } from './submitScriptCache';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
@@ -345,6 +346,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private checkedJobIds?: Set<string>;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
+    private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private searchFilter: string = '';
 
     constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, checkedJobIds?: Set<string>) {
@@ -358,6 +360,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      */
     refresh(): void {
         this.cachedJobs = [];
+        this.cachedMaintenanceWindows = [];
         this._onDidChangeTreeData.fire();
     }
 
@@ -432,7 +435,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             // Fetch and cache jobs only if cache is empty
             if (this.cachedJobs.length === 0) {
-                this.cachedJobs = await this.slurmService.getJobs();
+                [this.cachedJobs, this.cachedMaintenanceWindows] = await Promise.all([
+                    this.slurmService.getJobs(),
+                    this.slurmService.getMaintenanceWindows(),
+                ]);
 
                 // Clean up stale checked jobs (jobs that no longer exist)
                 if (this.checkedJobIds && this.checkedJobIds.size > 0) {
@@ -467,8 +473,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 }
             }
 
+            const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
+                if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
@@ -477,6 +486,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             if (filteredJobs.length === 0 && this.searchFilter) {
                 const items: vscode.TreeItem[] = [];
+                if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
@@ -486,7 +496,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
-            // Add cluster hogs at the top
+            // Add maintenance warning and cluster hogs at the top
+            if (maintenanceItem) { categories.push(maintenanceItem); }
             if (jobHogItem) { categories.push(jobHogItem); }
             if (gpuHogItem) { categories.push(gpuHogItem); }
 

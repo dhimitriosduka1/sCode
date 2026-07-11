@@ -1010,6 +1010,48 @@ export interface PartitionUsageResult {
     clusterAvailableGpus: number;
 }
 
+/**
+ * A planned cluster maintenance/downtime window, sourced from a Slurm
+ * reservation flagged MAINT — the standard, site-agnostic mechanism admins
+ * use to announce maintenance regardless of how a given cluster is configured.
+ */
+export interface MaintenanceWindow {
+    name: string;
+    nodes: string;
+    startTime: string;
+    endTime: string;
+}
+
+/**
+ * Parses `scontrol show reservation` output and returns only the reservations
+ * flagged MAINT (ordinary user/account reservations are not maintenance).
+ */
+export function parseMaintenanceReservationOutput(stdout: string): MaintenanceWindow[] {
+    const windows: MaintenanceWindow[] = [];
+    const blocks = stdout.split(/(?=\bReservationName=)/).filter(block => block.trim());
+
+    for (const block of blocks) {
+        const flags = block.match(/\bFlags=(\S*)/)?.[1] ?? '';
+        if (!flags.split(',').includes('MAINT')) {
+            continue;
+        }
+
+        const nameMatch = block.match(/\bReservationName=(\S+)/);
+        if (!nameMatch) {
+            continue;
+        }
+
+        windows.push({
+            name: nameMatch[1],
+            nodes: block.match(/\bNodes=(\S+)/)?.[1] ?? 'N/A',
+            startTime: block.match(/\bStartTime=(\S+)/)?.[1] ?? '',
+            endTime: block.match(/\bEndTime=(\S+)/)?.[1] ?? '',
+        });
+    }
+
+    return windows;
+}
+
 function normalizeSlurmAccount(account: string): string | undefined {
     const trimmed = account.trim();
     if (!trimmed || trimmed === '(null)' || trimmed === 'N/A') {
@@ -1687,6 +1729,22 @@ function createMockPartitionUsageResult(): PartitionUsageResult {
     return parsePartitionUsageOutput(sinfoNode, scontrolNodes, squeueJobs);
 }
 
+function createMockMaintenanceWindows(): MaintenanceWindow[] {
+    const start = new Date();
+    start.setDate(start.getDate() + 2);
+    const end = new Date(start.getTime());
+    end.setHours(end.getHours() + 6);
+
+    return [
+        {
+            name: 'monthly_maintenance',
+            nodes: 'ALL',
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+        },
+    ];
+}
+
 function slurmStateNameToCode(state: string): string {
     const states: Record<string, string> = {
         PENDING: 'PD',
@@ -2022,6 +2080,28 @@ export class SlurmService {
                 clusterAllocatedGpus: 0,
                 clusterAvailableGpus: 0,
             };
+        }
+    }
+
+    /**
+     * Get upcoming/active cluster maintenance windows, sourced from Slurm
+     * reservations flagged MAINT. Works on any Slurm cluster that announces
+     * downtime this way, regardless of site-specific conventions.
+     */
+    async getMaintenanceWindows(): Promise<MaintenanceWindow[]> {
+        if (this.isMockMode()) {
+            return createMockMaintenanceWindows();
+        }
+
+        try {
+            const { stdout } = await execAsync(
+                'scontrol show reservation 2>/dev/null',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
+            return parseMaintenanceReservationOutput(stdout);
+        } catch {
+            // No reservations is the common case (non-zero exit / empty output) — not an error.
+            return [];
         }
     }
 
