@@ -1,5 +1,55 @@
-import { getHistoryStateInfo, HistoryJob } from './slurmService';
+import { getHistoryStateInfo, HistoryJob, parseSlurmMemoryToMegabytes, parseTimeToSeconds } from './slurmService';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
+
+export interface JobEfficiency {
+    cpuPercent: number | undefined;
+    memoryPercent: number | undefined;
+}
+
+/**
+ * Estimates how much of the allocated CPU and memory a completed job actually
+ * used — the same idea as the `seff` tool, computed from sacct fields already
+ * fetched for Job History (TotalCPU/AllocCPUS for CPU, MaxRSS/AllocTRES mem
+ * for memory). Either percentage is undefined when the underlying sacct
+ * fields weren't available (e.g. very short-lived or cancelled-before-start
+ * jobs often lack MaxRSS/TotalCPU).
+ */
+export function calculateJobEfficiency(job: HistoryJob): JobEfficiency {
+    const allocatedCpus = parseInt(job.cpus, 10);
+    const elapsedSeconds = parseTimeToSeconds(job.elapsed);
+    const cpuTimeUsedSeconds = parseTimeToSeconds(job.totalCpuTime);
+
+    const cpuPercent = Number.isFinite(allocatedCpus) && allocatedCpus > 0 && elapsedSeconds > 0 && cpuTimeUsedSeconds >= 0
+        ? Math.min(100, (cpuTimeUsedSeconds / (allocatedCpus * elapsedSeconds)) * 100)
+        : undefined;
+
+    const allocatedMemoryMb = parseSlurmMemoryToMegabytes(job.allocMemory);
+    const usedMemoryMb = parseSlurmMemoryToMegabytes(job.maxMemory);
+    const memoryPercent = allocatedMemoryMb !== undefined && allocatedMemoryMb > 0 && usedMemoryMb !== undefined
+        ? Math.min(100, (usedMemoryMb / allocatedMemoryMb) * 100)
+        : undefined;
+
+    return { cpuPercent, memoryPercent };
+}
+
+export function formatJobEfficiencyPercentLabel(percent: number | undefined): string {
+    return percent === undefined ? 'N/A' : `${Math.round(percent)}%`;
+}
+
+/**
+ * Picks an icon/color to flag low efficiency (wasted allocation) vs. good
+ * utilization, mirroring the visual-warning convention used elsewhere
+ * (e.g. held jobs, GPU partition load).
+ */
+export function getJobEfficiencyIndicator(percent: number): { icon: string; color: string } {
+    if (percent < 50) {
+        return { icon: 'warning', color: 'charts.red' };
+    }
+    if (percent < 80) {
+        return { icon: 'warning', color: 'charts.yellow' };
+    }
+    return { icon: 'check', color: 'charts.green' };
+}
 
 export interface HistoryDateGroup {
     key: string;

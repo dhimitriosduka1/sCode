@@ -5,6 +5,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 ## [Unreleased]
 
 ### Added
+- **Job Efficiency Report**: Job History now shows CPU and memory efficiency for completed jobs (e.g. "49%"), color-coded (red <50%, yellow 50-80%, green ≥80%) in both the tooltip and expanded job details. Computed from `sacct`'s `TotalCPU`/`AllocCPUS` (CPU) and `MaxRSS`/`AllocTRES` memory (RAM) — the same idea as the `seff` tool — so a job that requested 4 GPUs but only used 1 CPU-efficiently becomes obvious at a glance. Note: this covers CPU/RAM only; Slurm's accounting database doesn't track GPU utilization or GPU memory by default, so GPU efficiency isn't included.
 - **Cluster Maintenance Warnings**: Active Jobs, GPU Partition Usage, and Cluster Overview now surface a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress, showing a countdown ("Cluster maintenance starts in 2d") or an in-progress notice, with reservation name/nodes/start/end in the tooltip. Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime this way.
 - **Job History Path Caching Tests**: Added unit test suites verifying path resolution, placeholder retention, and array task base ID fallback lookups.
 - **Automatic Extension Activation**: Configured the extension to activate automatically on VS Code startup (`onStartupFinished`), enabling background features (status bar, auto-refresh, notification polling) to start immediately without requiring manual interaction.

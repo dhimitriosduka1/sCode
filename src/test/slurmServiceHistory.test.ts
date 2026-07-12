@@ -33,6 +33,33 @@ describe('SlurmService job history', () => {
         assert.deepEqual(jobs.map(job => job.state), ['FAILED', 'COMPLETED']);
     });
 
+    it('requests and parses TotalCPU and AllocTRES for efficiency reporting', async () => {
+        const commandRunner: SlurmCommandRunner = async (command) => ({
+            stdout: '123|train|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T11:00:00|01:00:00|a100|node-a|8|16G|04:00:00|billing=8,cpu=8,mem=32G,node=1',
+            stderr: '',
+        });
+        const service = new SlurmService(undefined, undefined, commandRunner);
+
+        const jobs = await service.getJobHistory(3);
+
+        assert.equal(jobs.length, 1);
+        assert.equal(jobs[0].totalCpuTime, '04:00:00');
+        assert.equal(jobs[0].allocMemory, '32G');
+    });
+
+    it('defaults efficiency fields to N/A when TotalCPU/AllocTRES columns are missing', async () => {
+        const commandRunner: SlurmCommandRunner = async () => ({
+            stdout: '123|train|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T11:00:00|01:00:00|a100|node-a|8|16G',
+            stderr: '',
+        });
+        const service = new SlurmService(undefined, undefined, commandRunner);
+
+        const jobs = await service.getJobHistory(3);
+
+        assert.equal(jobs[0].totalCpuTime, 'N/A');
+        assert.equal(jobs[0].allocMemory, 'N/A');
+    });
+
     it('resolves history paths from cache, including base ID fallback for arrays', async () => {
         const mockCacheMap = new Map<string, any>();
         const mockPathCache = {

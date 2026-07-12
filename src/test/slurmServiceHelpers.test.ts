@@ -13,6 +13,7 @@ import {
     normalizeOpenableFilePath,
     normalizeSlurmPathValue,
     parseJobDetailsOutput,
+    parseSlurmMemoryToMegabytes,
     parseTimeToSeconds,
     cleanJobIdForScontrol,
     extractBaseJobId,
@@ -41,6 +42,20 @@ describe('Slurm service helper functions', () => {
         assert.equal(parseTimeToSeconds('N/A'), -1);
         assert.equal(parseTimeToSeconds('UNLIMITED'), -1);
         assert.equal(parseTimeToSeconds('INVALID'), -1);
+    });
+
+    it('parses Slurm memory values into megabytes', () => {
+        assert.equal(parseSlurmMemoryToMegabytes('500M'), 500);
+        assert.equal(parseSlurmMemoryToMegabytes('72G'), 72 * 1024);
+        assert.equal(parseSlurmMemoryToMegabytes('1T'), 1024 * 1024);
+        assert.equal(parseSlurmMemoryToMegabytes('2048K'), 2);
+        assert.equal(parseSlurmMemoryToMegabytes('100'), 100); // no unit defaults to megabytes
+    });
+
+    it('returns undefined for missing or unparseable memory values', () => {
+        assert.equal(parseSlurmMemoryToMegabytes(''), undefined);
+        assert.equal(parseSlurmMemoryToMegabytes('N/A'), undefined);
+        assert.equal(parseSlurmMemoryToMegabytes('not-a-value'), undefined);
     });
 
     it('calculates capped progress percentages', () => {

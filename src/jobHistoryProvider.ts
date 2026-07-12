@@ -3,9 +3,12 @@ import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders }
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
 import {
+    calculateJobEfficiency,
     formatHistoryJobDescription,
     formatHistorySummaryDescription,
     formatHistorySummaryTooltip,
+    formatJobEfficiencyPercentLabel,
+    getJobEfficiencyIndicator,
     groupHistoryJobsByEndDate,
     HistoryDateGroup,
     normalizeHistoryDays,
@@ -46,6 +49,14 @@ export class HistoryJobItem extends vscode.TreeItem {
         }
         if (this.job.maxMemory !== 'N/A' && this.job.maxMemory) {
             details.push({ label: 'Max memory', value: this.job.maxMemory });
+        }
+
+        const efficiency = calculateJobEfficiency(this.job);
+        if (efficiency.cpuPercent !== undefined) {
+            details.push({ label: 'CPU efficiency', value: formatJobEfficiencyPercentLabel(efficiency.cpuPercent) });
+        }
+        if (efficiency.memoryPercent !== undefined) {
+            details.push({ label: 'Memory efficiency', value: formatJobEfficiencyPercentLabel(efficiency.memoryPercent) });
         }
 
         return new vscode.MarkdownString(formatTooltipMarkdown({
@@ -377,6 +388,16 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         }
         if (job.maxMemory !== 'N/A' && job.maxMemory) {
             children.push(new HistoryDetailItem('Max Memory', job.maxMemory, 'dashboard'));
+        }
+
+        const efficiency = calculateJobEfficiency(job);
+        if (efficiency.cpuPercent !== undefined) {
+            const indicator = getJobEfficiencyIndicator(efficiency.cpuPercent);
+            children.push(new HistoryDetailItem('CPU Efficiency', formatJobEfficiencyPercentLabel(efficiency.cpuPercent), indicator.icon, indicator.color));
+        }
+        if (efficiency.memoryPercent !== undefined) {
+            const indicator = getJobEfficiencyIndicator(efficiency.memoryPercent);
+            children.push(new HistoryDetailItem('Memory Efficiency', formatJobEfficiencyPercentLabel(efficiency.memoryPercent), indicator.icon, indicator.color));
         }
 
         children.push(new HistoryDetailItem('Started', job.startTime, 'calendar'));

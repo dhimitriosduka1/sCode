@@ -406,6 +406,38 @@ export function parseTimeToSeconds(timeStr: string): number {
 }
 
 /**
+ * Parse a SLURM memory value (e.g. "72G", "1548636K", "500M") into megabytes.
+ * Returns undefined if the value is missing or not parseable.
+ */
+export function parseSlurmMemoryToMegabytes(value: string): number | undefined {
+    if (!value || value === 'N/A') {
+        return undefined;
+    }
+
+    const match = value.match(/^([\d.]+)\s*([KMGT])?B?$/i);
+    if (!match) {
+        return undefined;
+    }
+
+    const amount = parseFloat(match[1]);
+    if (!Number.isFinite(amount)) {
+        return undefined;
+    }
+
+    const multipliers: Record<string, number> = { K: 1 / 1024, M: 1, G: 1024, T: 1024 * 1024 };
+    const unit = (match[2] || 'M').toUpperCase();
+    return amount * (multipliers[unit] ?? 1);
+}
+
+/**
+ * Extract the allocated memory (e.g. "16G") from a sacct/scontrol AllocTRES
+ * string like "billing=4,cpu=4,mem=16G,node=1".
+ */
+function extractTresMemory(tres: string): string {
+    return tres.match(/\bmem=([\d.]+[KMGT]?)/i)?.[1] ?? 'N/A';
+}
+
+/**
  * Calculate progress percentage based on elapsed time and time limit
  */
 export function calculateProgress(elapsed: string, limit: string): number {
@@ -905,6 +937,8 @@ function createMockHistoryJobs(): HistoryJob[] {
             nodes: 'gpu-node[03]',
             cpus: '16',
             maxMemory: '72G',
+            totalCpuTime: '12:00:00',
+            allocMemory: '128G',
             stdoutPath: '/work/vision_lab/runs/finished-training/logs/90990.out',
             stderrPath: '/work/vision_lab/runs/finished-training/logs/90990.err',
         },
@@ -920,6 +954,8 @@ function createMockHistoryJobs(): HistoryJob[] {
             nodes: 'cpu-node[01]',
             cpus: '4',
             maxMemory: '2G',
+            totalCpuTime: '00:02:00',
+            allocMemory: '8G',
             stdoutPath: '/work/data_lab/logs/failed-preprocess-90991.out',
             stderrPath: '/work/data_lab/logs/failed-preprocess-90991.err',
         },
@@ -935,6 +971,8 @@ function createMockHistoryJobs(): HistoryJob[] {
             nodes: 'gpu-node[08-09]',
             cpus: '32',
             maxMemory: '188G',
+            totalCpuTime: '12-00:00:00',
+            allocMemory: '192G',
             stdoutPath: '/work/atlas_lab/runs/ablation-grid/logs/90992.out',
             stderrPath: '/work/atlas_lab/runs/ablation-grid/logs/90992.err',
         },
@@ -950,6 +988,8 @@ function createMockHistoryJobs(): HistoryJob[] {
             nodes: 'gpu-node[02]',
             cpus: '8',
             maxMemory: '24G',
+            totalCpuTime: '00:15:00',
+            allocMemory: '32G',
             stdoutPath: '/work/proto_lab/logs/interactive-probe-90993.out',
             stderrPath: '/work/proto_lab/logs/interactive-probe-90993.err',
         },
@@ -2484,9 +2524,9 @@ export class SlurmService {
             startDate.setDate(startDate.getDate() - days);
             const startDateStr = startDate.toISOString().split('T')[0];
 
-            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
+            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS|TotalCPU|AllocTRES
             const { stdout } = await this.commandRunner(
-                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
+                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,TotalCPU,AllocTRES`,
                 { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
             );
 
@@ -2529,6 +2569,8 @@ export class SlurmService {
                         nodes: parts[8].trim() || 'N/A',
                         cpus: parts[9]?.trim() || 'N/A',
                         maxMemory: parts[10]?.trim() || 'N/A',
+                        totalCpuTime: parts[11]?.trim() || 'N/A',
+                        allocMemory: extractTresMemory(parts[12]?.trim() ?? ''),
                         stdoutPath: 'N/A',
                         stderrPath: 'N/A',
                     });
@@ -2911,6 +2953,8 @@ export interface HistoryJob {
     nodes: string;
     cpus: string;
     maxMemory: string;
+    totalCpuTime: string;
+    allocMemory: string;
     stdoutPath: string;
     stderrPath: string;
 }
