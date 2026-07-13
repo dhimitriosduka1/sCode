@@ -77,9 +77,13 @@ describe('partition usage ranking', () => {
     });
 
     it('formats mixed partition summaries using GPU allocation totals', () => {
-        assert.equal(formatPartitionUsageSummary([
-            partitionEntry({ partition: 'a', totalGpus: 8, allocatedGpus: 2, pendingJobs: 1 }),
-            partitionEntry({ partition: 'b', totalGpus: 4, allocatedGpus: 1, pendingJobs: 2 }),
-        ]), '3/12 GPUs allocated · 3 pending · 2 partitions');
+        assert.equal(formatPartitionUsageSummary({
+            entries: [
+                partitionEntry({ partition: 'a', totalGpus: 8, allocatedGpus: 2, pendingJobs: 1 }),
+                partitionEntry({ partition: 'b', totalGpus: 4, allocatedGpus: 1, pendingJobs: 2 }),
+            ],
+            clusterAvailableGpus: 12,
+            clusterAllocatedGpus: 3,
+        }), '3/12 GPUs allocated · 3 pending · 2 partitions');
     });
 });

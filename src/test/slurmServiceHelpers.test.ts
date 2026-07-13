@@ -16,11 +16,13 @@ import {
     parseTimeToSeconds,
     cleanJobIdForScontrol,
     extractBaseJobId,
+    resolvePathWithoutPlaceholders,
 } from '../slurmService';
 
 describe('Slurm service helper functions', () => {
     it('maps active job state codes to readable descriptions', () => {
         assert.equal(getStateDescription('R'), 'Running');
+        assert.equal(getStateDescription('CF'), 'Configuring');
         assert.equal(getStateDescription('PD'), 'Pending');
         assert.equal(getStateDescription('CG'), 'Completing');
         assert.equal(getStateDescription('NF'), 'Node Fail');
@@ -265,5 +267,18 @@ describe('Slurm service helper functions', () => {
         assert.equal(extractBaseJobId('269277_1'), '269277');
         assert.equal(extractBaseJobId('269277_[1-10]'), '269277');
         assert.equal(extractBaseJobId('269277'), '269277');
+    });
+
+    it('resolves path values without expanding placeholders', () => {
+        assert.equal(resolvePathWithoutPlaceholders('N/A', '/work'), 'N/A');
+        assert.equal(resolvePathWithoutPlaceholders('', '/work'), 'N/A');
+        assert.equal(
+            resolvePathWithoutPlaceholders('logs/%x-%j-%N.out', '/work'),
+            path.resolve('/work', 'logs/%x-%j-%N.out')
+        );
+        assert.equal(
+            resolvePathWithoutPlaceholders('/absolute/logs/%x-%j.out', '/work'),
+            '/absolute/logs/%x-%j.out'
+        );
     });
 });

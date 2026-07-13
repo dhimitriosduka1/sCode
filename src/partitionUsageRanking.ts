@@ -1,4 +1,4 @@
-import { generateProgressBar, PartitionUsageEntry } from './slurmService';
+import { generateProgressBar, PartitionUsageEntry, PartitionUsageResult } from './slurmService';
 import { formatLeaderboardGpuTypeLabel } from './leaderboardRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
@@ -26,6 +26,14 @@ export function formatPartitionUsageTrailingDescription(entry: PartitionUsageEnt
     return generateProgressBar(Math.round(getPartitionUsageRatio(entry) * 100), 8);
 }
 
+export function formatPartitionUsageGpuBreakdown(entry: PartitionUsageEntry): string {
+    return `${entry.allocatedGpus} allocated, ${entry.idleGpus} idle, ${entry.availableGpus} available, ${entry.totalGpus} total`;
+}
+
+export function formatPartitionUsageNodeBreakdown(entry: PartitionUsageEntry): string {
+    return `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total`;
+}
+
 export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry): string {
     const loadPercent = Math.round(getPartitionUsageRatio(entry) * 100);
     const details = [
@@ -33,11 +41,11 @@ export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry):
         { label: 'Load', value: `${loadPercent}%` },
         { label: 'Running jobs', value: entry.runningJobs },
         { label: 'Pending jobs', value: entry.pendingJobs },
-        { label: 'Nodes', value: `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total` },
+        { label: 'Nodes', value: formatPartitionUsageNodeBreakdown(entry) },
     ];
 
     details.splice(2, 0,
-        { label: 'GPUs', value: `${entry.allocatedGpus} allocated, ${entry.idleGpus} idle, ${entry.availableGpus} available, ${entry.totalGpus} total` },
+        { label: 'GPUs', value: formatPartitionUsageGpuBreakdown(entry) },
         { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
     );
 
@@ -48,14 +56,12 @@ export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry):
     });
 }
 
-export function formatPartitionUsageSummary(entries: PartitionUsageEntry[]): string {
-    const totalPartitions = entries.length;
+export function formatPartitionUsageSummary(result: PartitionUsageResult): string {
+    const totalPartitions = result.entries.length;
     const partitionLabel = totalPartitions === 1 ? 'partition' : 'partitions';
-    const allocatedGpus = entries.reduce((total, entry) => total + entry.allocatedGpus, 0);
-    const totalPendingJobs = entries.reduce((total, entry) => total + entry.pendingJobs, 0);
+    const totalPendingJobs = result.entries.reduce((total, entry) => total + entry.pendingJobs, 0);
 
-    const availableGpus = entries.reduce((total, entry) => total + entry.availableGpus, 0);
-    return `${allocatedGpus}/${availableGpus} GPUs allocated · ${totalPendingJobs} pending · ${totalPartitions} ${partitionLabel}`;
+    return `${result.clusterAllocatedGpus}/${result.clusterAvailableGpus} GPUs allocated · ${totalPendingJobs} pending · ${totalPartitions} ${partitionLabel}`;
 }
 
 function getPartitionUsageRatio(entry: PartitionUsageEntry): number {

@@ -4,6 +4,24 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+### Added
+- **Cluster Maintenance Warnings**: Active Jobs, GPU Partition Usage, and Cluster Overview now surface a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress, showing a countdown ("Cluster maintenance starts in 2d") or an in-progress notice, with reservation name/nodes/start/end in the tooltip. Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime this way.
+- **Job History Path Caching Tests**: Added unit test suites verifying path resolution, placeholder retention, and array task base ID fallback lookups.
+- **Automatic Extension Activation**: Configured the extension to activate automatically on VS Code startup (`onStartupFinished`), enabling background features (status bar, auto-refresh, notification polling) to start immediately without requiring manual interaction.
+- **Log Preview Customization**: Introduced the `slurmClusterManager.openLogFileInPreview` configuration setting, allowing users to choose whether to open stdout/stderr log files in VS Code's preview mode (reuses the same tab) or as permanent editor tabs.
+- **Job Dependency Management**: Added "Update Dependency..." inline action (`$(link)`) on all pending jobs. Supports adding a new dependency (select from active jobs or enter a custom Job ID), updating an existing one, or clearing it entirely. The current job is automatically excluded from the picker to prevent self-dependency. Pin/unpin for pending jobs is now accessible via right-click only, freeing the inline slot for this action.
+
+### Removed
+- **Pin/Unpin feature**: Removed the ability to pin jobs to a dedicated "Pinned" category at the top of the tree view. The `pinnedJobsCache.ts` module and all associated commands (`slurmJobs.pinJob`, `slurmJobs.unpinJob`) have been deleted.
+
+### Fixed
+- **Missing Configuring (CF) Jobs**: Fixed jobs in the CF (Configuring) state — including job arrays — not appearing anywhere in the Active Jobs panel. The state was absent from the panel's status categories, so squeue reported these jobs but the tree view silently dropped them. CF jobs now show up under the "Running" category.
+- **GPU Partition Usage Accuracy**: GPU Partition Usage now sources allocated GPU counts from `scontrol show node`'s `AllocTRES` field instead of `squeue`'s GRES field. This correctly counts GPUs requested via `--gpus`/`--gpus-per-node` (not just `--gres`), and correctly attributes allocations to every partition that shares the same physical nodes (e.g. `gpu` / `gpudev`).
+- **GPU Partition Double-Counting**: Fixed the cluster-wide summary row in GPU Partition Usage inflating total GPU counts when overlapping partitions shared the same physical nodes. Cluster-wide totals are now derived from unique nodes rather than summed per-partition.
+- **Large Cluster Buffer Overflow**: Fixed `scontrol`/`sinfo`/`squeue` commands silently failing (reporting 0 allocated GPUs) on large clusters (1500+ nodes) by increasing the exec buffer to 32MB for all cluster-wide commands.
+- **Job History Log Path Resolution**: Fixed a bug where stdout/stderr paths occasionally disappeared or showed as 'N/A' in the Job History view for jobs that completed quickly or when auto-refresh was disabled. Resolved this by (1) pre-caching job paths immediately upon submission, (2) caching paths in their raw placeholder format instead of fully expanded formats (allowing node-name `%N` and task-ID `%a` to be resolved dynamically on history lookup), and (3) adding base job ID fallbacks for array task lookups in the cache.
+- **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
+
 ## [1.5.0] - 2026-06-27
 
 ### Added

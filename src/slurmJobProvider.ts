@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import { getSlurmJobRowParts } from './slurmJobRow';
+import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { SubmitScriptCache } from './submitScriptCache';
-import { PinnedJobsCache } from './pinnedJobsCache';
+
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
 /**
  * Status categories for grouping jobs
  */
-type StatusCategory = 'pinned' | 'running' | 'pending' | 'completing' | 'other';
+type StatusCategory = 'running' | 'pending' | 'completing' | 'other';
 
 interface CategoryInfo {
     label: string;
@@ -17,15 +18,10 @@ interface CategoryInfo {
 }
 
 const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
-    pinned: {
-        label: 'Pinned',
-        icon: new vscode.ThemeIcon('pinned', new vscode.ThemeColor('charts.blue')),
-        states: [], // Pinned is not state-based
-    },
     running: {
         label: 'Running',
         icon: new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green')),
-        states: ['R'],
+        states: ['R', 'CF'],
     },
     pending: {
         label: 'Pending',
@@ -83,7 +79,6 @@ export class StatusCategoryItem extends vscode.TreeItem {
 export class SlurmJobItem extends vscode.TreeItem {
     constructor(
         public readonly job: SlurmJob,
-        public readonly isPinned: boolean = false,
         isChecked: boolean = false,
     ) {
         const rowParts = getSlurmJobRowParts(job);
@@ -92,25 +87,17 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon();
-        // Use pending-specific context values so package.json can hide stdout/stderr/pin icons
+        // Use pending-specific context values so package.json can show the right inline actions
         const isMainJobArray = job.jobId.includes('[');
         const isHeld = isJobHeld(job.pendingReason);
         if (job.state === 'PD') {
             if (isMainJobArray) {
-                this.contextValue = isPinned
-                    ? (isHeld ? 'slurmJobPendingPinnedArrayHeld' : 'slurmJobPendingPinnedArray')
-                    : (isHeld ? 'slurmJobPendingArrayHeld' : 'slurmJobPendingArray');
+                this.contextValue = isHeld ? 'slurmJobPendingArrayHeld' : 'slurmJobPendingArray';
             } else {
-                this.contextValue = isPinned
-                    ? (isHeld ? 'slurmJobPendingPinnedHeld' : 'slurmJobPendingPinned')
-                    : (isHeld ? 'slurmJobPendingHeld' : 'slurmJobPending');
+                this.contextValue = isHeld ? 'slurmJobPendingHeld' : 'slurmJobPending';
             }
         } else {
-            if (isMainJobArray) {
-                this.contextValue = isPinned ? 'slurmJobPinnedArray' : 'slurmJobArray';
-            } else {
-                this.contextValue = isPinned ? 'slurmJobPinned' : 'slurmJob';
-            }
+            this.contextValue = isMainJobArray ? 'slurmJobArray' : 'slurmJob';
         }
         this.checkboxState = isChecked
             ? vscode.TreeItemCheckboxState.Checked
@@ -173,19 +160,16 @@ export class SlurmJobItem extends vscode.TreeItem {
     }
 
     private getStateIcon(): vscode.ThemeIcon {
-        // Held pending jobs take priority — show lock icon regardless of pinned state
+        // Held pending jobs take priority — show lock icon
         if (this.job.state === 'PD' && isJobHeld(this.job.pendingReason)) {
             return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange'));
-        }
-
-        // Pinned jobs get a special icon
-        if (this.isPinned) {
-            return new vscode.ThemeIcon('pinned', new vscode.ThemeColor('charts.blue'));
         }
 
         switch (this.job.state) {
             case 'R':  // Running
                 return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.green'));
+            case 'CF': // Configuring
+                return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.green'));
             case 'PD': // Pending
                 return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.yellow'));
             case 'CG': // Completing
@@ -359,16 +343,15 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private slurmService: SlurmService;
     private scriptCache?: SubmitScriptCache;
-    private pinnedCache?: PinnedJobsCache;
     private checkedJobIds?: Set<string>;
     private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
+    private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private searchFilter: string = '';
 
-    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, pinnedCache?: PinnedJobsCache, checkedJobIds?: Set<string>) {
+    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, checkedJobIds?: Set<string>) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
-        this.pinnedCache = pinnedCache;
         this.checkedJobIds = checkedJobIds;
     }
 
@@ -377,6 +360,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      */
     refresh(): void {
         this.cachedJobs = [];
+        this.cachedMaintenanceWindows = [];
         this._onDidChangeTreeData.fire();
     }
 
@@ -451,13 +435,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             // Fetch and cache jobs only if cache is empty
             if (this.cachedJobs.length === 0) {
-                this.cachedJobs = await this.slurmService.getJobs();
-
-                // Clean up stale pinned jobs
-                if (this.pinnedCache) {
-                    const activeJobIds = new Set(this.cachedJobs.map(j => j.jobId));
-                    await this.pinnedCache.cleanupStaleJobs(activeJobIds);
-                }
+                [this.cachedJobs, this.cachedMaintenanceWindows] = await Promise.all([
+                    this.slurmService.getJobs(),
+                    this.slurmService.getMaintenanceWindows(),
+                ]);
 
                 // Clean up stale checked jobs (jobs that no longer exist)
                 if (this.checkedJobIds && this.checkedJobIds.size > 0) {
@@ -492,8 +473,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 }
             }
 
+            const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
+                if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
@@ -502,6 +486,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             if (filteredJobs.length === 0 && this.searchFilter) {
                 const items: vscode.TreeItem[] = [];
+                if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
@@ -511,21 +496,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
-            // Add cluster hogs at the top
+            // Add maintenance warning and cluster hogs at the top
+            if (maintenanceItem) { categories.push(maintenanceItem); }
             if (jobHogItem) { categories.push(jobHogItem); }
             if (gpuHogItem) { categories.push(gpuHogItem); }
-
-            // Add Pinned category first if there are pinned jobs
-            if (this.pinnedCache) {
-                const pinnedJobs = filteredJobs.filter(job =>
-                    this.pinnedCache!.isPinned(job.jobId)
-                );
-                const pinnedCount = pinnedJobs.length;
-
-                if (pinnedCount > 0) {
-                    categories.push(new StatusCategoryItem('pinned', pinnedCount, pinnedJobs));
-                }
-            }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
                 const info = CATEGORIES[categoryKey];
@@ -551,26 +525,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private getCategoryChildren(category: StatusCategory): vscode.TreeItem[] {
         const filteredJobs = this.getFilteredJobs();
 
-        // Handle pinned category specially
-        if (category === 'pinned') {
-            const pinnedJobs = filteredJobs.filter(job =>
-                this.pinnedCache?.isPinned(job.jobId)
-            );
-            // Sort by job ID (descending - newest first)
-            pinnedJobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
-            return pinnedJobs.map(job => new SlurmJobItem(job, true, this.checkedJobIds?.has(job.jobId) ?? false));
-        }
-
         const info = CATEGORIES[category];
         const jobs = filteredJobs.filter(job => info.states.includes(job.state));
 
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
 
-        // Check if each job is pinned and/or checked
         return jobs.map(job => new SlurmJobItem(
             job,
-            this.pinnedCache?.isPinned(job.jobId) ?? false,
             this.checkedJobIds?.has(job.jobId) ?? false
         ));
     }

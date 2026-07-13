@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
-import { ClusterAccountOverviewEntry, SlurmService } from './slurmService';
+import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { ClusterAccountOverviewEntry, MaintenanceWindow, SlurmService } from './slurmService';
 import {
     formatClusterAccountOverviewDescription,
     formatClusterAccountOverviewTooltipMarkdown,
@@ -65,6 +66,7 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private cachedEntries: ClusterAccountOverviewEntry[] = [];
+    private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
 
@@ -72,6 +74,7 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
 
     refresh(): void {
         this.cachedEntries = [];
+        this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
         this._onDidChangeTreeData.fire();
@@ -92,12 +95,20 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                this.cachedEntries = await this.slurmService.getClusterAccountOverview();
+                [this.cachedEntries, this.cachedMaintenanceWindows] = await Promise.all([
+                    this.slurmService.getClusterAccountOverview(),
+                    this.slurmService.getMaintenanceWindows(),
+                ]);
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }
 
             const items: vscode.TreeItem[] = [];
+            const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+            if (maintenanceItem) {
+                items.push(maintenanceItem);
+            }
+
             if (this.lastRefreshedAt) {
                 items.push(new ClusterOverviewRefreshItem(this.lastRefreshedAt));
             }

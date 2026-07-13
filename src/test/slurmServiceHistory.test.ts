@@ -32,4 +32,25 @@ describe('SlurmService job history', () => {
         assert.deepEqual(jobs.map(job => job.jobId), ['126', '123']);
         assert.deepEqual(jobs.map(job => job.state), ['FAILED', 'COMPLETED']);
     });
+
+    it('resolves history paths from cache, including base ID fallback for arrays', async () => {
+        const mockCacheMap = new Map<string, any>();
+        const mockPathCache = {
+            get: (key: string) => mockCacheMap.get(key),
+            set: async (key: string, stdoutPath: string, stderrPath: string) => {
+                mockCacheMap.set(key, { stdoutPath, stderrPath, cachedAt: Date.now() });
+            },
+        } as any;
+
+        const service = new SlurmService(mockPathCache, undefined, async () => ({ stdout: '', stderr: '' }));
+
+        // Pre-populate cache with a raw path for master ID 9999
+        await mockPathCache.set('9999', 'logs/%A_%a.out', 'logs/%A_%a.err');
+
+        // Verify lookup of specific task ID 9999_3 hits the fallback to 9999 and expands placeholders
+        const paths = await service.getHistoryJobPaths('9999_3', { jobName: 'array-test', nodes: 'node01' });
+
+        assert.equal(paths.stdoutPath, 'logs/9999_3.out');
+        assert.equal(paths.stderrPath, 'logs/9999_3.err');
+    });
 });

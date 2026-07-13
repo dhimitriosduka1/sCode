@@ -61,6 +61,7 @@ export interface SlurmJob {
  */
 export enum JobState {
     RUNNING = 'R',
+    CONFIGURING = 'CF',
     PENDING = 'PD',
     COMPLETING = 'CG',
     COMPLETED = 'CD',
@@ -78,6 +79,7 @@ export enum JobState {
 export function getStateDescription(state: string): string {
     const descriptions: Record<string, string> = {
         'R': 'Running',
+        'CF': 'Configuring',
         'PD': 'Pending',
         'CG': 'Completing',
         'CD': 'Completed',
@@ -651,10 +653,25 @@ export function hasUnresolvedSlurmPathPlaceholders(filePath: string): boolean {
     return /(^|[^%])%[A-Za-z]/.test(filePath);
 }
 
+export function resolvePathWithoutPlaceholders(filePath: string, workDir: string): string {
+    if (!filePath || filePath === 'N/A') {
+        return 'N/A';
+    }
+    let resolved = normalizeSlurmPathValue(filePath);
+    if (resolved === 'N/A') {
+        return 'N/A';
+    }
+    resolved = normalizeOpenableFilePath(resolved) ?? 'N/A';
+    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '');
+    if (resolved !== 'N/A' && normalizedWorkDir && !path.isAbsolute(resolved)) {
+        resolved = path.resolve(normalizedWorkDir, resolved);
+    }
+    return resolved;
+}
+
 function shouldCacheOutputPath(filePath: string): boolean {
     return !isUnavailableSlurmPath(filePath) &&
-        !filePath.includes('PENDING_NODE') &&
-        !hasUnresolvedSlurmPathPlaceholders(filePath);
+        !filePath.includes('PENDING_NODE');
 }
 
 function shouldUseCachedOutputPaths(paths: { stdoutPath: string; stderrPath: string }): boolean {
@@ -995,6 +1012,54 @@ export interface PartitionUsageEntry {
     gpuTypes: ClusterLeaderboardGpuType[];
 }
 
+export interface PartitionUsageResult {
+    entries: PartitionUsageEntry[];
+    clusterAllocatedGpus: number;
+    clusterAvailableGpus: number;
+}
+
+/**
+ * A planned cluster maintenance/downtime window, sourced from a Slurm
+ * reservation flagged MAINT — the standard, site-agnostic mechanism admins
+ * use to announce maintenance regardless of how a given cluster is configured.
+ */
+export interface MaintenanceWindow {
+    name: string;
+    nodes: string;
+    startTime: string;
+    endTime: string;
+}
+
+/**
+ * Parses `scontrol show reservation` output and returns only the reservations
+ * flagged MAINT (ordinary user/account reservations are not maintenance).
+ */
+export function parseMaintenanceReservationOutput(stdout: string): MaintenanceWindow[] {
+    const windows: MaintenanceWindow[] = [];
+    const blocks = stdout.split(/(?=\bReservationName=)/).filter(block => block.trim());
+
+    for (const block of blocks) {
+        const flags = block.match(/\bFlags=(\S*)/)?.[1] ?? '';
+        if (!flags.split(',').includes('MAINT')) {
+            continue;
+        }
+
+        const nameMatch = block.match(/\bReservationName=(\S+)/);
+        if (!nameMatch) {
+            continue;
+        }
+
+        windows.push({
+            name: nameMatch[1],
+            nodes: block.match(/\bNodes=(\S+)/)?.[1] ?? 'N/A',
+            startTime: block.match(/\bStartTime=(\S+)/)?.[1] ?? '',
+            endTime: block.match(/\bEndTime=(\S+)/)?.[1] ?? '',
+        });
+    }
+
+    return windows;
+}
+
 function normalizeSlurmAccount(account: string): string | undefined {
     const trimmed = account.trim();
     if (!trimmed || trimmed === '(null)' || trimmed === 'N/A') {
@@ -1201,9 +1266,55 @@ export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
     return { topJobHog, topGpuHog };
 }
 
-export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: string): PartitionUsageEntry[] {
+/**
+ * Parses `scontrol show node` output and returns a map of nodeName → allocatedGpus.
+ * Uses AllocTRES (e.g. "gres/gpu=8" or "gres/gpu:h200=8") as ground truth —
+ * this captures all GPU allocations regardless of how they were requested
+ * (--gres, --gpus, --gpus-per-node, TRES bindings, etc.).
+ */
+export function parseScontrolNodeOutput(stdout: string): Map<string, number> {
+    const allocatedGpusByNode = new Map<string, number>();
+    // scontrol show node emits key=value tokens separated by whitespace / newlines.
+    // Each node block begins with NodeName=<name>.
+    // We look for AllocTRES=... to sum gres/gpu (with or without a type qualifier).
+    const nodeBlocks = stdout.split(/(?=\bNodeName=)/).filter(block => block.trim());
+    for (const block of nodeBlocks) {
+        const nodeMatch = block.match(/\bNodeName=(\S+)/);
+        if (!nodeMatch) {
+            continue;
+        }
+        const nodeName = nodeMatch[1];
+
+        const allocTresMatch = block.match(/\bAllocTRES=(\S*)/);
+        const allocTresValue = allocTresMatch?.[1] ?? '';
+        const gpuAllocations = parseGpuAllocations(allocTresValue);
+        const totalAllocated = sumGpuAllocations(gpuAllocations);
+        allocatedGpusByNode.set(nodeName, totalAllocated);
+    }
+    return allocatedGpusByNode;
+}
+
+/**
+ * Parses partition usage from:
+ *  - sinfoNodeStdout: `sinfo -N --noheader --format="%N|%P|%T|%G"` (one row per node per partition)
+ *  - scontrolStdout:  `scontrol show node` (per-node AllocTRES)
+ *  - squeueStdout:    `squeue --noheader --format="%P|%t"` (job counts only)
+ *
+ * GPU allocation is sourced from scontrol AllocTRES — the ground truth.
+ * This correctly handles:
+ *   - Jobs that allocate GPUs via --gpus, --gpus-per-node, TRES, etc. (not just --gres)
+ *   - Overlapping partitions sharing the same physical nodes (e.g. gpu / gpudev / rvs)
+ */
+export function parsePartitionUsageOutput(
+    sinfoNodeStdout: string,
+    scontrolStdout: string,
+    squeueStdout: string,
+): PartitionUsageResult {
     const entriesByPartition = new Map<string, PartitionUsageEntry>();
     const gpuTypesByPartition = new Map<string, Map<string, number>>();
+    
+    let clusterAvailableGpus = 0;
+    let clusterAllocatedGpus = 0;
 
     const getEntry = (partition: string, isDefault: boolean = false): PartitionUsageEntry => {
         const existing = entriesByPartition.get(partition);
@@ -1232,37 +1343,114 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         return entry;
     };
 
-    const sinfoLines = sinfoStdout.trim().split('\n').filter(line => line.trim());
+    // --- Phase 1: Build per-node → per-partition capacity from sinfo -N ---
+    // Track which partitions each node belongs to so we can attribute node-level
+    // GPU allocations to all of a node's partitions in phase 3.
+    const nodePartitions = new Map<string, { partition: string; isDefault: boolean }[]>();
+    const nodeGpuConfig = new Map<string, ClusterLeaderboardGpuType[]>(); // GPU config per node
+    const seenNodesForCapacity = new Set<string>();
+
+    const sinfoLines = sinfoNodeStdout.trim().split('\n').filter(line => line.trim());
     for (const line of sinfoLines) {
+        // Format: NodeName|Partition(s)|NodeState|GRES
         const parts = line.split('|');
         if (parts.length < 4) {
             continue;
         }
 
-        const partitionInfo = normalizePartitionName(parts[0]);
-        if (!partitionInfo.partition) {
+        const nodeName = parts[0].trim();
+        if (!nodeName) {
             continue;
         }
 
-        const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
-        const nodeCount = parseInt(parts[1].trim(), 10) || 0;
-        const nodeStates = parseSinfoNodeStateSummary(parts[2], nodeCount);
-        entry.allocatedNodes += nodeStates.allocatedNodes;
-        entry.idleNodes += nodeStates.idleNodes;
-        entry.otherNodes += nodeStates.otherNodes;
-        entry.totalNodes += nodeStates.totalNodes;
+        // A node can appear in multiple partitions on separate rows.
+        // parts[1] may itself be comma-separated if the node belongs to multiple partitions.
+        const partitionInfos = parsePartitionList(parts[1]);
+        if (partitionInfos.length === 0) {
+            continue;
+        }
 
+        const nodeState = parts[2].trim().toLowerCase();
         const gpuAllocations = parseGpuAllocations(parts.slice(3).join('|'));
-        const partitionGpuTypes = gpuTypesByPartition.get(entry.partition);
-        for (const allocation of gpuAllocations) {
-            const totalTypeGpus = allocation.count * nodeCount;
-            const availableTypeGpus = allocation.count * (nodeStates.allocatedNodes + nodeStates.idleNodes);
-            entry.totalGpus += totalTypeGpus;
-            entry.availableGpus += availableTypeGpus;
-            partitionGpuTypes?.set(allocation.type, (partitionGpuTypes.get(allocation.type) || 0) + totalTypeGpus);
+
+        // Determine per-node state bucket (mirrors parseSinfoNodeStateSummary logic)
+        const isAllocated = nodeState.startsWith('allocated') || nodeState.startsWith('mixed');
+        const isIdle = nodeState.startsWith('idle');
+
+        if (!seenNodesForCapacity.has(nodeName)) {
+            seenNodesForCapacity.add(nodeName);
+            if (isAllocated || isIdle) {
+                for (const allocation of gpuAllocations) {
+                    clusterAvailableGpus += allocation.count;
+                }
+            }
+        }
+
+        for (const partitionInfo of partitionInfos) {
+            const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
+            const partitionGpuTypes = gpuTypesByPartition.get(entry.partition);
+
+            // Only count each node once per partition (guard against duplicate sinfo rows)
+            const existingPartitions = nodePartitions.get(nodeName) ?? [];
+            const alreadyCounted = existingPartitions.some(p => p.partition === partitionInfo.partition);
+            if (!alreadyCounted) {
+                entry.totalNodes += 1;
+                if (isAllocated) { entry.allocatedNodes += 1; }
+                else if (isIdle) { entry.idleNodes += 1; }
+                else { entry.otherNodes += 1; }
+
+                for (const allocation of gpuAllocations) {
+                    entry.totalGpus += allocation.count;
+                    if (isAllocated || isIdle) {
+                        entry.availableGpus += allocation.count;
+                    }
+                    partitionGpuTypes?.set(
+                        allocation.type,
+                        (partitionGpuTypes.get(allocation.type) || 0) + allocation.count
+                    );
+                }
+            }
+        }
+
+        // Record partition membership and GPU config for this node (used in phase 3)
+        if (!nodePartitions.has(nodeName)) {
+            nodePartitions.set(nodeName, []);
+        }
+        for (const p of partitionInfos) {
+            const existing = nodePartitions.get(nodeName)!;
+            if (!existing.some(e => e.partition === p.partition)) {
+                existing.push(p);
+            }
+        }
+        if (gpuAllocations.length > 0 && !nodeGpuConfig.has(nodeName)) {
+            nodeGpuConfig.set(nodeName, gpuAllocations);
         }
     }
 
+    // --- Phase 2: Get ground-truth per-node GPU allocation from scontrol ---
+    const allocatedGpusByNode = parseScontrolNodeOutput(scontrolStdout);
+
+    // --- Phase 3: Attribute node-level GPU allocations to every partition the node belongs to ---
+    for (const [nodeName, allocatedGpus] of allocatedGpusByNode) {
+        if (allocatedGpus === 0) {
+            continue;
+        }
+        const partitions = nodePartitions.get(nodeName);
+        if (!partitions || partitions.length === 0) {
+            continue;
+        }
+        
+        clusterAllocatedGpus += allocatedGpus;
+
+        for (const partitionInfo of partitions) {
+            const entry = entriesByPartition.get(partitionInfo.partition);
+            if (entry) {
+                entry.allocatedGpus += allocatedGpus;
+            }
+        }
+    }
+
+    // --- Phase 4: Count running and pending jobs from squeue (no GPU counting here) ---
     const squeueLines = squeueStdout.trim().split('\n').filter(line => line.trim());
     for (const line of squeueLines) {
         const parts = line.split('|');
@@ -1271,20 +1459,14 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         }
 
         const state = parts[1].trim().toUpperCase();
-        const hasNodeColumn = parts.length >= 4;
-        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
-        const gres = parts.slice(hasNodeColumn ? 3 : 2).join('|');
         const partitionInfos = parsePartitionList(parts[0]);
         if (partitionInfos.length === 0) {
             continue;
         }
 
         if (state === 'R' || state === 'RUNNING') {
-            const partitionInfo = partitionInfos[0];
-            const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
+            const entry = getEntry(partitionInfos[0].partition, partitionInfos[0].isDefault);
             entry.runningJobs += 1;
-            const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
-            entry.allocatedGpus += sumGpuAllocations(gpuAllocations);
         } else if (state === 'PD' || state === 'PENDING') {
             for (const partitionInfo of partitionInfos) {
                 const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
@@ -1293,13 +1475,20 @@ export function parsePartitionUsageOutput(sinfoStdout: string, squeueStdout: str
         }
     }
 
+    // --- Phase 5: Derive idle GPUs ---
     for (const entry of entriesByPartition.values()) {
         entry.idleGpus = Math.max(0, entry.availableGpus - entry.allocatedGpus);
         entry.gpuTypes = formatGpuTypeEntries(gpuTypesByPartition.get(entry.partition) || new Map<string, number>());
     }
 
-    return Array.from(entriesByPartition.values())
+    const entries = Array.from(entriesByPartition.values())
         .filter(entry => entry.totalGpus > 0);
+
+    return {
+        entries,
+        clusterAllocatedGpus,
+        clusterAvailableGpus,
+    };
 }
 
 function normalizePartitionName(rawPartition: string): { partition: string; isDefault: boolean } {
@@ -1417,30 +1606,151 @@ function createMockAccountOverviewEntries(): ClusterAccountOverviewEntry[] {
     return parseClusterAccountOverviewOutput(rows.join('\n'));
 }
 
-function createMockPartitionUsageEntries(): PartitionUsageEntry[] {
-    return parsePartitionUsageOutput([
-        'h200*|6|2/3/1/6|gpu:h200:4',
-        'a100-long|8|4/3/1/8|gpu:a100:4',
-        'a100-short|6|1/5/0/6|gpu:a100:4',
-        'l40s|5|1/4/0/5|gpu:l40s:4',
-        'debug-gpu|2|0/2/0/2|gpu:a100:1',
-        'cpu|8|1/7/0/8|(null)',
-    ].join('\n'), [
-        'h200|R|gpu:h200:2',
-        'h200|R|gpu:h200:4',
-        'h200|PD|gpu:h200:1',
-        'a100-long|R|gpu:a100:8',
-        'a100-long|R|gpu:a100:8',
-        'a100-long|PD|gpu:a100:4',
-        'a100-short,h200|PD|gpu:a100:2',
-        'a100-short|R|gpu:a100:4',
-        'a100-short|PD|gpu:a100:4',
-        'l40s|R|gpu:l40s:4',
-        'l40s|PD|gpu:l40s:2',
-        'debug-gpu|PD|gpu:a100:1',
-        'cpu|R|(null)',
-        'cpu|PD|(null)',
-    ].join('\n'));
+function createMockPartitionUsageResult(): PartitionUsageResult {
+    // sinfo -N --noheader --format="%N|%P|%T|%G"
+    const sinfoNode = [
+        // h200 partition (default): 6 nodes, 2 allocated, 3 idle, 1 other
+        'gpu-h200-01|h200*|allocated|gpu:h200:4',
+        'gpu-h200-02|h200*|allocated|gpu:h200:4',
+        'gpu-h200-03|h200*|idle|gpu:h200:4',
+        'gpu-h200-04|h200*|idle|gpu:h200:4',
+        'gpu-h200-05|h200*|idle|gpu:h200:4',
+        'gpu-h200-06|h200*|drain|gpu:h200:4',
+        // a100-long: 8 nodes, 4 allocated, 3 idle, 1 other
+        'gpu-a100-01|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-02|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-03|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-04|a100-long|allocated|gpu:a100:4',
+        'gpu-a100-05|a100-long|idle|gpu:a100:4',
+        'gpu-a100-06|a100-long|idle|gpu:a100:4',
+        'gpu-a100-07|a100-long|idle|gpu:a100:4',
+        'gpu-a100-08|a100-long|drain|gpu:a100:4',
+        // a100-short: 6 nodes (shares some with a100-long), 1 allocated, 5 idle
+        'gpu-a100-01|a100-short|allocated|gpu:a100:4',
+        'gpu-a100-02|a100-short|idle|gpu:a100:4',
+        'gpu-a100-03|a100-short|idle|gpu:a100:4',
+        'gpu-a100-04|a100-short|idle|gpu:a100:4',
+        'gpu-a100-05|a100-short|idle|gpu:a100:4',
+        'gpu-a100-06|a100-short|idle|gpu:a100:4',
+        // l40s: 5 nodes, 1 allocated, 4 idle
+        'gpu-l40s-01|l40s|allocated|gpu:l40s:4',
+        'gpu-l40s-02|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-03|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-04|l40s|idle|gpu:l40s:4',
+        'gpu-l40s-05|l40s|idle|gpu:l40s:4',
+        // debug-gpu: 2 nodes, both idle
+        'gpu-debug-01|debug-gpu|idle|gpu:a100:1',
+        'gpu-debug-02|debug-gpu|idle|gpu:a100:1',
+        // cpu-only
+        'cpu-01|cpu|allocated|(null)',
+    ].join('\n');
+
+    // scontrol show node (AllocTRES ground truth)
+    const scontrolNodes = [
+        'NodeName=gpu-h200-01 Arch=x86_64 CoresPerSocket=64',
+        ' OS=Linux 5.15.0 #1 SMP',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=cpu=128,mem=1280G,gres/gpu=2,gres/gpu:h200=2',
+        'NodeName=gpu-h200-02 Arch=x86_64 CoresPerSocket=64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        'NodeName=gpu-h200-03 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-04 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-05 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-h200-06 Arch=x86_64',
+        ' CfgTRES=cpu=192,mem=2048G,gres/gpu=4,gres/gpu:h200=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-01 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-02 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-03 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        'NodeName=gpu-a100-04 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=cpu=64,mem=512G,gres/gpu=2,gres/gpu:a100=2',
+        'NodeName=gpu-a100-05 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-06 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-07 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-a100-08 Arch=x86_64',
+        ' CfgTRES=cpu=128,mem=1024G,gres/gpu=4,gres/gpu:a100=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-01 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        'NodeName=gpu-l40s-02 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-03 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-04 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-l40s-05 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G,gres/gpu=4,gres/gpu:l40s=4',
+        ' AllocTRES=',
+        'NodeName=gpu-debug-01 Arch=x86_64',
+        ' CfgTRES=cpu=32,mem=256G,gres/gpu=1,gres/gpu:a100=1',
+        ' AllocTRES=',
+        'NodeName=gpu-debug-02 Arch=x86_64',
+        ' CfgTRES=cpu=32,mem=256G,gres/gpu=1,gres/gpu:a100=1',
+        ' AllocTRES=',
+        'NodeName=cpu-01 Arch=x86_64',
+        ' CfgTRES=cpu=64,mem=512G',
+        ' AllocTRES=cpu=8,mem=32G',
+    ].join('\n');
+
+    // squeue --noheader --format="%P|%t" (job counts only)
+    const squeueJobs = [
+        'h200|R',
+        'h200|R',
+        'h200|PD',
+        'a100-long|R',
+        'a100-long|R',
+        'a100-long|PD',
+        'a100-short,h200|PD',
+        'a100-short|R',
+        'a100-short|PD',
+        'l40s|R',
+        'l40s|PD',
+        'debug-gpu|PD',
+        'cpu|R',
+        'cpu|PD',
+    ].join('\n');
+
+    return parsePartitionUsageOutput(sinfoNode, scontrolNodes, squeueJobs);
+}
+
+function createMockMaintenanceWindows(): MaintenanceWindow[] {
+    const start = new Date();
+    start.setDate(start.getDate() + 2);
+    const end = new Date(start.getTime());
+    end.setHours(end.getHours() + 6);
+
+    return [
+        {
+            name: 'monthly_maintenance',
+            nodes: 'ALL',
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+        },
+    ];
 }
 
 function slurmStateNameToCode(state: string): string {
@@ -1608,10 +1918,7 @@ export class SlurmService {
                 job.dependency = details.dependency;
 
                 // Cache the paths for later use in history
-                if (this.pathCache && shouldUseCachedOutputPaths(job)) {
-                    const cacheablePaths = sanitizeOutputPathsForCache(job);
-                    await this.pathCache.set(job.jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
-                }
+                await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
 
                 // Cache the submit script if not already cached
                 if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
@@ -1806,7 +2113,8 @@ export class SlurmService {
 
         try {
             const { stdout } = await this.runCommand(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
+                'squeue --noheader --state=R --format="%u|%a|%D|%b"',
+                { maxBuffer: 32 * 1024 * 1024 }
             );
 
             return parseClusterAccountOverviewOutput(stdout);
@@ -1820,20 +2128,72 @@ export class SlurmService {
      * Get partition usage across the cluster.
      * Combines sinfo capacity/node state data with squeue job pressure.
      */
-    async getPartitionUsage(): Promise<PartitionUsageEntry[]> {
+    async getPartitionUsage(): Promise<PartitionUsageResult> {
         if (this.isMockMode()) {
-            return createMockPartitionUsageEntries();
+            return createMockPartitionUsageResult();
         }
 
         try {
-            const [sinfoResult, squeueResult] = await this.runCommandBatch([
-                'sinfo --noheader --format="%P|%D|%F|%G"',
-                'squeue --noheader --format="%P|%t|%D|%b" 2>/dev/null'
-            ]);
+            // Per-node sinfo: NodeName, Partition(s), NodeState, GRES config.
+            // Using -N (node-centric) so we can map each node to its partition(s)
+            // and later attribute scontrol GPU allocations correctly — including
+            // for overlapping partitions that share the same physical nodes.
+            const { stdout: sinfoNodeStdout } = await this.runCommand(
+                'sinfo -N --noheader --format="%N|%P|%T|%G"',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
 
-            return parsePartitionUsageOutput(sinfoResult.stdout, squeueResult.stdout);
+            // Ground-truth GPU allocation from scontrol: reads AllocTRES per node,
+            // capturing all allocations regardless of how GPUs were requested.
+            let scontrolStdout = '';
+            try {
+                const scontrolResult = await this.runCommand('scontrol show node 2>/dev/null', { maxBuffer: 32 * 1024 * 1024 });
+                scontrolStdout = scontrolResult.stdout;
+            } catch {
+                // Fall back gracefully — allocatedGpus will be 0 if scontrol fails.
+            }
+
+            // squeue for running/pending job counts only (no GPU accounting here).
+            let squeueStdout = '';
+            try {
+                const squeueResult = await this.runCommand(
+                    'squeue --noheader --format="%P|%T" 2>/dev/null',
+                    { maxBuffer: 32 * 1024 * 1024 }
+                );
+                squeueStdout = squeueResult.stdout;
+            } catch {
+                // Capacity information is still useful when queue pressure cannot be fetched.
+            }
+
+            return parsePartitionUsageOutput(sinfoNodeStdout, scontrolStdout, squeueStdout);
         } catch (error) {
             console.error('Failed to get partition usage:', error);
+            return {
+                entries: [],
+                clusterAllocatedGpus: 0,
+                clusterAvailableGpus: 0,
+            };
+        }
+    }
+
+    /**
+     * Get upcoming/active cluster maintenance windows, sourced from Slurm
+     * reservations flagged MAINT. Works on any Slurm cluster that announces
+     * downtime this way, regardless of site-specific conventions.
+     */
+    async getMaintenanceWindows(): Promise<MaintenanceWindow[]> {
+        if (this.isMockMode()) {
+            return createMockMaintenanceWindows();
+        }
+
+        try {
+            const { stdout } = await execAsync(
+                'scontrol show reservation 2>/dev/null',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
+            return parseMaintenanceReservationOutput(stdout);
+        } catch {
+            // No reservations is the common case (non-zero exit / empty output) — not an error.
             return [];
         }
     }
@@ -1854,7 +2214,7 @@ export class SlurmService {
         nodeStates: string;
     } | null> {
         if (this.isMockMode()) {
-            const entry = createMockPartitionUsageEntries().find(candidate => candidate.partition === partition);
+            const entry = createMockPartitionUsageResult().entries.find(candidate => candidate.partition === partition);
             const nodesUp = entry ? entry.allocatedNodes + entry.idleNodes : 0;
 
             return {
@@ -2174,6 +2534,12 @@ export class SlurmService {
             const match = stdout.match(/Submitted batch job (\d+)/);
             if (match) {
                 const jobId = match[1];
+
+                // Pre-cache the paths immediately after submission
+                this.preCacheJobPaths(jobId).catch(err => {
+                    console.error(`Failed to pre-cache paths for job ${jobId}:`, err);
+                });
+
                 return {
                     success: true,
                     jobId,
@@ -2277,6 +2643,47 @@ export class SlurmService {
     }
 
     /**
+     * Cache stdout and stderr paths in their raw absolute formats
+     */
+    private async cacheJobPaths(jobId: string, stdoutPath: string, stderrPath: string, workDir: string): Promise<void> {
+        if (!this.pathCache) {
+            return;
+        }
+
+        const rawStdout = resolvePathWithoutPlaceholders(stdoutPath, workDir);
+        const rawStderr = resolvePathWithoutPlaceholders(stderrPath, workDir);
+        const rawPaths = { stdoutPath: rawStdout, stderrPath: rawStderr };
+
+        if (shouldUseCachedOutputPaths(rawPaths)) {
+            const cacheablePaths = sanitizeOutputPathsForCache(rawPaths);
+            await this.pathCache.set(jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+
+            // Also cache under the base ID if different (e.g. array base ID)
+            const cleanId = cleanJobIdForScontrol(jobId);
+            if (cleanId !== jobId) {
+                await this.pathCache.set(cleanId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+            }
+        }
+    }
+
+    /**
+     * Query details from scontrol and pre-cache them immediately
+     */
+    private async preCacheJobPaths(jobId: string): Promise<void> {
+        if (this.isMockMode()) {
+            return;
+        }
+
+        try {
+            const { stdout } = await execAsync(`scontrol show job ${jobId} 2>/dev/null`);
+            const details = parseJobDetailsOutput(stdout);
+            await this.cacheJobPaths(jobId, details.stdoutPath, details.stderrPath, details.workDir);
+        } catch (error) {
+            console.error(`Failed to pre-cache paths for job ${jobId}:`, error);
+        }
+    }
+
+    /**
      * Get stdout and stderr paths for a historical job
      * Tries: 1) local cache, 2) scontrol, 3) returns N/A
      */
@@ -2297,7 +2704,13 @@ export class SlurmService {
 
         // First, check the local cache
         if (this.pathCache) {
-            const cached = this.pathCache.get(jobId);
+            let cached = this.pathCache.get(jobId);
+            if (!cached) {
+                const baseId = extractBaseJobId(jobId);
+                if (baseId !== jobId) {
+                    cached = this.pathCache.get(baseId);
+                }
+            }
             if (cached && shouldUseCachedOutputPaths(cached)) {
                 return sanitizeOutputPathsForCache({
                     stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes, undefined, this.remoteUsername, this.remoteHomeDir),
@@ -2310,20 +2723,14 @@ export class SlurmService {
         try {
             const { stdout } = await this.runCommand(`scontrol show job ${jobId} 2>/dev/null`);
             const details = parseJobDetailsOutput(stdout);
-            const paths = {
+
+            // Cache these raw paths for future use
+            await this.cacheJobPaths(jobId, details.stdoutPath, details.stderrPath, details.workDir);
+
+            return sanitizeOutputPathsForCache({
                 stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir, this.remoteUsername, this.remoteHomeDir),
                 stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir, this.remoteUsername, this.remoteHomeDir),
-            };
-
-            const cacheablePaths = sanitizeOutputPathsForCache(paths);
-            if (shouldUseCachedOutputPaths(cacheablePaths)) {
-                // Cache these for future use
-                if (this.pathCache) {
-                    await this.pathCache.set(jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
-                }
-
-                return cacheablePaths;
-            }
+            });
         } catch {
             // scontrol failed, job may be too old
         }
@@ -2540,7 +2947,47 @@ export class SlurmService {
             return { success: false, message: `Failed to release all held jobs: ${errorMessage}` };
         }
     }
+
+    /**
+     * Update (or clear) the dependency of a pending SLURM job using scontrol
+     * @param jobId The job ID to update
+     * @param dependency The dependency string (e.g., 'afterok:12345'), or empty string to clear
+     * @returns Object with success status and message
+     */
+    async updateJobDependency(jobId: string, dependency: string): Promise<{ success: boolean; message: string }> {
+        const cleanId = cleanJobIdForScontrol(jobId);
+        const depValue = dependency || 'none';
+
+        if (this.isMockMode()) {
+            const job = this.getMutableMockJobs().find(j => j.jobId === jobId || j.jobId.startsWith(`${cleanId}_`));
+            if (!job) {
+                return { success: false, message: `Job ${jobId} not found in mock jobs.` };
+            }
+            if (dependency) {
+                job.dependency = dependency;
+                job.pendingReason = 'Dependency';
+                return { success: true, message: `Dependency for job ${cleanId} set to "${dependency}" (Mock)` };
+            } else {
+                job.dependency = undefined;
+                job.pendingReason = 'Priority';
+                return { success: true, message: `Dependency for job ${cleanId} cleared (Mock)` };
+            }
+        }
+
+        try {
+            await execAsync(`scontrol update jobid=${cleanId} Dependency=${depValue}`);
+            return { success: true, message: dependency
+                ? `Dependency for job ${cleanId} set to "${dependency}" successfully.`
+                : `Dependency for job ${cleanId} cleared successfully.`
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to update dependency for job ${cleanId}:`, error);
+            return { success: false, message: `Failed to update dependency: ${errorMessage}` };
+        }
+    }
 }
+
 
 /**
  * Represents a completed SLURM job from sacct

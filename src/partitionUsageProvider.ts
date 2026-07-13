@@ -1,14 +1,18 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
-import { PartitionUsageEntry, SlurmService } from './slurmService';
+import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { MaintenanceWindow, PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import {
     formatPartitionUsageDescription,
+    formatPartitionUsageGpuBreakdown,
+    formatPartitionUsageNodeBreakdown,
     formatPartitionUsageSummary,
     formatPartitionUsageTooltipMarkdown,
     formatPartitionUsageTrailingDescription,
     getPartitionUsageLabel,
     sortPartitionUsageEntries,
 } from './partitionUsageRanking';
+import { formatLeaderboardGpuTypeLabel } from './leaderboardRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 class PartitionUsageRefreshItem extends vscode.TreeItem {
@@ -24,26 +28,38 @@ class PartitionUsageRefreshItem extends vscode.TreeItem {
 }
 
 class PartitionUsageSummaryItem extends vscode.TreeItem {
-    constructor(entries: PartitionUsageEntry[]) {
+    constructor(result: PartitionUsageResult) {
         super('GPU partitions', vscode.TreeItemCollapsibleState.None);
-        this.description = formatPartitionUsageSummary(entries);
+        this.description = formatPartitionUsageSummary(result);
         this.iconPath = new vscode.ThemeIcon('server-environment');
         this.contextValue = 'partitionUsageSummary';
         this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
             title: 'GPU Partition Usage',
-            summary: formatPartitionUsageSummary(entries),
+            summary: formatPartitionUsageSummary(result),
             note: 'Rows are sorted from least used to most used by allocated GPU share, with pending jobs used as a tie-breaker.',
         }));
     }
 }
 
 class PartitionUsageItem extends vscode.TreeItem {
+    readonly entry: PartitionUsageEntry;
+
     constructor(entry: PartitionUsageEntry, rank: number) {
-        super(getPartitionUsageLabel(entry, rank), vscode.TreeItemCollapsibleState.None);
+        super(getPartitionUsageLabel(entry, rank), vscode.TreeItemCollapsibleState.Collapsed);
+        this.entry = entry;
         this.description = `${formatPartitionUsageDescription(entry)} · ${formatPartitionUsageTrailingDescription(entry)}`;
         this.iconPath = getPartitionUsageIcon(entry);
         this.contextValue = 'partitionUsageEntry';
         this.tooltip = new vscode.MarkdownString(formatPartitionUsageTooltipMarkdown(entry));
+    }
+}
+
+class PartitionUsageDetailItem extends vscode.TreeItem {
+    constructor(label: string, description: string, icon: string, iconColor?: string) {
+        super(label, vscode.TreeItemCollapsibleState.None);
+        this.description = description;
+        this.iconPath = new vscode.ThemeIcon(icon, iconColor ? new vscode.ThemeColor(iconColor) : undefined);
+        this.contextValue = 'partitionUsageDetail';
     }
 }
 
@@ -62,6 +78,38 @@ function getPartitionUsageIcon(entry: PartitionUsageEntry): vscode.ThemeIcon {
     return new vscode.ThemeIcon('server', new vscode.ThemeColor('charts.blue'));
 }
 
+function getPartitionDetailChildren(entry: PartitionUsageEntry): vscode.TreeItem[] {
+    const children: vscode.TreeItem[] = [];
+
+    children.push(new PartitionUsageDetailItem(
+        'GPUs',
+        formatPartitionUsageGpuBreakdown(entry),
+        'chip',
+    ));
+
+    children.push(new PartitionUsageDetailItem(
+        'Nodes',
+        formatPartitionUsageNodeBreakdown(entry),
+        'server',
+    ));
+
+    if (entry.gpuTypes.length > 0) {
+        children.push(new PartitionUsageDetailItem(
+            'GPU types',
+            formatLeaderboardGpuTypeLabel(entry.gpuTypes),
+            'tag',
+        ));
+    }
+
+    children.push(new PartitionUsageDetailItem(
+        'Jobs',
+        `${entry.runningJobs} running, ${entry.pendingJobs} pending`,
+        'play-circle',
+    ));
+
+    return children;
+}
+
 /**
  * TreeDataProvider for partition-level cluster usage.
  * Fetches once until manual refresh, matching the overview views.
@@ -70,14 +118,16 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    private cachedEntries: PartitionUsageEntry[] = [];
+    private cachedResult: PartitionUsageResult | undefined;
+    private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
 
     constructor(private readonly slurmService: SlurmService) {}
 
     refresh(): void {
-        this.cachedEntries = [];
+        this.cachedResult = undefined;
+        this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
         this._onDidChangeTreeData.fire();
@@ -88,6 +138,10 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
+        if (element instanceof PartitionUsageItem) {
+            return getPartitionDetailChildren(element.entry);
+        }
+
         if (element) {
             return [];
         }
@@ -98,23 +152,31 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                this.cachedEntries = await this.slurmService.getPartitionUsage();
+                [this.cachedResult, this.cachedMaintenanceWindows] = await Promise.all([
+                    this.slurmService.getPartitionUsage(),
+                    this.slurmService.getMaintenanceWindows(),
+                ]);
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }
 
             const items: vscode.TreeItem[] = [];
+            const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+            if (maintenanceItem) {
+                items.push(maintenanceItem);
+            }
+
             if (this.lastRefreshedAt) {
                 items.push(new PartitionUsageRefreshItem(this.lastRefreshedAt));
             }
 
-            const entries = sortPartitionUsageEntries(this.cachedEntries);
+            const entries = sortPartitionUsageEntries(this.cachedResult!.entries);
             if (entries.length === 0) {
                 items.push(new PartitionUsageMessageItem('No GPU partition usage data available', 'info'));
                 return items;
             }
 
-            items.push(new PartitionUsageSummaryItem(entries));
+            items.push(new PartitionUsageSummaryItem(this.cachedResult!));
             items.push(...entries.map((entry, index) => new PartitionUsageItem(entry, index + 1)));
 
             return items;
