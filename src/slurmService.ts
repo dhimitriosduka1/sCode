@@ -2863,7 +2863,7 @@ export class SlurmService {
      */
     async updateJobDependency(jobId: string, dependency: string): Promise<{ success: boolean; message: string }> {
         const cleanId = cleanJobIdForScontrol(jobId);
-        const depValue = dependency || 'none';
+        const depValue = dependency;
 
         if (this.isMockMode()) {
             const job = this.getMutableMockJobs().find(j => j.jobId === jobId || j.jobId.startsWith(`${cleanId}_`));
