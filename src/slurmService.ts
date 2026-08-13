@@ -1771,6 +1771,7 @@ export class SlurmService {
     private commandRunner: SlurmCommandRunner;
     private mockModeProvider: SlurmMockModeProvider;
     private mockJobs?: SlurmJob[];
+    private availabilityProbe?: Promise<boolean>;
 
     constructor(
         pathCache?: JobPathCache,
@@ -1933,12 +1934,15 @@ export class SlurmService {
             return true;
         }
 
-        try {
-            await execAsync('which squeue');
-            return true;
-        } catch {
-            return false;
+        // Whether squeue is on PATH cannot change within a session, and this is called
+        // on every tree render, so probe once and reuse the answer.
+        if (this.availabilityProbe === undefined) {
+            this.availabilityProbe = execAsync('which squeue')
+                .then(() => true)
+                .catch(() => false);
         }
+
+        return this.availabilityProbe;
     }
 
     /**
