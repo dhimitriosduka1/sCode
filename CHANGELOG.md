@@ -2,7 +2,7 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
-## [Unreleased]
+## [1.6.0] - 2026-08-13
 
 ### Added
 - **Cluster Maintenance Warnings**: Active Jobs, GPU Partition Usage, and Cluster Overview now surface a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress, showing a countdown ("Cluster maintenance starts in 2d") or an in-progress notice, with reservation name/nodes/start/end in the tooltip. Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime this way.

@@ -2,7 +2,7 @@
 
 **Manage, monitor, and submit SLURM jobs directly from VS Code.**
 
-SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, compare GPU usage, and take common actions (cancel/pin/submit) without context-switching to a terminal.
+SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, compare GPU usage, and take common actions (cancel/submit) without context-switching to a terminal.
 
 ![Extension Icon](icon.png)
 
@@ -15,9 +15,10 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **GPU Partition Usage** so you can compare partitions before submitting
 - **Cluster Overview** showing which Slurm accounts are using the most GPUs
 - **GPU stats** via `nvidia-smi` (when available)
-- **One-click actions**: cancel, cancel pending jobs, batch cancel, pin
+- **One-click actions**: cancel, cancel pending jobs, batch cancel
 - **Job History** grouped by date with configurable lookback range
 - **Instant log access** for `stdout` / `stderr`
+- **Cluster maintenance warnings** ahead of scheduled downtime
 
 ![SLURM Cluster Manager sidebar overview](screenshots/full_sidebar_overview.png)
 
@@ -30,9 +31,8 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Time Awareness**: Smart progress bars show elapsed vs. requested wall time.
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
-- **One-Click Actions**: Cancel or pin jobs directly from the UI.
+- **One-Click Actions**: Cancel jobs directly from the UI.
 - **Hold and Release**: Freeze pending jobs (`$(lock)`) to hold them, or unfreeze (`$(unlock)`) to release them back to the queue. Supports bulk hold and release on the `"Pending"` category header.
-- **Pin Pending Jobs**: Pin pending jobs to keep them visible at the top of the tree view, consistent with running jobs.
 - **Held Job Visual Indicator**: Held pending jobs display a distinct lock icon (orange) in the tree view to make their status immediately visible.
 - **Cancel All Running Jobs**: Cancel all running jobs at once via the bin icon (`$(trash)`) on the `"Running"` category header row.
 - **Copy Job ID**: Copy the master base Job ID (excluding array ranges/indices) to the clipboard using the inline/context-menu `$(copy)` action.
@@ -40,6 +40,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
 - **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show human-readable pending reasons, estimated start time, and dependency indicators (🔗).
 - **Job Dependencies**: View dependency info (e.g., `afterok:12345`) in the expanded job details.
+- **Update Dependencies**: Change a pending job's dependency in place via the link icon (`$(link)`) — pick a target from your active jobs, enter a custom Job ID, or clear the dependency entirely. The job itself is excluded from the picker to prevent self-dependency.
 
 ![Active SLURM jobs with progress, pending reasons, and expanded job details](screenshots/active_jobs.png)
 
@@ -54,7 +55,7 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
   - List: `1,3,5,7` (non-contiguous jobs)
 - **Bounds validation**: Automatically validates against actual array range
 - **Safety warnings**: Extra confirmation when cancelling >100 jobs
-- **Array Throttle Modification**: Update the concurrent task limit (`ArrayTaskThrottle`) of active/pending job arrays via the hashtag icon (`$(hash)`) on hover.
+- **Array Throttle Modification**: Update the concurrent task limit (`ArrayTaskThrottle`) of active/pending job arrays via the number icon (`$(symbol-number)`) on hover.
 
 > **Note:** Array-level cancel options only appear for pending jobs. Running array tasks are cancelled directly like any individual job.
 
@@ -75,10 +76,17 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 - **Available vs. Total GPUs**: Rows distinguish available GPUs from total GPUs so down/draining nodes do not make a partition look more usable than it is.
 - **Queue Pressure**: Running and pending job counts are shown per GPU partition, including pending jobs that target multiple partitions.
 - **GPU Type Breakdown**: Hover a partition row to see GPU types and capacity, such as `a100`, `h200`, or generic GPUs.
+- **Expandable Rows**: Expand a partition row to see its GPU counts, node counts, GPU types, and job counts as child rows.
 - **Manual refresh only**: The view fetches data when opened or manually refreshed, avoiding background load on the Slurm controller.
 
+### Cluster Maintenance Warnings
+- **Downtime Heads-Up**: Active Jobs, GPU Partition Usage, and Cluster Overview show a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress.
+- **Countdown**: The row counts down to the start ("Cluster maintenance starts in 2d") or notes that maintenance is currently running.
+- **Reservation Details**: Hover the row for the reservation name, affected nodes, and start/end times.
+- **Works Anywhere**: Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime that way.
+
 ### Workflow Integrations
-- **Pinning**: Keep critical long-running jobs visible even while filtering or sorting.
+- **Automatic Activation**: The extension starts with VS Code, so the status bar and auto-refresh come up without opening the sidebar first.
 - **Search & Filter**: Quickly find jobs by name.
 - **Cluster Hog Indicators**: Two fun indicators at the top of your job list:
   - **Job Hog**: The user with the most running jobs (🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom)
@@ -126,9 +134,12 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 | `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
 | `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
+| `openLogFileInPreview` | `true` | Open stdout/stderr logs in preview mode (reuses one tab). Set to `false` for permanent tabs |
 | `mockMode` | `false` | Enable local mock data for development and testing without requiring Slurm |
 
 > Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
+
+> Note: Auto-refresh pauses while the VS Code window is in the background and resumes when you return, so it never polls the cluster while you're away.
 
 ---
 
