@@ -90,7 +90,7 @@ console.log(`Total:          ${total}`);
 
 const badge = {
     schemaVersion: 1,
-    label: 'downloads',
+    label: 'Downloads',
     message: formatCount(total),
     color: 'blue',
 };
