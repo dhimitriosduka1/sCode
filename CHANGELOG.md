@@ -6,6 +6,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ### Added
 - **Cluster Maintenance Warnings**: Active Jobs, GPU Partition Usage, and Cluster Overview now surface a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress, showing a countdown ("Cluster maintenance starts in 2d") or an in-progress notice, with reservation name/nodes/start/end in the tooltip. Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime this way.
+- **Expandable GPU Partition Rows**: Each row in GPU Partition Usage is now collapsible, revealing GPU counts, node counts, GPU types, and job counts as child rows. The breakdown text is shared with the row tooltip so both stay in sync.
 - **Job History Path Caching Tests**: Added unit test suites verifying path resolution, placeholder retention, and array task base ID fallback lookups.
 - **Automatic Extension Activation**: Configured the extension to activate automatically on VS Code startup (`onStartupFinished`), enabling background features (status bar, auto-refresh, notification polling) to start immediately without requiring manual interaction.
 - **Log Preview Customization**: Introduced the `slurmClusterManager.openLogFileInPreview` configuration setting, allowing users to choose whether to open stdout/stderr log files in VS Code's preview mode (reuses the same tab) or as permanent editor tabs.
@@ -21,6 +22,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **GPU Partition Double-Counting**: Fixed the cluster-wide summary row in GPU Partition Usage inflating total GPU counts when overlapping partitions shared the same physical nodes. Cluster-wide totals are now derived from unique nodes rather than summed per-partition.
 - **Large Cluster Buffer Overflow**: Fixed `scontrol`/`sinfo`/`squeue` commands silently failing (reporting 0 allocated GPUs) on large clusters (1500+ nodes) by increasing the exec buffer to 32MB for all cluster-wide commands.
 - **Job History Log Path Resolution**: Fixed a bug where stdout/stderr paths occasionally disappeared or showed as 'N/A' in the Job History view for jobs that completed quickly or when auto-refresh was disabled. Resolved this by (1) pre-caching job paths immediately upon submission, (2) caching paths in their raw placeholder format instead of fully expanded formats (allowing node-name `%N` and task-ID `%a` to be resolved dynamically on history lookup), and (3) adding base job ID fallbacks for array task lookups in the cache.
+- **Clearing Job Dependencies**: Fixed "Clear Dependency" failing to remove a pending job's dependency. The update was sent as `scontrol update Dependency=none`, which Slurm treats as a literal dependency type rather than a reset; it now sends an empty `Dependency=`.
 - **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
 
 ## [1.5.0] - 2026-06-27
