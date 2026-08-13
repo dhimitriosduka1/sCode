@@ -37,15 +37,20 @@ async function getMarketplaceDownloads() {
         throw new Error('Extension not found on the VS Marketplace');
     }
 
-    const statistic = extension.statistics?.find(s => s.statisticName === 'install');
+    // `downloadCount` is the cumulative number of package downloads since the
+    // extension was first published. Note it differs from `install` (unique
+    // installs, which ignores re-downloads) and from `install + updateCount`.
+    const statistic = extension.statistics?.find(s => s.statisticName === 'downloadCount');
     if (!statistic) {
-        throw new Error('No install statistic returned by the VS Marketplace');
+        throw new Error('No downloadCount statistic returned by the VS Marketplace');
     }
 
     return Math.round(statistic.value);
 }
 
 async function getOpenVsxDownloads() {
+    // Open VSX reports the same extension-wide total on every version endpoint,
+    // so this is already the cumulative count across all published versions.
     const response = await fetch(`https://open-vsx.org/api/${PUBLISHER}/${EXTENSION}/latest`);
 
     if (!response.ok) {
@@ -64,10 +69,11 @@ function formatCount(total) {
     if (total >= 1_000_000) {
         return `${(total / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
     }
-    if (total >= 1_000) {
-        return `${(total / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+    // Exact up to 100k, where the digits are still readable at badge size
+    if (total >= 100_000) {
+        return `${(total / 1_000).toFixed(0)}k`;
     }
-    return String(total);
+    return total.toLocaleString('en-US');
 }
 
 const outputPath = process.argv[2];
