@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .claude/**
+.github/**
 scratch/**
 src/**
 out/test/**

@@ -4,10 +4,9 @@
 
 [![CI](https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml)
 [![Visual Studio Marketplace Version](https://vsmarketplacebadges.dev/version/DhimitriosDuka.slurm-cluster-manager.svg)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager)
-[![Installs](https://vsmarketplacebadges.dev/installs/DhimitriosDuka.slurm-cluster-manager.svg)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager)
-[![Rating](https://vsmarketplacebadges.dev/rating/DhimitriosDuka.slurm-cluster-manager.svg)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager&ssr=false#review-details)
 [![Open VSX Version](https://img.shields.io/open-vsx/v/DhimitriosDuka/slurm-cluster-manager?label=open%20vsx)](https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager)
-[![Open VSX Downloads](https://img.shields.io/open-vsx/dt/DhimitriosDuka/slurm-cluster-manager?label=open%20vsx%20downloads)](https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdhimitriosduka1%2FsCode%2Fbadges%2Fdownloads.json)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager)
+[![Rating](https://vsmarketplacebadges.dev/rating/DhimitriosDuka.slurm-cluster-manager.svg)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager&ssr=false#review-details)
 [![License: MIT](https://img.shields.io/github/license/dhimitriosduka1/sCode)](LICENSE)
 
 SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, compare GPU usage, and take common actions (cancel/submit) without context-switching to a terminal.

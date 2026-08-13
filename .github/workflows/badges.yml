@@ -1,0 +1,58 @@
+name: Update download badge
+
+on:
+  schedule:
+    # Daily at 04:17 UTC (off the hour to avoid GitHub's scheduling peak)
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-download-badge
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update badge
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Compute total downloads
+        run: node .github/scripts/update-download-badge.mjs "$RUNNER_TEMP/downloads.json"
+
+      # The badge JSON lives on an orphan `badges` branch so these daily commits
+      # stay out of main's history and never trigger the CI workflow.
+      - name: Publish to the badges branch
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch origin badges
+            git checkout -B badges origin/badges
+          else
+            git checkout --orphan badges
+            git rm -rf . >/dev/null
+          fi
+
+          cp "$RUNNER_TEMP/downloads.json" downloads.json
+          git add downloads.json
+
+          if git diff --staged --quiet; then
+            echo 'Download count unchanged, nothing to publish.'
+          else
+            git commit -m 'chore: update total download count'
+            git push origin badges
+          fi
