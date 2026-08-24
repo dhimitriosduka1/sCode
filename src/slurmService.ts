@@ -2,8 +2,10 @@ import { exec, ExecOptions } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import { JobPathCache } from './jobPathCache';
-import { SubmitScriptCache } from './submitScriptCache';
+import { CachedSubmitScript, SubmitScriptCache } from './submitScriptCache';
+import { isUsableResubmitPath, ResubmitCandidate } from './resubmit';
 
 const execAsync = promisify(exec);
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
@@ -891,6 +893,34 @@ function createMockJobs(): SlurmJob[] {
     ];
 }
 
+/**
+ * Submit scripts for the mock history jobs.
+ *
+ * sacct never reports a job's script, so history jobs carry no submit script of
+ * their own. These entries exist purely so the resubmit flow can be exercised
+ * in mock mode without a cluster.
+ */
+function createMockHistoryScripts(): Record<string, { submitScript: string; workDir: string }> {
+    return {
+        '90990': {
+            submitScript: '/work/vision_lab/slurm/finished-training.sbatch',
+            workDir: '/work/vision_lab/runs/finished-training',
+        },
+        '90991': {
+            submitScript: '/work/data_lab/slurm/failed-preprocess.sbatch',
+            workDir: '/work/data_lab',
+        },
+        '90992': {
+            submitScript: '/work/atlas_lab/slurm/ablation-grid.sbatch',
+            workDir: '/work/atlas_lab/runs/ablation-grid',
+        },
+        '90993': {
+            submitScript: '/work/proto_lab/slurm/interactive-probe.sbatch',
+            workDir: '/work/proto_lab',
+        },
+    };
+}
+
 function createMockHistoryJobs(): HistoryJob[] {
     return [
         {
@@ -1763,6 +1793,38 @@ function slurmStateNameToCode(state: string): string {
 }
 
 /**
+ * Check whether a path points at a readable file.
+ */
+function fileExists(filePath: string | undefined): boolean {
+    if (!filePath) {
+        return false;
+    }
+    try {
+        return fs.statSync(filePath).isFile();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Compare two scripts byte for byte.
+ *
+ * Unreadable files count as different so the user is asked which copy to use
+ * rather than silently resubmitting the wrong one.
+ */
+async function filesDiffer(left: string, right: string): Promise<boolean> {
+    try {
+        const [leftContent, rightContent] = await Promise.all([
+            fs.promises.readFile(left),
+            fs.promises.readFile(right),
+        ]);
+        return !leftContent.equals(rightContent);
+    } catch {
+        return true;
+    }
+}
+
+/**
  * Service for interacting with SLURM cluster
  */
 export class SlurmService {
@@ -1905,13 +1967,13 @@ export class SlurmService {
     async getJobDetails(jobId: string): Promise<JobDetails & { gpuCount?: number; gpuType?: string; memory?: string; dependency?: string }> {
         const cleanedId = cleanJobIdForScontrol(jobId);
         try {
-            const { stdout } = await execAsync(`scontrol show job ${cleanedId}`);
+            const { stdout } = await this.commandRunner(`scontrol show job ${cleanedId}`);
             return parseJobDetailsOutput(stdout);
         } catch {
             const baseId = extractBaseJobId(jobId);
             if (baseId !== cleanedId) {
                 try {
-                    const { stdout } = await execAsync(`scontrol show job ${baseId}`);
+                    const { stdout } = await this.commandRunner(`scontrol show job ${baseId}`);
                     return parseJobDetailsOutput(stdout);
                 } catch {
                     // fall through
@@ -2451,6 +2513,17 @@ export class SlurmService {
                     console.error(`Failed to pre-cache paths for job ${jobId}:`, err);
                 });
 
+                // Snapshot the script now rather than waiting for the next
+                // detail fetch, so a job that finishes between refreshes can
+                // still be resubmitted.
+                if (this.scriptCache) {
+                    try {
+                        await this.scriptCache.cacheScript(jobId, scriptPath);
+                    } catch (err) {
+                        console.error(`Failed to cache submit script for job ${jobId}:`, err);
+                    }
+                }
+
                 return {
                     success: true,
                     jobId,
@@ -2471,6 +2544,87 @@ export class SlurmService {
                 message: `Failed to submit job: ${errorMessage}`
             };
         }
+    }
+
+    /**
+     * Find the submit scripts available for resubmitting a job.
+     *
+     * Looks for the snapshot taken at submission time first, since that is the
+     * only copy that survives the original file being edited or deleted, then
+     * for the file still sitting at the path the job was submitted from.
+     *
+     * @param jobId The job to resubmit (array tasks fall back to the base job)
+     * @param workDir Working directory already known for the job, if any
+     */
+    async getResubmitCandidate(jobId: string, workDir?: string): Promise<ResubmitCandidate> {
+        if (this.isMockMode()) {
+            const baseId = extractBaseJobId(jobId);
+            const mockJob = this.getMutableMockJobs().find(
+                job => job.jobId === jobId || extractBaseJobId(job.jobId) === baseId
+            );
+
+            if (mockJob) {
+                return { currentPath: mockJob.submitScript, workDir: mockJob.workDir };
+            }
+
+            const mockHistoryScript = createMockHistoryScripts()[baseId];
+            if (mockHistoryScript) {
+                return {
+                    currentPath: mockHistoryScript.submitScript,
+                    workDir: mockHistoryScript.workDir,
+                };
+            }
+
+            return {};
+        }
+
+        const cached = this.getCachedSubmitScript(jobId);
+
+        const snapshotPath = cached && fileExists(cached.cachedPath) ? cached.cachedPath : undefined;
+        let currentPath = cached && fileExists(cached.originalPath) ? cached.originalPath : undefined;
+        let resolvedWorkDir = isUsableResubmitPath(workDir) ? workDir : undefined;
+
+        // Jobs still known to the controller can report their script directly,
+        // which covers jobs this extension never saw submitted.
+        if (!currentPath || !resolvedWorkDir) {
+            const details = await this.getJobDetails(jobId);
+            if (!currentPath && isUsableResubmitPath(details.submitScript) && fileExists(details.submitScript)) {
+                currentPath = details.submitScript;
+            }
+            if (!resolvedWorkDir && isUsableResubmitPath(details.workDir)) {
+                resolvedWorkDir = details.workDir;
+            }
+        }
+
+        const candidate: ResubmitCandidate = {
+            snapshotPath,
+            currentPath,
+            workDir: resolvedWorkDir,
+        };
+
+        if (snapshotPath && currentPath) {
+            candidate.changed = await filesDiffer(snapshotPath, currentPath);
+        }
+
+        return candidate;
+    }
+
+    /**
+     * Look up a job's cached submit script, falling back to the base job ID so
+     * array tasks find the entry stored for the array itself.
+     */
+    private getCachedSubmitScript(jobId: string): CachedSubmitScript | undefined {
+        if (!this.scriptCache) {
+            return undefined;
+        }
+
+        const direct = this.scriptCache.get(jobId);
+        if (direct) {
+            return direct;
+        }
+
+        const baseId = extractBaseJobId(jobId);
+        return baseId !== jobId ? this.scriptCache.get(baseId) : undefined;
     }
 
     /**

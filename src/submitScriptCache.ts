@@ -18,7 +18,8 @@ export interface CachedSubmitScript {
 export class SubmitScriptCache {
     private static readonly CACHE_KEY = 'slurmSubmitScriptCache';
     private static readonly CACHE_DIR = 'submit-scripts';
-    private static readonly MAX_AGE_DAYS = 30; // Clean up entries older than this
+    /** Entries older than this are cleaned up, so resubmit only works within this window */
+    static readonly MAX_AGE_DAYS = 30;
 
     private context: vscode.ExtensionContext;
     private cache: Map<string, CachedSubmitScript>;

@@ -2,6 +2,17 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Resubmit Job**: Added a "Resubmit Job" action (`$(debug-restart)`) to Job History rows and to active job context menus. The submit script is resolved from the copy snapshotted at submission time, falling back to the file still on disk and then to the script `scontrol` reports for jobs still known to the controller. Resubmission runs from the original job's working directory, so submitting the snapshot does not run the job out of the extension's storage directory.
+- **Changed-Script Prompt**: When the script on disk has been edited since the job was submitted, resubmitting asks which version to use and offers a diff of the two, instead of silently picking one.
+- **Resubmit Confirmation**: Introduced the `slurmClusterManager.confirmResubmit` setting (default `true`) to confirm before a resubmission reaches the cluster.
+
+### Fixed
+- **Missing Submit Script Snapshots**: `sbatch` submissions now snapshot the submit script immediately instead of waiting for the next job-detail fetch, so a job that starts and finishes between refreshes can still be resubmitted.
+- **Array Task Script Lookup**: Submit script cache lookups now fall back to the base job ID, so resubmitting an individual array task (`12345_7`) finds the script cached for the array itself.
+
 ## [1.6.0] - 2026-08-13
 
 ### Added

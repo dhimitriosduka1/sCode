@@ -15,6 +15,14 @@ import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmSer
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
+import {
+    buildResubmitPlan,
+    formatResubmitConfirmation,
+    pickDefaultResubmitOrigin,
+    ResubmitCandidate,
+    ResubmitOrigin,
+    shouldPromptForResubmitOrigin,
+} from './resubmit';
 
 import * as fs from 'fs';
 
@@ -1091,6 +1099,79 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
 
+    // Register resubmit job command
+    const resubmitJobCommand = vscode.commands.registerCommand('slurmJobs.resubmitJob', async (item: any) => {
+        const job = item?.job;
+        if (!job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+
+        const jobId: string = job.jobId;
+        const jobName: string = job.name || jobId;
+
+        const candidate = await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Window,
+                title: `Looking up submit script for job ${jobId}...`,
+            },
+            () => slurmService.getResubmitCandidate(jobId, job.workDir)
+        );
+
+        let origin = pickDefaultResubmitOrigin(candidate);
+        if (!origin) {
+            vscode.window.showErrorMessage(
+                `No submit script available for job ${jobId}. Scripts are kept for ${SubmitScriptCache.MAX_AGE_DAYS} days, ` +
+                'and only for jobs this extension has seen while they were active.'
+            );
+            return;
+        }
+
+        // Only worth asking when both copies exist and they actually differ.
+        const originAlreadyChosen = shouldPromptForResubmitOrigin(candidate);
+        if (originAlreadyChosen) {
+            const chosen = await promptForResubmitOrigin(candidate, jobId);
+            if (!chosen) {
+                return; // User cancelled
+            }
+            origin = chosen;
+        }
+
+        const plan = buildResubmitPlan(candidate, origin);
+        if (!plan) {
+            vscode.window.showErrorMessage(`Submit script for job ${jobId} is no longer available.`);
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('slurmClusterManager');
+        if (config.get<boolean>('confirmResubmit', true)) {
+            const confirmation = formatResubmitConfirmation(jobName, jobId, plan, { originAlreadyChosen });
+            const answer = await vscode.window.showWarningMessage(
+                confirmation.message,
+                { modal: true, detail: confirmation.detail },
+                'Resubmit'
+            );
+
+            if (answer !== 'Resubmit') {
+                return; // User cancelled
+            }
+        }
+
+        const result = await slurmService.submitJob(plan.scriptPath, plan.workDir, undefined);
+
+        if (result.success) {
+            vscode.window.showInformationMessage(
+                result.jobId
+                    ? `Resubmitted job ${jobId} as ${result.jobId}`
+                    : `Resubmitted job ${jobId}. ${result.message}`
+            );
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register copy Job ID command
     const copyJobIdCommand = vscode.commands.registerCommand('slurmJobs.copyJobId', async (item: any) => {
         if (!item?.job?.jobId) {
@@ -1324,6 +1405,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
     context.subscriptions.push(cancelAllRunningJobsCommand);
+    context.subscriptions.push(resubmitJobCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(submitJobWithDependencyCommand);
     context.subscriptions.push(submitCurrentFileCommand);
@@ -1358,6 +1440,75 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     stopAutoRefresh();
     console.log('SLURM Cluster Manager deactivated');
+}
+
+/**
+ * Ask which copy of a submit script to resubmit when the file on disk has
+ * changed since the job was originally submitted.
+ *
+ * @returns The chosen version, or undefined if the user cancelled
+ */
+async function promptForResubmitOrigin(candidate: ResubmitCandidate, jobId: string): Promise<ResubmitOrigin | undefined> {
+    interface OriginPickItem extends vscode.QuickPickItem {
+        action: ResubmitOrigin | 'diff';
+    }
+
+    const versionItems: OriginPickItem[] = [
+        {
+            label: '$(file) Current version',
+            description: candidate.currentPath,
+            detail: 'The script as it exists on disk right now',
+            action: 'current',
+        },
+        {
+            label: '$(history) Original version',
+            description: 'As submitted',
+            detail: 'The copy saved when the job was first submitted',
+            action: 'snapshot',
+        },
+    ];
+
+    const compareItem: OriginPickItem = {
+        label: '$(diff) Compare versions...',
+        detail: 'Show what changed, then choose',
+        action: 'diff',
+    };
+
+    // Looping keeps the picker open after a diff so the user can choose there.
+    let diffShown = false;
+
+    while (true) {
+        const picked = await vscode.window.showQuickPick(
+            diffShown ? versionItems : [...versionItems, compareItem],
+            {
+                title: `Submit script for job ${jobId} has changed since it was submitted`,
+                placeHolder: diffShown
+                    ? 'Diff is open \u2014 choose which version to resubmit'
+                    : 'Choose which version to resubmit',
+                // The diff opens behind this picker, so reading it means clicking
+                // into the editor. Without this that dismisses the picker and
+                // silently cancels the resubmit.
+                ignoreFocusOut: true,
+            }
+        );
+
+        if (!picked) {
+            return undefined;
+        }
+
+        if (picked.action !== 'diff') {
+            return picked.action;
+        }
+
+        await vscode.commands.executeCommand(
+            'vscode.diff',
+            vscode.Uri.file(candidate.snapshotPath as string),
+            vscode.Uri.file(candidate.currentPath as string),
+            `Job ${jobId}: as submitted \u2194 current`
+        );
+
+        diffShown = true;
+    }
 }
 
 /**

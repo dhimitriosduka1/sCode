@@ -23,6 +23,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Cluster Overview** showing which Slurm accounts are using the most GPUs
 - **GPU stats** via `nvidia-smi` (when available)
 - **One-click actions**: cancel, cancel pending jobs, batch cancel
+- **Resubmit** any job from its original submit script, including jobs already in history
 - **Job History** grouped by date with configurable lookback range
 - **Instant log access** for `stdout` / `stderr`
 - **Cluster maintenance warnings** ahead of scheduled downtime
@@ -43,6 +44,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Held Job Visual Indicator**: Held pending jobs display a distinct lock icon (orange) in the tree view to make their status immediately visible.
 - **Cancel All Running Jobs**: Cancel all running jobs at once via the bin icon (`$(trash)`) on the `"Running"` category header row.
 - **Copy Job ID**: Copy the master base Job ID (excluding array ranges/indices) to the clipboard using the inline/context-menu `$(copy)` action.
+- **Resubmit Job**: Relaunch a job from the submit script it originally ran, via the restart icon (`$(debug-restart)`) on Job History rows or the context menu on active jobs. The extension keeps a copy of each submit script for 30 days, so resubmitting works even after the original file has been edited or deleted. If the file on disk has changed since submission, you're asked which version to use and can diff the two first. The new job runs from the original job's working directory.
 - **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
 - **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
 - **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show human-readable pending reasons, estimated start time, and dependency indicators (🔗).
@@ -138,6 +140,7 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `autoRefreshInterval` | `30` | Refresh frequency (in seconds). Range: **5s → 1h** |
 | `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
 | `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
+| `confirmResubmit` | `true` | Ask for confirmation before resubmitting a job |
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 | `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
 | `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |

@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.6.0",
+  "version": "1.9.2",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -186,7 +186,6 @@
         "title": "Submit Job",
         "icon": "$(play)"
       },
-
       {
         "command": "slurmLeaderboard.refresh",
         "title": "Refresh Hall of Shame",
@@ -196,6 +195,11 @@
         "command": "slurmLeaderboard.setTopUserCount",
         "title": "Set Hall of Shame Size",
         "icon": "$(list-ordered)"
+      },
+      {
+        "command": "slurmJobs.resubmitJob",
+        "title": "Resubmit Job",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "slurmJobs.copyJobId",
@@ -252,12 +256,12 @@
       "editor/title": [
         {
           "command": "slurmJobs.submitCurrentFile",
-          "when": "slurmJobs.isSlurmScript",
+          "when": "slurmJobs.isSlurmScript && !isInDiffEditor",
           "group": "navigation@1"
         },
         {
           "command": "slurmJobs.submitCurrentFileWithDependency",
-          "when": "slurmJobs.isSlurmScript",
+          "when": "slurmJobs.isSlurmScript && !isInDiffEditor",
           "group": "navigation@2"
         }
       ],
@@ -478,6 +482,21 @@
           "command": "slurmJobs.releaseAllPendingJobs",
           "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "actions@3"
+        },
+        {
+          "command": "slurmJobs.resubmitJob",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "inline@4"
+        },
+        {
+          "command": "slurmJobs.resubmitJob",
+          "when": "view == slurmHistory && viewItem == historyJob",
+          "group": "actions@4"
+        },
+        {
+          "command": "slurmJobs.resubmitJob",
+          "when": "view == slurmJobs && (viewItem == slurmJob || viewItem == slurmJobArray || viewItem == slurmJobPending || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingHeld || viewItem == slurmJobPendingArrayHeld)",
+          "group": "actions@4"
         }
       ]
     },
@@ -500,6 +519,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show confirmation dialog before cancelling a job"
+        },
+        "slurmClusterManager.confirmResubmit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation dialog before resubmitting a job"
         },
         "slurmClusterManager.mockMode": {
           "type": "boolean",
