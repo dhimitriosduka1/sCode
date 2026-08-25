@@ -2,10 +2,11 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
-## [Unreleased]
+## [1.6.0] - 2026-08-13
 
 ### Added
 - **Cluster Maintenance Warnings**: Active Jobs, GPU Partition Usage, and Cluster Overview now surface a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress, showing a countdown ("Cluster maintenance starts in 2d") or an in-progress notice, with reservation name/nodes/start/end in the tooltip. Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime this way.
+- **Expandable GPU Partition Rows**: Each row in GPU Partition Usage is now collapsible, revealing GPU counts, node counts, GPU types, and job counts as child rows. The breakdown text is shared with the row tooltip so both stay in sync.
 - **Job History Path Caching Tests**: Added unit test suites verifying path resolution, placeholder retention, and array task base ID fallback lookups.
 - **Automatic Extension Activation**: Configured the extension to activate automatically on VS Code startup (`onStartupFinished`), enabling background features (status bar, auto-refresh, notification polling) to start immediately without requiring manual interaction.
 - **Log Preview Customization**: Introduced the `slurmClusterManager.openLogFileInPreview` configuration setting, allowing users to choose whether to open stdout/stderr log files in VS Code's preview mode (reuses the same tab) or as permanent editor tabs.
@@ -15,11 +16,13 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 - **Pin/Unpin feature**: Removed the ability to pin jobs to a dedicated "Pinned" category at the top of the tree view. The `pinnedJobsCache.ts` module and all associated commands (`slurmJobs.pinJob`, `slurmJobs.unpinJob`) have been deleted.
 
 ### Fixed
+- **Auto-Refresh Burst On Window Focus**: Fixed a storm of `squeue`/`scontrol` calls firing all at once when VS Code regained focus after being minimized or backgrounded. Auto-refresh now suspends while the window is unfocused and resumes on the remainder of the current interval, so returning triggers a single refresh instead of one per elapsed tick. Additionally, concurrent tree renders now share a single in-flight fetch (the previous `isLoading` guard was never read), cluster hog stats are cached alongside the job list instead of re-queried on every render, and the `which squeue` availability probe is resolved once per session.
 - **Missing Configuring (CF) Jobs**: Fixed jobs in the CF (Configuring) state — including job arrays — not appearing anywhere in the Active Jobs panel. The state was absent from the panel's status categories, so squeue reported these jobs but the tree view silently dropped them. CF jobs now show up under the "Running" category.
 - **GPU Partition Usage Accuracy**: GPU Partition Usage now sources allocated GPU counts from `scontrol show node`'s `AllocTRES` field instead of `squeue`'s GRES field. This correctly counts GPUs requested via `--gpus`/`--gpus-per-node` (not just `--gres`), and correctly attributes allocations to every partition that shares the same physical nodes (e.g. `gpu` / `gpudev`).
 - **GPU Partition Double-Counting**: Fixed the cluster-wide summary row in GPU Partition Usage inflating total GPU counts when overlapping partitions shared the same physical nodes. Cluster-wide totals are now derived from unique nodes rather than summed per-partition.
 - **Large Cluster Buffer Overflow**: Fixed `scontrol`/`sinfo`/`squeue` commands silently failing (reporting 0 allocated GPUs) on large clusters (1500+ nodes) by increasing the exec buffer to 32MB for all cluster-wide commands.
 - **Job History Log Path Resolution**: Fixed a bug where stdout/stderr paths occasionally disappeared or showed as 'N/A' in the Job History view for jobs that completed quickly or when auto-refresh was disabled. Resolved this by (1) pre-caching job paths immediately upon submission, (2) caching paths in their raw placeholder format instead of fully expanded formats (allowing node-name `%N` and task-ID `%a` to be resolved dynamically on history lookup), and (3) adding base job ID fallbacks for array task lookups in the cache.
+- **Clearing Job Dependencies**: Fixed "Clear Dependency" failing to remove a pending job's dependency. The update was sent as `scontrol update Dependency=none`, which Slurm treats as a literal dependency type rather than a reset; it now sends an empty `Dependency=`.
 - **Array Throttle Icon**: Replaced the `$(hash)` icon on the "Update Array Throttle..." inline action with `$(symbol-number)`, which is reliably supported across VS Code versions.
 
 ## [1.5.0] - 2026-06-27

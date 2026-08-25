@@ -14,6 +14,7 @@ import {
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
 import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
+import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
 
 import * as fs from 'fs';
@@ -26,8 +27,9 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-// Auto-refresh timer
-let autoRefreshTimer: NodeJS.Timeout | undefined;
+// Auto-refresh only runs while the window is focused, so a backgrounded window
+// never queues up tree refreshes that all land at once when the user comes back.
+const autoRefreshScheduler = new AutoRefreshScheduler();
 let statusBarItem: vscode.StatusBarItem;
 let connectionStatusBarItem: vscode.StatusBarItem;
 
@@ -81,14 +83,14 @@ function startAutoRefresh(
     const { enabled, interval } = getAutoRefreshConfig();
 
     if (enabled && interval >= 5) {
-        autoRefreshTimer = setInterval(() => {
+        autoRefreshScheduler.start(interval * 1000, () => {
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
             // Update context key after refresh (provider prunes stale checked IDs)
             if (checkedJobIds) {
                 vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', checkedJobIds.size > 0);
             }
-        }, interval * 1000);
+        });
 
         console.log(`Auto-refresh started: every ${interval} seconds`);
     }
@@ -100,10 +102,7 @@ function startAutoRefresh(
  * Stop the autorefresh timer
  */
 function stopAutoRefresh(): void {
-    if (autoRefreshTimer) {
-        clearInterval(autoRefreshTimer);
-        autoRefreshTimer = undefined;
-    }
+    autoRefreshScheduler.stop();
 }
 
 /**
@@ -359,6 +358,12 @@ export function activate(context: vscode.ExtensionContext) {
         if (vscode.window.activeTextEditor?.document === e.document) {
             decorationProvider.updateDecorations(vscode.window.activeTextEditor);
         }
+    });
+
+    // Suspend auto-refresh while the window is in the background and resume on focus
+    autoRefreshScheduler.setFocused(vscode.window.state.focused);
+    const windowStateListener = vscode.window.onDidChangeWindowState((state) => {
+        autoRefreshScheduler.setFocused(state.focused);
     });
 
     // Register the refresh command
@@ -1637,6 +1642,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(decorationProvider);
     context.subscriptions.push(decorEditorListener);
     context.subscriptions.push(decorDocListener);
+    context.subscriptions.push(windowStateListener);
 
     context.subscriptions.push(copyJobIdCommand);
     context.subscriptions.push(updateArrayThrottleCommand);

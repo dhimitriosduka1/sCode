@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import { getSlurmJobRowParts } from './slurmJobRow';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -344,10 +344,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private slurmService: SlurmService;
     private scriptCache?: SubmitScriptCache;
     private checkedJobIds?: Set<string>;
-    private isLoading: boolean = false;
     private cachedJobs: SlurmJob[] = [];
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
+    private cachedHogs: ClusterHogSummary | undefined;
     private searchFilter: string = '';
+    /** Bumped on every refresh so results from a superseded fetch are discarded */
+    private generation: number = 0;
+    /** In-flight root fetch, shared by concurrent getChildren() calls */
+    private pendingRootItems: { generation: number; promise: Promise<vscode.TreeItem[]> } | undefined;
 
     constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, checkedJobIds?: Set<string>) {
         this.slurmService = slurmService;
@@ -359,8 +363,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      * Refresh the job list
      */
     refresh(): void {
+        this.generation++;
+        this.pendingRootItems = undefined;
         this.cachedJobs = [];
         this.cachedMaintenanceWindows = [];
+        this.cachedHogs = undefined;
         this._onDidChangeTreeData.fire();
     }
 
@@ -423,9 +430,30 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return this.getRootItems();
     }
 
-    private async getRootItems(): Promise<vscode.TreeItem[]> {
-        this.isLoading = true;
+    /**
+     * Return the root items, sharing a single fetch between concurrent callers.
+     *
+     * VS Code can ask for the root repeatedly in quick succession (for example when
+     * several queued tree updates are rendered at once). Without this guard each of
+     * those calls would kick off its own squeue/scontrol fan-out.
+     */
+    private getRootItems(): Promise<vscode.TreeItem[]> {
+        if (this.pendingRootItems?.generation === this.generation) {
+            return this.pendingRootItems.promise;
+        }
 
+        const generation = this.generation;
+        const promise = this.loadRootItems(generation).finally(() => {
+            if (this.pendingRootItems?.generation === generation) {
+                this.pendingRootItems = undefined;
+            }
+        });
+
+        this.pendingRootItems = { generation, promise };
+        return promise;
+    }
+
+    private async loadRootItems(generation: number): Promise<vscode.TreeItem[]> {
         try {
             // Check if SLURM is available
             const isAvailable = await this.slurmService.isAvailable();
@@ -435,10 +463,18 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             // Fetch and cache jobs only if cache is empty
             if (this.cachedJobs.length === 0) {
-                [this.cachedJobs, this.cachedMaintenanceWindows] = await Promise.all([
+                const [jobs, maintenanceWindows] = await Promise.all([
                     this.slurmService.getJobs(),
                     this.slurmService.getMaintenanceWindows(),
                 ]);
+
+                // A refresh landed while we were fetching - that newer fetch owns the cache
+                if (generation !== this.generation) {
+                    return [];
+                }
+
+                this.cachedJobs = jobs;
+                this.cachedMaintenanceWindows = maintenanceWindows;
 
                 // Clean up stale checked jobs (jobs that no longer exist)
                 if (this.checkedJobIds && this.checkedJobIds.size > 0) {
@@ -461,7 +497,15 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             if (showResourceHogs) {
                 try {
-                    const { topJobHog, topGpuHog } = await this.slurmService.getClusterHogs();
+                    // Cached alongside the jobs so re-rendering the tree does not re-query the cluster
+                    if (!this.cachedHogs) {
+                        const hogs = await this.slurmService.getClusterHogs();
+                        if (generation !== this.generation) {
+                            return [];
+                        }
+                        this.cachedHogs = hogs;
+                    }
+                    const { topJobHog, topGpuHog } = this.cachedHogs;
                     jobHogItem = topJobHog && topJobHog.jobCount > 1
                         ? new JobHogItem(topJobHog.username, topJobHog.jobCount)
                         : null;
@@ -517,8 +561,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         } catch (error) {
             console.error('Error fetching SLURM jobs:', error);
             return [new MessageItem('Error fetching jobs', 'error')];
-        } finally {
-            this.isLoading = false;
         }
     }
 
