@@ -519,6 +519,11 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('slurmClusterManager.leaderboardTopUserCount')) {
             leaderboardProvider.rerender();
         }
+
+        if (e.affectsConfiguration('slurmClusterManager.showFairShare')) {
+            slurmJobProvider.refresh();
+            leaderboardProvider.refresh();
+        }
     });
 
     // Register cancel job command (uses the shared slurmService created above)

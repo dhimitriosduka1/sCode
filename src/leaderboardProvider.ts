@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { SlurmService } from './slurmService';
+import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import {
     DEFAULT_LEADERBOARD_ENTRY_COUNT,
@@ -61,6 +62,11 @@ function getCurrentUsername(): string | undefined {
     }
 }
 
+function isFairShareEnabled(): boolean {
+    const config = vscode.workspace.getConfiguration('slurmClusterManager');
+    return config.get<boolean>('showFairShare', true);
+}
+
 function getConfiguredTopUserCount(): number {
     const config = vscode.workspace.getConfiguration('slurmClusterManager');
     return normalizeLeaderboardEntryCount(config.get<number>('leaderboardTopUserCount', DEFAULT_LEADERBOARD_ENTRY_COUNT));
@@ -89,6 +95,9 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
         this.cachedEntries = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
+        // A manual refresh should really re-query the cluster, not replay the
+        // shared fair share cache.
+        this.slurmService.invalidateFairShareCache();
         this._onDidChangeTreeData.fire();
     }
 
@@ -112,7 +121,18 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
         try {
             // Fetch data once until manual refresh, even when the result is empty.
             if (!this.hasFetchedEntries) {
-                this.cachedEntries = await this.slurmService.getClusterLeaderboard();
+                const [entries, fairShare] = await Promise.all([
+                    this.slurmService.getClusterLeaderboard(),
+                    isFairShareEnabled()
+                        ? this.slurmService.getFairShare()
+                        : Promise.resolve({ entries: [], available: false }),
+                ]);
+
+                const fairShareLookup = buildFairShareLookup(fairShare.entries);
+                this.cachedEntries = entries.map(entry => ({
+                    ...entry,
+                    fairShare: getFairShareSummary(fairShareLookup, entry.username),
+                }));
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }
