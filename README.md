@@ -21,6 +21,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 - **Visual progress bars** for time usage (`Elapsed / Time Limit`)
 - **GPU Partition Usage** so you can compare partitions before submitting
 - **Cluster Overview** showing which Slurm accounts are using the most GPUs
+- **Fair share visibility** so you can see why your jobs are queued behind everyone else's
 - **GPU stats** via `nvidia-smi` (when available)
 - **One-click actions**: cancel, cancel pending jobs, batch cancel
 - **Job History** grouped by date with configurable lookback range
@@ -99,8 +100,16 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
   - **Job Hog**: The user with the most running jobs (🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom)
   - **GPU Hog**: The user hoarding the most GPUs (🧛 VRAMpire, 🎮 GPU Gobbler, ⚡ Watt Wizard, 🏋️ Tensor Titan)
 
+### Fair Share & Job Priority
+- **Your fair share at a glance**: A row at the top of Active Jobs shows your Fair Tree fair share factor (`⚖️ Your fair share: 0.124`). It runs from 0 to 1 — the highest-ranked user on the cluster scores 1.00, so a lower value means your jobs queue further back.
+- **Per-user fair share**: Hall of Shame rows show each user's fair share factor, so you can see how your standing compares to the people ahead of you in the queue.
+- **Why is this job pending?**: Pending jobs show their `sprio` priority breakdown in the tooltip — total priority plus the fair share, age, QOS, partition, and job size weights — and name the component contributing most.
+- **Shared, cached fetch**: A single `sshare` call is shared across views and cached for a few minutes, so this adds one command per refresh rather than one per view.
+- **Degrades gracefully**: Clusters without Slurm accounting or the multifactor priority plugin simply don't show these rows. Turn the whole feature off with `showFairShare`.
+
 ### Hall of Shame
 - **Hall of Shame**: A dedicated sidebar view ranking GPU users by allocated GPUs and running GPU job count.
+- **Fair share factor**: Each row shows the user's Fair Tree fair share factor (`FS 0.143`).
 - **GPU-only rankings**: CPU-only jobs and CPU-only users are excluded from the Hall of Shame.
 - **Slurm account context**: Rows show the Slurm account responsible for the GPU jobs, with all accounts listed in the tooltip when a user has jobs under multiple accounts.
 - **GPU type breakdown**: Hover a row to see how many GPUs are allocated by type, such as `a100`, `h200`, or generic GPUs.
@@ -141,6 +150,7 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 | `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
 | `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
+| `showFairShare` | `true` | Show fair share standing and pending-job priority breakdowns (needs Slurm accounting + multifactor priority) |
 | `openLogFileInPreview` | `true` | Open stdout/stderr logs in preview mode (reuses one tab). Set to `false` for permanent tabs |
 | `mockMode` | `false` | Enable local mock data for development and testing without requiring Slurm |
 

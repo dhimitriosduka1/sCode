@@ -2,6 +2,13 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Fair Share Visibility** ([#3](https://github.com/dhimitriosduka1/sCode/issues/3)): Slurm fair share is now visible without dropping into a terminal. Active Jobs gains a header row with your Fair Tree fair share factor, and Hall of Shame rows show each user's factor alongside their GPU usage, so you can compare your standing against the people ahead of you in the queue. Sourced from `sshare`, with a single call shared across views and cached for a few minutes.
+- **Pending Job Priority Breakdown**: Pending jobs now show their `sprio` priority components in the tooltip — total priority plus the weighted fair share, age, QOS, partition, and job size contributions — and name the component contributing most to that job's priority. `sprio` is only queried when something is actually pending.
+- **Fair Share Setting**: Introduced `slurmClusterManager.showFairShare` (default `true`) to disable the fair share rows and skip the `sshare`/`sprio` calls entirely. Clusters without Slurm accounting or the multifactor priority plugin degrade silently, since absent fair share data is a site configuration fact rather than an error.
+
 ## [1.6.0] - 2026-08-13
 
 ### Added

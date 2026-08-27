@@ -13,11 +13,20 @@ import {
     MOCK_ACCOUNT_OVERVIEW_ROWS,
     MOCK_SCONTROL_NODE_OUTPUT,
     MOCK_SINFO_NODE_OUTPUT,
+    MOCK_SPRIO_OUTPUT,
     MOCK_SQUEUE_PARTITION_JOBS_OUTPUT,
+    MOCK_SSHARE_OUTPUT,
 } from './mockData';
 
 const execAsync = promisify(exec);
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
+
+/**
+ * Fair share moves on the order of hours, so a single `sshare` call is shared
+ * between every consumer (Hall of Shame, Active Jobs) for this long. Keeps the
+ * job refresh path at one extra command instead of one per view.
+ */
+export const FAIR_SHARE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export type SlurmCommandRunner = (command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>;
 export type SlurmMockModeProvider = () => boolean;
@@ -1101,6 +1110,123 @@ export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
  * this captures all GPU allocations regardless of how they were requested
  * (--gres, --gpus, --gpus-per-node, TRES bindings, etc.).
  */
+/**
+ * A single row of `sshare` output — either an account-level row (empty
+ * `username`) or a user association row.
+ *
+ * Fair Tree ranks every user association and hands out a FairShare factor in
+ * [0, 1]: the highest-ranked user gets 1.0, and a lower value means jobs queue
+ * further back.
+ */
+export interface FairShareEntry {
+    account: string;
+    /** Empty string for account-level rows. */
+    username: string;
+    fairShareFactor: number;
+}
+
+export interface FairShareResult {
+    entries: FairShareEntry[];
+    /**
+     * False when `sshare` could not be run at all — clusters without slurmdbd
+     * accounting or the multifactor priority plugin have no fair share data,
+     * which is a configuration fact rather than an error worth surfacing loudly.
+     */
+    available: boolean;
+}
+
+/** Weighted priority components for a single job, as reported by `sprio`. */
+export interface JobPriorityFactors {
+    jobId: string;
+    priority: number;
+    age: number;
+    fairshare: number;
+    jobSize: number;
+    partition: number;
+    qos: number;
+}
+
+/**
+ * Parses a numeric `sshare`/`sprio` field, tolerating the non-numeric values
+ * Slurm prints in practice: an empty cell, `inf`, and `nan`.
+ */
+export function parseFairShareNumber(value: string | undefined): number | undefined {
+    const trimmed = value?.trim().toLowerCase();
+
+    if (!trimmed) {
+        return undefined;
+    }
+
+    if (trimmed === 'inf' || trimmed === 'infinity') {
+        return Infinity;
+    }
+
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Parses `sshare -a -n -P -o Account,User,FairShare`.
+ *
+ * The account column is indented to convey tree depth, so every field is
+ * trimmed. A row whose FairShare cell is absent reads as 0 rather than being
+ * dropped, so the association still appears.
+ */
+export function parseSshareOutput(stdout: string): FairShareEntry[] {
+    const lines = stdout.trim().split('\n').filter(line => line.trim());
+    const entries: FairShareEntry[] = [];
+
+    for (const line of lines) {
+        const parts = line.split('|');
+        const account = parts[0]?.trim() || '';
+
+        if (!account) {
+            continue;
+        }
+
+        entries.push({
+            account,
+            username: parts[1]?.trim() || '',
+            fairShareFactor: parseFairShareNumber(parts[2]) ?? 0,
+        });
+    }
+
+    return entries;
+}
+
+/**
+ * Parses `sprio -u $USER -h -o "%i|%Y|%A|%F|%J|%P|%Q"`.
+ *
+ * Format fields are space-padded to their default widths, so each is trimmed.
+ * Sites that disable a priority component leave its column blank; those read
+ * back as 0 so the tooltip can simply omit them.
+ */
+export function parseSprioOutput(stdout: string): JobPriorityFactors[] {
+    const lines = stdout.trim().split('\n').filter(line => line.trim());
+    const factors: JobPriorityFactors[] = [];
+
+    for (const line of lines) {
+        const parts = line.split('|');
+        const jobId = parts[0]?.trim() || '';
+
+        if (!jobId || !/^\d/.test(jobId)) {
+            continue;
+        }
+
+        factors.push({
+            jobId,
+            priority: parseFairShareNumber(parts[1]) ?? 0,
+            age: parseFairShareNumber(parts[2]) ?? 0,
+            fairshare: parseFairShareNumber(parts[3]) ?? 0,
+            jobSize: parseFairShareNumber(parts[4]) ?? 0,
+            partition: parseFairShareNumber(parts[5]) ?? 0,
+            qos: parseFairShareNumber(parts[6]) ?? 0,
+        });
+    }
+
+    return factors;
+}
+
 export function parseScontrolNodeOutput(stdout: string): Map<string, number> {
     const allocatedGpusByNode = new Map<string, number>();
     // scontrol show node emits key=value tokens separated by whitespace / newlines.
@@ -1400,6 +1526,8 @@ export class SlurmService {
     private mockModeProvider: SlurmMockModeProvider;
     private mockJobs?: SlurmJob[];
     private availabilityProbe?: Promise<boolean>;
+    private fairShareCache?: { fetchedAt: number; result: FairShareResult };
+    private fairSharePending?: Promise<FairShareResult>;
 
     constructor(
         pathCache?: JobPathCache,
@@ -1617,6 +1745,84 @@ export class SlurmService {
         } catch (error) {
             console.error('Failed to get cluster hogs:', error);
             return { topJobHog: null, topGpuHog: null };
+        }
+    }
+
+    /**
+     * Get Fair Tree fair share data for every association on the cluster.
+     *
+     * Result is cached for FAIR_SHARE_CACHE_TTL_MS and de-duplicated across
+     * concurrent callers, so opening several views does not fan out into
+     * several `sshare` calls.
+     */
+    async getFairShare(): Promise<FairShareResult> {
+        if (this.isMockMode()) {
+            return { entries: parseSshareOutput(MOCK_SSHARE_OUTPUT), available: true };
+        }
+
+        const cached = this.fairShareCache;
+        if (cached && Date.now() - cached.fetchedAt < FAIR_SHARE_CACHE_TTL_MS) {
+            return cached.result;
+        }
+
+        if (this.fairSharePending) {
+            return this.fairSharePending;
+        }
+
+        this.fairSharePending = this.fetchFairShare().finally(() => {
+            this.fairSharePending = undefined;
+        });
+
+        return this.fairSharePending;
+    }
+
+    private async fetchFairShare(): Promise<FairShareResult> {
+        let result: FairShareResult;
+
+        try {
+            const { stdout } = await this.commandRunner(
+                'sshare -a -n -P -o Account,User,FairShare',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
+            result = { entries: parseSshareOutput(stdout), available: true };
+        } catch {
+            // sshare only exists when the cluster runs slurmdbd accounting with
+            // the multifactor priority plugin. Absence is a site configuration
+            // fact, not a failure — callers explain it rather than erroring.
+            result = { entries: [], available: false };
+        }
+
+        this.fairShareCache = { fetchedAt: Date.now(), result };
+        return result;
+    }
+
+    /** Drop the cached fair share data so the next read re-queries the cluster. */
+    invalidateFairShareCache(): void {
+        this.fairShareCache = undefined;
+    }
+
+    /**
+     * Get the weighted priority components for the current user's queued jobs,
+     * keyed by job ID. Empty when `sprio` is unavailable or nothing is pending.
+     */
+    async getJobPriorityFactors(): Promise<Map<string, JobPriorityFactors>> {
+        const factors = this.isMockMode()
+            ? parseSprioOutput(MOCK_SPRIO_OUTPUT)
+            : await this.fetchJobPriorityFactors();
+
+        return new Map(factors.map(factor => [factor.jobId, factor]));
+    }
+
+    private async fetchJobPriorityFactors(): Promise<JobPriorityFactors[]> {
+        try {
+            const { stdout } = await this.commandRunner(
+                'sprio -u $USER -h -o "%i|%Y|%A|%F|%J|%P|%Q"',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
+            return parseSprioOutput(stdout);
+        } catch {
+            // sprio is absent unless the multifactor priority plugin is enabled.
+            return [];
         }
     }
 
