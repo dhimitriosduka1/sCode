@@ -1,10 +1,29 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import * as os from 'os';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import {
+    buildFairShareLookup,
+    FairShareSummary,
+    formatFairShareFactor,
+    formatFairShareHeaderLabel,
+    findJobPriorityFactors,
+    formatJobPriorityDetails,
+    getDominantPriorityComponent,
+    getFairShareSummary,
+} from './fairShareRanking';
 import { getSlurmJobRowParts } from './slurmJobRow';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { SubmitScriptCache } from './submitScriptCache';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
+
+function getCurrentUsername(): string | undefined {
+    try {
+        return os.userInfo().username || undefined;
+    } catch {
+        return process.env.USER || process.env.USERNAME;
+    }
+}
 
 /**
  * Status categories for grouping jobs
@@ -80,6 +99,7 @@ export class SlurmJobItem extends vscode.TreeItem {
     constructor(
         public readonly job: SlurmJob,
         isChecked: boolean = false,
+        private readonly priorityFactors?: JobPriorityFactors,
     ) {
         const rowParts = getSlurmJobRowParts(job);
         super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
@@ -131,6 +151,12 @@ export class SlurmJobItem extends vscode.TreeItem {
                 );
             }
             details.push({ label: 'Est. start', value: formatStartTime(this.job.startTime) });
+
+            // The priority breakdown is what actually answers "why is this job
+            // still queued" for jobs waiting on Priority.
+            if (this.priorityFactors) {
+                details.push(...formatJobPriorityDetails(this.priorityFactors));
+            }
         }
 
         if (this.job.state === 'R') {
@@ -151,11 +177,20 @@ export class SlurmJobItem extends vscode.TreeItem {
             });
         }
 
+        // sprio only reports queued jobs, so this is pending-only in practice —
+        // scoped explicitly so it stays that way.
+        const dominantComponent = this.job.state === 'PD' && this.priorityFactors
+            ? getDominantPriorityComponent(this.priorityFactors)
+            : undefined;
+
         return new vscode.MarkdownString(formatTooltipMarkdown({
             title: `Job: ${this.job.name}`,
             summary: `${getStateDescription(this.job.state)} · ${this.job.jobId}`,
             details,
             sections,
+            note: dominantComponent
+                ? `${dominantComponent} contributes most to this job's priority.`
+                : undefined,
         }));
     }
 
@@ -281,6 +316,22 @@ class SubmitScriptItem extends vscode.TreeItem {
 }
 
 /**
+ * Header row showing the current user's Fair Tree standing, so the reason jobs
+ * sit behind other people's is visible without opening a terminal.
+ */
+class FairShareItem extends vscode.TreeItem {
+    constructor(summary: FairShareSummary) {
+        super(formatFairShareHeaderLabel(summary), vscode.TreeItemCollapsibleState.None);
+        this.description = summary.account;
+        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
+            title: 'Your fair share',
+            summary: formatFairShareFactor(summary.fairShareFactor),
+        }));
+        this.contextValue = 'fairShare';
+    }
+}
+
+/**
  * Message item shown when no jobs are found or SLURM is unavailable
  */
 class MessageItem extends vscode.TreeItem {
@@ -347,16 +398,27 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private cachedJobs: SlurmJob[] = [];
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private cachedHogs: ClusterHogSummary | undefined;
+    private cachedFairShareSummary: FairShareSummary | undefined;
+    private cachedPriorityFactors: Map<string, JobPriorityFactors> | undefined;
+    private hasFetchedFairShare = false;
     private searchFilter: string = '';
     /** Bumped on every refresh so results from a superseded fetch are discarded */
     private generation: number = 0;
     /** In-flight root fetch, shared by concurrent getChildren() calls */
     private pendingRootItems: { generation: number; promise: Promise<vscode.TreeItem[]> } | undefined;
 
-    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache, checkedJobIds?: Set<string>) {
+    private currentUsernameProvider: () => string | undefined;
+
+    constructor(
+        slurmService: SlurmService,
+        scriptCache?: SubmitScriptCache,
+        checkedJobIds?: Set<string>,
+        currentUsernameProvider: () => string | undefined = getCurrentUsername,
+    ) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.checkedJobIds = checkedJobIds;
+        this.currentUsernameProvider = currentUsernameProvider;
     }
 
     /**
@@ -368,6 +430,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this.cachedJobs = [];
         this.cachedMaintenanceWindows = [];
         this.cachedHogs = undefined;
+        this.cachedFairShareSummary = undefined;
+        this.cachedPriorityFactors = undefined;
+        this.hasFetchedFairShare = false;
         this._onDidChangeTreeData.fire();
     }
 
@@ -517,6 +582,40 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 }
             }
 
+            let fairShareItem: FairShareItem | null = null;
+
+            if (config.get<boolean>('showFairShare', true)) {
+                try {
+                    // Cached alongside the jobs, and sourced from the service's
+                    // shared sshare cache, so re-rendering costs nothing.
+                    if (!this.hasFetchedFairShare) {
+                        const hasPendingJobs = this.cachedJobs.some(job => job.state === 'PD');
+                        const [fairShare, priorityFactors] = await Promise.all([
+                            this.slurmService.getFairShare(),
+                            // sprio only describes queued jobs — skip it when nothing is pending.
+                            hasPendingJobs
+                                ? this.slurmService.getJobPriorityFactors()
+                                : Promise.resolve(new Map<string, JobPriorityFactors>()),
+                        ]);
+
+                        if (generation !== this.generation) {
+                            return [];
+                        }
+
+                        const lookup = buildFairShareLookup(fairShare.entries);
+                        this.cachedFairShareSummary = getFairShareSummary(lookup, this.currentUsernameProvider());
+                        this.cachedPriorityFactors = priorityFactors;
+                        this.hasFetchedFairShare = true;
+                    }
+
+                    fairShareItem = this.cachedFairShareSummary
+                        ? new FairShareItem(this.cachedFairShareSummary)
+                        : null;
+                } catch (e) {
+                    console.error('Failed to fetch fair share:', e);
+                }
+            }
+
             const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
 
             if (this.cachedJobs.length === 0) {
@@ -524,6 +623,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
+                if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
                 return items;
             }
@@ -533,6 +633,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 if (maintenanceItem) { items.push(maintenanceItem); }
                 if (jobHogItem) { items.push(jobHogItem); }
                 if (gpuHogItem) { items.push(gpuHogItem); }
+                if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
                 return items;
             }
@@ -544,6 +645,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (maintenanceItem) { categories.push(maintenanceItem); }
             if (jobHogItem) { categories.push(jobHogItem); }
             if (gpuHogItem) { categories.push(gpuHogItem); }
+            if (fairShareItem) { categories.push(fairShareItem); }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {
                 const info = CATEGORIES[categoryKey];
@@ -575,7 +677,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
         return jobs.map(job => new SlurmJobItem(
             job,
-            this.checkedJobIds?.has(job.jobId) ?? false
+            this.checkedJobIds?.has(job.jobId) ?? false,
+            findJobPriorityFactors(this.cachedPriorityFactors, job.jobId)
         ));
     }
 

@@ -394,6 +394,35 @@ export const MOCK_SQUEUE_PARTITION_JOBS_OUTPUT = [
     'cpu|PD',
 ].join('\n');
 
+// sshare -a -n -P -o Account,User,FairShare
+// The account column is indented by tree depth, exactly as Slurm prints it.
+// nova42 hoards GPUs and ranks last; rune barely uses the cluster and tops the
+// Fair Tree ranking.
+export const MOCK_SSHARE_OUTPUT = [
+    'root||1.000000',
+    '  atlas_lab||0.142857',
+    '   atlas_lab|nova42|0.142857',
+    '  vision_lab||0.428571',
+    '   vision_lab|pixelwave|0.428571',
+    '   vision_lab|kawi19|0.714286',
+    '  nebula_lab||0.571429',
+    '   nebula_lab|quartz|0.571429',
+    '  robotics_lab||0.857143',
+    '   robotics_lab|zephyr|0.857143',
+    '  climate_lab||0.785714',
+    '   climate_lab|solis|0.785714',
+    '  data_lab||1.000000',
+    '   data_lab|rune|1.000000',
+].join('\n');
+
+// sprio -u $USER -h -o "%i|%Y|%A|%F|%J|%P|%Q"
+// Only queued jobs appear in sprio output, matching the pending mock jobs.
+export const MOCK_SPRIO_OUTPUT = [
+    '91002|10432|1580|2104|120|748|6000',
+    '91003|9315|640|2104|120|748|6000',
+    '91004_3|8890|215|2104|120|748|6000',
+].join('\n');
+
 export function createMockMaintenanceWindows(): MaintenanceWindow[] {
     const start = new Date();
     start.setDate(start.getDate() + 2);

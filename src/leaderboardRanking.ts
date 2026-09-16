@@ -1,4 +1,5 @@
 import { generateProgressBar } from './slurmService';
+import { FairShareSummary, formatFairShareFactor } from './fairShareRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 export interface LeaderboardEntry {
@@ -7,6 +8,8 @@ export interface LeaderboardEntry {
     gpuCount: number;
     gpuJobCount: number;
     gpuTypes: LeaderboardGpuType[];
+    /** Fair share standing, when the cluster reports it. */
+    fairShare?: FairShareSummary;
 }
 
 export interface LeaderboardGpuType {
@@ -42,7 +45,13 @@ export function sortLeaderboardEntries(entries: LeaderboardEntry[]): Leaderboard
 export function formatLeaderboardEntryDescription(entry: LeaderboardEntry): string {
     const accountLabel = formatLeaderboardAccountLabel(entry.accounts);
     const usageLabel = `${entry.gpuCount} GPUs · ${entry.gpuJobCount} GPU job${entry.gpuJobCount === 1 ? '' : 's'}`;
-    return accountLabel ? `${accountLabel} · ${usageLabel}` : usageLabel;
+    const baseLabel = accountLabel ? `${accountLabel} · ${usageLabel}` : usageLabel;
+
+    // The GPU share bar already occupies the trailing slot, so fair share stays
+    // numeric here and gets its own bar in the tooltip.
+    return entry.fairShare
+        ? `${baseLabel} · FS ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
+        : baseLabel;
 }
 
 export function formatLeaderboardEntryRowDescription(entry: LeaderboardEntry, totalGpuCount: number): string {
@@ -108,6 +117,9 @@ export function formatLeaderboardTooltipMarkdown(
         details: [
             { label: `Slurm account${entry.accounts.length === 1 ? '' : 's'}`, value: accountLabel },
             { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
+            ...(entry.fairShare
+                ? [{ label: 'Fair share', value: formatFairShareFactor(entry.fairShare.fairShareFactor) }]
+                : []),
         ],
         note: entry.isCurrentUser && entry.isOutsideTopEntries
             ? `Your row is shown outside the configured top ${topUserCount}.`
