@@ -141,6 +141,7 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
 | `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
 | `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
+| `showOpenLogsSideBySideButton` | `true` | Show the per-job button that opens stdout and stderr in a split editor. The action stays in the right-click menu when off |
 | `openLogFileInPreview` | `true` | Open stdout/stderr logs in preview mode (reuses one tab). Set to `false` for permanent tabs |
 | `mockMode` | `false` | Enable local mock data for development and testing without requiring Slurm |
 

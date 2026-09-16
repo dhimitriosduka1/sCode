@@ -2,6 +2,11 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Side-by-Side Log View**: Added an "Open Stdout and Stderr Side by Side" action (`$(split-horizontal)`) next to the existing stdout/stderr buttons on running jobs, opening stdout in the active editor group and stderr in a split beside it. The inline button can be hidden with the new `slurmClusterManager.showOpenLogsSideBySideButton` setting, which leaves the action available from the job's right-click menu. Jobs that merge both streams into a single file open just that one editor.
+
 ## [1.6.0] - 2026-08-13
 
 ### Added

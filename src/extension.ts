@@ -99,6 +99,62 @@ function stopAutoRefresh(): void {
  * Extension activation
  * Called when the extension is activated (e.g., when the SLURM view is opened)
  */
+/**
+ * Open a job log file in an editor, returning false when it could not be shown.
+ */
+async function openLogFile(
+    filePath: string,
+    options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean },
+): Promise<boolean> {
+    const normalizedFilePath = normalizeOpenableFilePath(
+        filePath,
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    );
+
+    if (!normalizedFilePath) {
+        vscode.window.showWarningMessage('File path not available');
+        return false;
+    }
+
+    if (hasUnresolvedSlurmPathPlaceholders(normalizedFilePath) || normalizedFilePath.includes('PENDING_NODE')) {
+        vscode.window.showWarningMessage(
+            `Output path is not fully resolved yet: ${normalizedFilePath}. Refresh after the job starts or finishes.`
+        );
+        return false;
+    }
+
+    try {
+        // Check if file exists
+        if (!fs.existsSync(normalizedFilePath)) {
+            // For pending jobs, the file might not exist yet
+            vscode.window.showWarningMessage(`File not found: ${normalizedFilePath}. The file may not exist yet if the job hasn't started.`);
+            return false;
+        }
+
+        const stat = fs.statSync(normalizedFilePath);
+        if (stat.isDirectory()) {
+            vscode.window.showWarningMessage(`Output path is a directory, not a file: ${normalizedFilePath}`);
+            return false;
+        }
+
+        const uri = vscode.Uri.file(normalizedFilePath);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const config = vscode.workspace.getConfiguration('slurmClusterManager');
+        const preview = config.get<boolean>('openLogFileInPreview', true);
+        await vscode.window.showTextDocument(doc, {
+            preview,
+            viewColumn: options?.viewColumn,
+            preserveFocus: options?.preserveFocus,
+        });
+        return true;
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
+        console.error('Error opening file:', error);
+        return false;
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('SLURM Cluster Manager is now active');
 
@@ -296,49 +352,12 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     // Register command to open output files
-    const openFileCommand = vscode.commands.registerCommand('slurmJobs.openFile', async (filePath: string) => {
-        const normalizedFilePath = normalizeOpenableFilePath(
-            filePath,
-            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-        );
-
-        if (!normalizedFilePath) {
-            vscode.window.showWarningMessage('File path not available');
-            return;
-        }
-
-        if (hasUnresolvedSlurmPathPlaceholders(normalizedFilePath) || normalizedFilePath.includes('PENDING_NODE')) {
-            vscode.window.showWarningMessage(
-                `Output path is not fully resolved yet: ${normalizedFilePath}. Refresh after the job starts or finishes.`
-            );
-            return;
-        }
-
-        try {
-            // Check if file exists
-            if (!fs.existsSync(normalizedFilePath)) {
-                // For pending jobs, the file might not exist yet
-                vscode.window.showWarningMessage(`File not found: ${normalizedFilePath}. The file may not exist yet if the job hasn't started.`);
-                return;
-            }
-
-            const stat = fs.statSync(normalizedFilePath);
-            if (stat.isDirectory()) {
-                vscode.window.showWarningMessage(`Output path is a directory, not a file: ${normalizedFilePath}`);
-                return;
-            }
-
-            const uri = vscode.Uri.file(normalizedFilePath);
-            const doc = await vscode.workspace.openTextDocument(uri);
-            const config = vscode.workspace.getConfiguration('slurmClusterManager');
-            const preview = config.get<boolean>('openLogFileInPreview', true);
-            await vscode.window.showTextDocument(doc, { preview });
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`Failed to open file: ${normalizedFilePath}\n${errorMessage}`);
-            console.error('Error opening file:', error);
-        }
-    });
+    const openFileCommand = vscode.commands.registerCommand(
+        'slurmJobs.openFile',
+        async (filePath: string, options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean }) => {
+            await openLogFile(filePath, options);
+        },
+    );
 
     // Register command to open stdout file
     const openStdoutCommand = vscode.commands.registerCommand('slurmJobs.openStdout', async (item: any) => {
@@ -351,6 +370,33 @@ export function activate(context: vscode.ExtensionContext) {
     const openStderrCommand = vscode.commands.registerCommand('slurmJobs.openStderr', async (item: any) => {
         if (item?.job?.stderrPath) {
             await vscode.commands.executeCommand('slurmJobs.openFile', item.job.stderrPath);
+        }
+    });
+
+    // Register command to open stdout and stderr side by side
+    const openLogsSideBySideCommand = vscode.commands.registerCommand('slurmJobs.openLogsSideBySide', async (item: any) => {
+        const stdoutPath = item?.job?.stdoutPath;
+        const stderrPath = item?.job?.stderrPath;
+
+        if (!stdoutPath && !stderrPath) {
+            vscode.window.showWarningMessage('No stdout or stderr path available for this job');
+            return;
+        }
+
+        // Slurm jobs can be configured to merge both streams into one file; opening
+        // that single path twice would just show the same editor in one column.
+        if (stdoutPath && stderrPath && stdoutPath === stderrPath) {
+            await openLogFile(stdoutPath);
+            return;
+        }
+
+        // Anchor the first file in the active column so the second one splits off it,
+        // rather than stacking both into whichever group happened to be focused.
+        const stdoutOpened = stdoutPath ? await openLogFile(stdoutPath, { viewColumn: vscode.ViewColumn.Active }) : false;
+        if (stderrPath) {
+            await openLogFile(stderrPath, {
+                viewColumn: stdoutOpened ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active,
+            });
         }
     });
 
@@ -1310,6 +1356,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(openStdoutCommand);
     context.subscriptions.push(openStderrCommand);
+    context.subscriptions.push(openLogsSideBySideCommand);
     context.subscriptions.push(searchCommand);
     context.subscriptions.push(clearSearchCommand);
     context.subscriptions.push(searchHistoryCommand);

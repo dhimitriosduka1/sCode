@@ -133,6 +133,11 @@
         "icon": "$(warning)"
       },
       {
+        "command": "slurmJobs.openLogsSideBySide",
+        "title": "Open Stdout and Stderr Side by Side",
+        "icon": "$(split-horizontal)"
+      },
+      {
         "command": "slurmJobs.toggleAutoRefresh",
         "title": "Toggle Auto Refresh",
         "icon": "$(sync)"
@@ -375,6 +380,11 @@
           "group": "inline@2"
         },
         {
+          "command": "slurmJobs.openLogsSideBySide",
+          "when": "config.slurmClusterManager.showOpenLogsSideBySideButton && (view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray)",
+          "group": "inline@3"
+        },
+        {
           "command": "slurmJobs.openStdout",
           "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
           "group": "output@1"
@@ -385,9 +395,14 @@
           "group": "output@2"
         },
         {
+          "command": "slurmJobs.openLogsSideBySide",
+          "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
+          "group": "output@3"
+        },
+        {
           "command": "slurmJobs.cancelJob",
           "when": "view == slurmJobs && viewItem == slurmJob || view == slurmJobs && viewItem == slurmJobArray",
-          "group": "inline@3"
+          "group": "inline@4"
         },
         {
           "command": "slurmJobs.cancelJob",
@@ -526,6 +541,11 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
+        },
+        "slurmClusterManager.showOpenLogsSideBySideButton": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a button on each job that opens its stdout and stderr next to each other in a split editor. The action stays available from the job's right-click menu when this is off."
         },
         "slurmClusterManager.openLogFileInPreview": {
           "type": "boolean",
