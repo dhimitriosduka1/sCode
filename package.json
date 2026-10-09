@@ -89,6 +89,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "slurmPartitionUsage.setRefreshInterval",
+        "title": "Set GPU Partition Usage Refresh Interval",
+        "icon": "$(watch)"
+      },
+      {
         "command": "slurmClusterOverview.refresh",
         "title": "Refresh Cluster Overview",
         "icon": "$(refresh)"
@@ -271,6 +276,11 @@
           "command": "slurmPartitionUsage.refresh",
           "when": "view == slurmPartitionUsage",
           "group": "navigation@1"
+        },
+        {
+          "command": "slurmPartitionUsage.setRefreshInterval",
+          "when": "view == slurmPartitionUsage",
+          "group": "navigation@2"
         },
         {
           "command": "slurmClusterOverview.refresh",
@@ -520,6 +530,13 @@
           "type": "boolean",
           "default": false,
           "description": "Use local mock Slurm data for extension development without requiring Slurm commands"
+        },
+        "slurmClusterManager.partitionRefreshInterval": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 120,
+          "description": "How often, in minutes, GPU Partition Usage and partition autocomplete refresh in the background (0 turns background refresh off)"
         },
         "slurmClusterManager.leaderboardTopUserCount": {
           "type": "number",

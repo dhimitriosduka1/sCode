@@ -11,6 +11,8 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
+import { PartitionCompletionProvider, PARTITION_COMPLETION_TRIGGER_CHARACTERS } from './partitionCompletionProvider';
+import { PartitionDataStore } from './partitionDataStore';
 import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
@@ -21,6 +23,9 @@ import * as fs from 'fs';
 // Auto-refresh only runs while the window is focused, so a backgrounded window
 // never queues up tree refreshes that all land at once when the user comes back.
 const autoRefreshScheduler = new AutoRefreshScheduler();
+// Background refresh of the partition data shared by GPU Partition Usage and partition autocomplete
+const partitionRefreshScheduler = new AutoRefreshScheduler();
+const DEFAULT_PARTITION_REFRESH_MINUTES = 5;
 let statusBarItem: vscode.StatusBarItem;
 
 /**
@@ -183,8 +188,26 @@ export function activate(context: vscode.ExtensionContext) {
     // Create the history provider with shared service
     const jobHistoryProvider = new JobHistoryProvider(slurmService);
 
-    // Create the partition usage provider (no auto-refresh, manual only)
-    const partitionUsageProvider = new PartitionUsageProvider(slurmService);
+    // Partition data shared by GPU Partition Usage and partition autocomplete,
+    // refreshed in the background and by the view's refresh button
+    const partitionDataStore = new PartitionDataStore(slurmService);
+    const getPartitionRefreshMinutes = () => vscode.workspace
+        .getConfiguration('slurmClusterManager')
+        .get<number>('partitionRefreshInterval', DEFAULT_PARTITION_REFRESH_MINUTES);
+    const partitionUsageProvider = new PartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
+
+    // Every refresh shows a progress bar on GPU Partition Usage, whoever started it
+    const refreshPartitionData = () => vscode.window.withProgress(
+        { location: { viewId: 'slurmPartitionUsage' } },
+        () => partitionDataStore.refresh(),
+    );
+    // (Re)starts the schedule, so the next automatic refresh is a full interval away
+    const schedulePartitionRefresh = () => partitionRefreshScheduler.start(
+        getPartitionRefreshMinutes() * 60 * 1000,
+        () => void refreshPartitionData(),
+    );
+    void refreshPartitionData();
+    schedulePartitionRefresh();
 
     // Create the cluster overview provider (no auto-refresh, manual only)
     const clusterOverviewProvider = new ClusterOverviewProvider(slurmService);
@@ -263,14 +286,24 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const slurmScriptSelector: vscode.DocumentSelector = [
+        { scheme: 'file', language: 'shellscript' },
+        { scheme: 'file', language: 'plaintext' },
+        { scheme: 'file', pattern: '**/*.{slurm,sbatch}' },
+    ];
+
     // Register hover provider for partition stats on hover
     const hoverProvider = vscode.languages.registerHoverProvider(
-        [
-            { scheme: 'file', language: 'shellscript' },
-            { scheme: 'file', language: 'plaintext' },
-            { scheme: 'file', pattern: '**/*.{slurm,sbatch}' },
-        ],
+        slurmScriptSelector,
         new SlurmHoverProvider(slurmService)
+    );
+
+    // Suggest partitions, least occupied first, wherever a script names one
+    const partitionCompletionProvider = new PartitionCompletionProvider(slurmService, partitionDataStore);
+    const partitionCompletionRegistration = vscode.languages.registerCompletionItemProvider(
+        slurmScriptSelector,
+        partitionCompletionProvider,
+        ...PARTITION_COMPLETION_TRIGGER_CHARACTERS,
     );
 
     // Underline decorations for hoverable partition names
@@ -287,8 +320,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Suspend auto-refresh while the window is in the background and resume on focus
     autoRefreshScheduler.setFocused(vscode.window.state.focused);
+    partitionRefreshScheduler.setFocused(vscode.window.state.focused);
     const windowStateListener = vscode.window.onDidChangeWindowState((state) => {
         autoRefreshScheduler.setFocused(state.focused);
+        partitionRefreshScheduler.setFocused(state.focused);
     });
 
     // Register the refresh command
@@ -308,6 +343,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register the refresh partition usage command
     const refreshPartitionUsageCommand = vscode.commands.registerCommand('slurmPartitionUsage.refresh', () => {
+        schedulePartitionRefresh();
+        void refreshPartitionData();
         partitionUsageProvider.refresh();
     });
 
@@ -546,6 +583,58 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const setPartitionRefreshIntervalCommand = vscode.commands.registerCommand('slurmPartitionUsage.setRefreshInterval', async () => {
+        const currentMinutes = getPartitionRefreshMinutes();
+        const presets = [1, 2, 5, 10, 15, 30];
+        const selected = await vscode.window.showQuickPick(
+            [
+                ...presets.map(minutes => ({
+                    label: `Every ${minutes} min`,
+                    description: minutes === DEFAULT_PARTITION_REFRESH_MINUTES ? 'default' : undefined,
+                    minutes: minutes as number | undefined,
+                })),
+                { label: 'Off', description: 'Only refresh manually', minutes: 0 },
+                { label: 'Custom...', description: 'Enter an interval from 1 to 120 minutes', minutes: undefined },
+            ],
+            {
+                placeHolder: currentMinutes > 0 ? `Current: every ${currentMinutes} min` : 'Current: off',
+                title: 'Set GPU Partition Usage Refresh Interval',
+            }
+        );
+
+        if (!selected) {
+            return;
+        }
+
+        let newMinutes = selected.minutes;
+        if (newMinutes === undefined) {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter refresh interval in minutes (1-120)',
+                placeHolder: 'e.g., 5',
+                value: String(currentMinutes || DEFAULT_PARTITION_REFRESH_MINUTES),
+                validateInput: (value) => {
+                    const num = Number(value);
+                    if (!Number.isInteger(num) || num < 1 || num > 120) {
+                        return 'Please enter a whole number between 1 and 120';
+                    }
+                    return null;
+                },
+            });
+
+            if (input === undefined) {
+                return;
+            }
+
+            newMinutes = Number(input);
+        }
+
+        const config = vscode.workspace.getConfiguration('slurmClusterManager');
+        await config.update('partitionRefreshInterval', newMinutes, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(newMinutes > 0
+            ? `GPU Partition Usage refreshes every ${newMinutes} min`
+            : 'GPU Partition Usage auto-refresh turned off');
+    });
+
     // Listen for configuration changes to update autorefresh
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('slurmClusterManager.autoRefreshEnabled') ||
@@ -555,11 +644,19 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (e.affectsConfiguration('slurmClusterManager.mockMode')) {
             checkedJobIds.clear();
+            partitionDataStore.clear();
+            void refreshPartitionData();
+            partitionUsageProvider.refresh();
             vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
             clusterOverviewProvider.refresh();
             leaderboardProvider.refresh();
+        }
+
+        if (e.affectsConfiguration('slurmClusterManager.partitionRefreshInterval')) {
+            schedulePartitionRefresh();
+            partitionUsageProvider.rerender();
         }
 
         if (e.affectsConfiguration('slurmClusterManager.leaderboardTopUserCount')) {
@@ -1371,6 +1468,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(previousPageCommand);
     context.subscriptions.push(toggleAutoRefreshCommand);
     context.subscriptions.push(setAutoRefreshIntervalCommand);
+    context.subscriptions.push(setPartitionRefreshIntervalCommand);
     context.subscriptions.push(configChangeListener);
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
@@ -1383,6 +1481,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(editorChangeListener);
     context.subscriptions.push(docChangeListener);
     context.subscriptions.push(hoverProvider);
+    context.subscriptions.push(partitionCompletionRegistration);
+    context.subscriptions.push(partitionUsageProvider, { dispose: () => partitionRefreshScheduler.stop() });
     context.subscriptions.push(decorationProvider);
     context.subscriptions.push(decorEditorListener);
     context.subscriptions.push(decorDocListener);

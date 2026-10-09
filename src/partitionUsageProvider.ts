@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { MaintenanceWindow, PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
+import { PartitionDataStore } from './partitionDataStore';
 import {
     formatPartitionUsageDescription,
     formatPartitionUsageGpuBreakdown,
@@ -16,13 +17,14 @@ import { formatLeaderboardGpuTypeLabel } from './leaderboardRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 class PartitionUsageRefreshItem extends vscode.TreeItem {
-    constructor(refreshedAt: Date) {
+    constructor(refreshedAt: Date, refreshIntervalMinutes: number) {
         super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
         this.iconPath = new vscode.ThemeIcon('history');
         this.contextValue = 'partitionUsageRefreshInfo';
         this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt, {
             title: 'GPU Partition Usage refresh',
             refreshCommandLabel: 'Refresh GPU Partition Usage',
+            autoRefreshMinutes: refreshIntervalMinutes,
         }));
     }
 }
@@ -118,19 +120,39 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    private cachedResult: PartitionUsageResult | undefined;
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
-    private lastRefreshedAt: Date | undefined;
-    private hasFetchedEntries = false;
+    private hasFetchedMaintenance = false;
+    private readonly unsubscribe: () => void;
 
-    constructor(private readonly slurmService: SlurmService) {}
+    /**
+     * @param refreshIntervalMinutes Current background refresh interval, 0 when off
+     */
+    constructor(
+        private readonly slurmService: SlurmService,
+        private readonly store: PartitionDataStore,
+        private readonly refreshIntervalMinutes: () => number,
+    ) {
+        // Scheduled and manual refreshes both land here, so the view always shows the latest snapshot
+        this.unsubscribe = store.onDidChange(() => this._onDidChangeTreeData.fire());
+    }
 
+    /**
+     * Re-queries maintenance on the next render. Partition data is refreshed
+     * through the store, which redraws this view when the new snapshot lands.
+     */
     refresh(): void {
-        this.cachedResult = undefined;
         this.cachedMaintenanceWindows = [];
-        this.lastRefreshedAt = undefined;
-        this.hasFetchedEntries = false;
+        this.hasFetchedMaintenance = false;
         this._onDidChangeTreeData.fire();
+    }
+
+    /** Redraws without fetching, e.g. after the refresh interval changes. */
+    rerender(): void {
+        this._onDidChangeTreeData.fire();
+    }
+
+    dispose(): void {
+        this.unsubscribe();
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -151,14 +173,10 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
-            if (!this.hasFetchedEntries) {
-                [this.cachedResult, this.cachedMaintenanceWindows] = await Promise.all([
-                    this.slurmService.getPartitionUsage(),
-                    this.slurmService.getMaintenanceWindows(),
-                ]);
-                this.lastRefreshedAt = new Date();
-                this.hasFetchedEntries = true;
-            }
+            const [snapshot] = await Promise.all([
+                this.store.getSnapshot(),
+                this.fetchMaintenanceOnce(),
+            ]);
 
             const items: vscode.TreeItem[] = [];
             const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
@@ -166,17 +184,15 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
                 items.push(maintenanceItem);
             }
 
-            if (this.lastRefreshedAt) {
-                items.push(new PartitionUsageRefreshItem(this.lastRefreshedAt));
-            }
+            items.push(new PartitionUsageRefreshItem(snapshot.fetchedAt, this.refreshIntervalMinutes()));
 
-            const entries = sortPartitionUsageEntries(this.cachedResult!.entries);
+            const entries = sortPartitionUsageEntries(snapshot.usage.entries);
             if (entries.length === 0) {
                 items.push(new PartitionUsageMessageItem('No GPU partition usage data available', 'info'));
                 return items;
             }
 
-            items.push(new PartitionUsageSummaryItem(this.cachedResult!));
+            items.push(new PartitionUsageSummaryItem(snapshot.usage));
             items.push(...entries.map((entry, index) => new PartitionUsageItem(entry, index + 1)));
 
             return items;
@@ -184,5 +200,14 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
             console.error('Error fetching GPU Partition Usage:', error);
             return [new PartitionUsageMessageItem('Failed to fetch GPU Partition Usage', 'error')];
         }
+    }
+
+    private async fetchMaintenanceOnce(): Promise<void> {
+        if (this.hasFetchedMaintenance) {
+            return;
+        }
+
+        this.cachedMaintenanceWindows = await this.slurmService.getMaintenanceWindows();
+        this.hasFetchedMaintenance = true;
     }
 }

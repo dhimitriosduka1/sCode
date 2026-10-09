@@ -65,4 +65,31 @@ describe('leaderboard refresh time formatting', () => {
             ].join('\n')
         );
     });
+
+    it('states the background refresh interval for auto-refreshing views', () => {
+        const refreshedAt = new Date(2026, 3, 28, 9, 5, 7);
+
+        assert.equal(
+            formatLeaderboardRefreshTooltip(refreshedAt, {
+                title: 'GPU Partition Usage refresh',
+                refreshCommandLabel: 'Refresh GPU Partition Usage',
+                autoRefreshMinutes: 5,
+            }),
+            [
+                '**GPU Partition Usage refresh**',
+                '',
+                `- **Fetched at:** ${refreshedAt.toLocaleString()}`,
+                '- **Auto-refresh:** every 5 min',
+                '',
+                'Use Refresh GPU Partition Usage to update it now.',
+            ].join('\n')
+        );
+    });
+
+    it('says when background refresh is turned off', () => {
+        const markdown = formatLeaderboardRefreshTooltip(new Date(2026, 3, 28, 9, 5, 7), { autoRefreshMinutes: 0 });
+
+        assert.match(markdown, /- \*\*Auto-refresh:\*\* off/);
+        assert.match(markdown, /to update it\.$/);
+    });
 });

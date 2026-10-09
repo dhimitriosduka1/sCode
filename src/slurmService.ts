@@ -12,6 +12,7 @@ import {
     createMockMaintenanceWindows,
     MOCK_ACCOUNT_OVERVIEW_ROWS,
     MOCK_SCONTROL_NODE_OUTPUT,
+    MOCK_SINFO_CPU_OUTPUT,
     MOCK_SINFO_NODE_OUTPUT,
     MOCK_SPRIO_OUTPUT,
     MOCK_SQUEUE_PARTITION_JOBS_OUTPUT,
@@ -854,6 +855,48 @@ export interface PartitionUsageResult {
     entries: PartitionUsageEntry[];
     clusterAllocatedGpus: number;
     clusterAvailableGpus: number;
+}
+
+/** CPU allocation for one partition, from `sinfo --format="%P|%C"` */
+export interface CpuPartitionUsage {
+    partition: string;
+    allocatedCpus: number;
+    idleCpus: number;
+    /** Down, drained, or otherwise unusable */
+    otherCpus: number;
+    totalCpus: number;
+}
+
+/**
+ * Parses `sinfo --noheader --format="%P|%C"`, one line per partition with its
+ * CPUs as allocated/idle/other/total. Covers every partition, including the
+ * CPU-only ones that GPU Partition Usage leaves out.
+ */
+export function parseSinfoCpuOutput(stdout: string): CpuPartitionUsage[] {
+    const usage = new Map<string, CpuPartitionUsage>();
+
+    for (const line of stdout.split('\n')) {
+        const [rawPartition, rawCpus] = line.split('|');
+        const counts = rawCpus?.trim().split('/').map(value => parseInt(value, 10));
+        if (!rawPartition?.trim() || !counts || counts.length !== 4 || counts.some(isNaN)) {
+            continue;
+        }
+
+        const { partition } = normalizePartitionName(rawPartition);
+        const [allocatedCpus, idleCpus, otherCpus, totalCpus] = counts;
+        // sinfo splits a partition across lines when its nodes differ (e.g. by
+        // state), so the same partition can appear more than once
+        const existing = usage.get(partition);
+        usage.set(partition, {
+            partition,
+            allocatedCpus: allocatedCpus + (existing?.allocatedCpus ?? 0),
+            idleCpus: idleCpus + (existing?.idleCpus ?? 0),
+            otherCpus: otherCpus + (existing?.otherCpus ?? 0),
+            totalCpus: totalCpus + (existing?.totalCpus ?? 0),
+        });
+    }
+
+    return [...usage.values()];
 }
 
 /**
@@ -1926,6 +1969,26 @@ export class SlurmService {
      * reservations flagged MAINT. Works on any Slurm cluster that announces
      * downtime this way, regardless of site-specific conventions.
      */
+    /**
+     * Get CPU allocation for every partition. Empty when sinfo is unavailable.
+     */
+    async getCpuPartitionUsage(): Promise<CpuPartitionUsage[]> {
+        if (this.isMockMode()) {
+            return parseSinfoCpuOutput(MOCK_SINFO_CPU_OUTPUT);
+        }
+
+        try {
+            const { stdout } = await this.commandRunner(
+                'sinfo --noheader --format="%P|%C"',
+                { maxBuffer: 32 * 1024 * 1024 }
+            );
+            return parseSinfoCpuOutput(stdout);
+        } catch (error) {
+            console.error('Failed to get CPU partition usage:', error);
+            return [];
+        }
+    }
+
     async getMaintenanceWindows(): Promise<MaintenanceWindow[]> {
         if (this.isMockMode()) {
             return createMockMaintenanceWindows();

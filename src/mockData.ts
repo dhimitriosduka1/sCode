@@ -305,6 +305,16 @@ export const MOCK_SINFO_NODE_OUTPUT = [
     'cpu-01|cpu|allocated|(null)',
 ].join('\n');
 
+// sinfo --noheader --format="%P|%C" (CPUs allocated/idle/other/total per partition)
+export const MOCK_SINFO_CPU_OUTPUT = [
+    'h200*|300/660/192/1152',
+    'a100-long|420/476/128/1024',
+    'a100-short|96/672/0/768',
+    'l40s|40/280/0/320',
+    'debug-gpu|0/64/0/64',
+    'cpu|110/18/0/128',
+].join('\n');
+
 // scontrol show node (AllocTRES ground truth)
 export const MOCK_SCONTROL_NODE_OUTPUT = [
     'NodeName=gpu-h200-01 Arch=x86_64 CoresPerSocket=64',

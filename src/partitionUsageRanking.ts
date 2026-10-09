@@ -34,17 +34,25 @@ export function formatPartitionUsageNodeBreakdown(entry: PartitionUsageEntry): s
     return `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total`;
 }
 
-export function formatPartitionUsageTooltipMarkdown(entry: PartitionUsageEntry): string {
+/**
+ * @param options.showDefault Whether to include the default-partition row; partition
+ *   autocomplete leaves it out
+ */
+export function formatPartitionUsageTooltipMarkdown(
+    entry: PartitionUsageEntry,
+    options: { showDefault?: boolean } = {},
+): string {
     const loadPercent = Math.round(getPartitionUsageRatio(entry) * 100);
     const details = [
-        { label: 'Default partition', value: entry.isDefault ? 'Yes' : 'No' },
+        ...(options.showDefault === false ? [] : [{ label: 'Default partition', value: entry.isDefault ? 'Yes' : 'No' }]),
         { label: 'Load', value: `${loadPercent}%` },
         { label: 'Running jobs', value: entry.runningJobs },
         { label: 'Pending jobs', value: entry.pendingJobs },
         { label: 'Nodes', value: formatPartitionUsageNodeBreakdown(entry) },
     ];
 
-    details.splice(2, 0,
+    // GPU rows follow the load, wherever it lands
+    details.splice(details.findIndex(detail => detail.label === 'Load') + 1, 0,
         { label: 'GPUs', value: formatPartitionUsageGpuBreakdown(entry) },
         { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
     );
@@ -64,7 +72,7 @@ export function formatPartitionUsageSummary(result: PartitionUsageResult): strin
     return `${result.clusterAllocatedGpus}/${result.clusterAvailableGpus} GPUs allocated · ${totalPendingJobs} pending · ${totalPartitions} ${partitionLabel}`;
 }
 
-function getPartitionUsageRatio(entry: PartitionUsageEntry): number {
+export function getPartitionUsageRatio(entry: PartitionUsageEntry): number {
     const capacity = getPartitionCapacity(entry);
     if (capacity <= 0) {
         return 1;

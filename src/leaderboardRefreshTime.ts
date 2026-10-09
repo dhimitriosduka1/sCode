@@ -23,6 +23,8 @@ export function formatLeaderboardRefreshLabel(refreshedAt: Date, now: Date = new
 export interface RefreshTooltipOptions {
     title?: string;
     refreshCommandLabel?: string;
+    /** Background refresh interval; omitted for views that only refresh manually, 0 when turned off */
+    autoRefreshMinutes?: number;
 }
 
 export function formatLeaderboardRefreshTooltip(
@@ -31,10 +33,21 @@ export function formatLeaderboardRefreshTooltip(
 ): string {
     const title = options.title ?? 'Hall of Shame refresh';
     const refreshCommandLabel = options.refreshCommandLabel ?? 'Refresh Hall of Shame';
+    const details = [{ label: 'Fetched at', value: refreshedAt.toLocaleString() }];
+    if (options.autoRefreshMinutes !== undefined) {
+        details.push({
+            label: 'Auto-refresh',
+            value: options.autoRefreshMinutes > 0
+                ? `every ${options.autoRefreshMinutes} min`
+                : 'off',
+        });
+    }
 
     return formatTooltipMarkdown({
         title,
-        details: [{ label: 'Fetched at', value: refreshedAt.toLocaleString() }],
-        note: `Use ${refreshCommandLabel} to update it.`,
+        details,
+        note: options.autoRefreshMinutes
+            ? `Use ${refreshCommandLabel} to update it now.`
+            : `Use ${refreshCommandLabel} to update it.`,
     });
 }

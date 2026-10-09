@@ -85,7 +85,7 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 - **Queue Pressure**: Running and pending job counts are shown per GPU partition, including pending jobs that target multiple partitions.
 - **GPU Type Breakdown**: Hover a partition row to see GPU types and capacity, such as `a100`, `h200`, or generic GPUs.
 - **Expandable Rows**: Expand a partition row to see its GPU counts, node counts, GPU types, and job counts as child rows.
-- **Manual refresh only**: The view fetches data when opened or manually refreshed, avoiding background load on the Slurm controller.
+- **Background Refresh**: The view refreshes itself every 5 minutes (a progress bar shows while it runs), and the refresh button updates it on demand. Use the watch icon (`$(watch)`) in the toolbar or the `partitionRefreshInterval` setting to pick another interval or turn background refresh off. The same data feeds partition autocomplete, so both always agree.
 
 ### Cluster Maintenance Warnings
 - **Downtime Heads-Up**: Active Jobs, GPU Partition Usage, and Cluster Overview show a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress.
@@ -133,6 +133,7 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 - **Submit with Dependency**: A link button next to Quick Submit starts an interactive workflow guiding you through selecting active dependency jobs and types (`afterok`, `afterany`, etc.).
 - **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` to see real-time GPU usage, running/pending jobs, and node availability with a visual usage bar.
 - **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
+- **Partition Autocomplete**: While typing a partition in a submit script, get every partition on the cluster as a suggestion, each with its load and idle GPUs (or CPUs, for CPU-only partitions). GPU partitions are listed first and CPU-only ones after, each group least busy first, with distinct icons for the two kinds. Works for `#SBATCH --partition=`, `-p`, abbreviations like `--part=`, the same options on `srun`/`salloc`/`sbatch` lines, and `SBATCH_PARTITION`-style variables. In lists like `--partition=gpu1,gpu2`, each slot is completed in turn and partitions already listed aren't offered again.
 
 ![GPU partition usage and submit-script partition hover stats](screenshots/gpu_submission_submit_script.png)
 
@@ -148,6 +149,7 @@ Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on
 | `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
 | `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
 | `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
+| `partitionRefreshInterval` | `5` | Background refresh of GPU Partition Usage and partition autocomplete (in minutes, `0` = off). Range: **1 → 120 min** |
 | `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
 | `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
 | `showFairShare` | `true` | Show fair share standing and pending-job priority breakdowns (needs Slurm accounting + multifactor priority) |
