@@ -1,7 +1,15 @@
 import { CpuPartitionUsage, PartitionUsageEntry } from './slurmService';
 import { formatPartitionUsageTooltipMarkdown, getPartitionUsageRatio } from './partitionUsageRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
-import { findOptionValueAtCursor, isPlainComment, LineSegment, PARTITION_OPTION } from './slurmScriptOptions';
+import {
+    findLineSegments,
+    findOptionOccurrencesInSegment,
+    findOptionValueAtCursor,
+    isPlainComment,
+    LineSegment,
+    PARTITION_OPTION,
+} from './slurmScriptOptions';
+import { withPartitionDataFreshness } from './leaderboardRefreshTime';
 
 /** Where a partition name is being typed, and which part of the line completing it replaces. */
 export interface PartitionCompletionContext {
@@ -57,6 +65,60 @@ export function findPartitionCompletionContext(line: string, cursor: number): Pa
         alreadyListed: [...typedSlots.slice(0, -1), ...laterSlots].filter(slot => slot.length > 0),
         segment: option && { start: option.segmentStart, kind: option.kind },
     };
+}
+
+/** A partition name written on a line, and the columns it spans. */
+export interface PartitionNameRange {
+    name: string;
+    start: number;
+    end: number;
+}
+
+const PARTITION_ENVIRONMENT_ASSIGNMENT = /(?:^|[\s;])(?:export\s+)?(?:SBATCH|SALLOC|SLURM)_PARTITION=(["']?)([^\s"']*)/g;
+
+/**
+ * Every partition name on a line, in the same places completion recognises:
+ * directives, `srun`/`salloc`/`sbatch` options, and `SBATCH_PARTITION`-style
+ * variables. Lists are split so each name has its own range.
+ */
+export function findPartitionNames(line: string): PartitionNameRange[] {
+    if (isPlainComment(line)) {
+        return [];
+    }
+
+    const values = findLineSegments(line)
+        .flatMap(segment => findOptionOccurrencesInSegment(line, segment, PARTITION_OPTION));
+    for (const match of line.matchAll(PARTITION_ENVIRONMENT_ASSIGNMENT)) {
+        values.push({ option: '', value: match[2], valueStart: (match.index ?? 0) + match[0].length - match[2].length });
+    }
+
+    const names: PartitionNameRange[] = [];
+    for (const { value, valueStart } of values) {
+        let start = valueStart;
+        for (const name of value.split(',')) {
+            if (name) {
+                names.push({ name, start, end: start + name.length });
+            }
+            start += name.length + 1;
+        }
+    }
+    return names;
+}
+
+/** The partition name at a column, if any. */
+export function findPartitionNameAt(line: string, character: number): PartitionNameRange | undefined {
+    return findPartitionNames(line).find(range => character >= range.start && character <= range.end);
+}
+
+/**
+ * Hover panel for a partition name: how fresh the data is, then the same
+ * details as the completion list, or a not-found note that hints at a typo.
+ */
+export function formatPartitionHover(name: string, load: PartitionLoad | undefined, fetchedAt: Date, now: Date = new Date()): string {
+    const details = load
+        ? formatPartitionLoadDocumentation(load)
+        : formatTooltipMarkdown({ title: name, summary: 'Not found on this cluster. Check the partition name.' });
+    return withPartitionDataFreshness(details, fetchedAt, now);
 }
 
 function findEnvironmentValueStart(before: string): number | undefined {

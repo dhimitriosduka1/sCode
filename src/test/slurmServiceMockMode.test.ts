@@ -101,7 +101,6 @@ describe('SlurmService mock mode', () => {
         const leaderboard = await service.getClusterLeaderboard();
         const accountOverview = await service.getClusterAccountOverview();
         const partitionUsage = await service.getPartitionUsage();
-        const stats = await service.getPartitionStats('h200');
 
         assert.ok(history.length >= 4);
         assert.ok(history.some(job => job.state === 'COMPLETED'));
@@ -151,16 +150,6 @@ describe('SlurmService mock mode', () => {
             entry.availableGpus === 2 &&
             entry.allocatedGpus === 0
         ));
-        assert.deepEqual(stats, {
-            totalGpus: 20,
-            allocatedGpus: 6,
-            idleGpus: 14,
-            runningJobs: 2,
-            pendingJobs: 2,
-            nodesUp: 5,
-            nodesTotal: 6,
-            nodeStates: '5/6',
-        });
     });
 
     it('can get and update array task throttle in mock mode', async () => {

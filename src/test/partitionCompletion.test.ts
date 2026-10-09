@@ -4,6 +4,9 @@ import { CpuPartitionUsage, parseSinfoCpuOutput, PartitionUsageEntry, SlurmServi
 import {
     buildPartitionLoads,
     findPartitionCompletionContext,
+    findPartitionNameAt,
+    findPartitionNames,
+    formatPartitionHover,
     formatPartitionLoadDescription,
     formatPartitionLoadDocumentation,
     rankPartitionsForGpuTypes,
@@ -295,5 +298,56 @@ describe('rankPartitionsForGpuTypes', () => {
     it('marks missing types in the description', () => {
         const [, , mismatch] = rankPartitionsForGpuTypes(loads, ['h200']);
         assert.equal(formatPartitionLoadDescription(mismatch.load, mismatch.missingGpuTypes), '0% busy · 16 idle GPUs · no h200');
+    });
+});
+
+describe('findPartitionNames', () => {
+    const names = (line: string) => findPartitionNames(line).map(({ name, start, end }) => `${name}@${start}-${end}`);
+
+    it('finds names in every form, splitting lists', () => {
+        assert.deepEqual(names('#SBATCH -p a100,h200'), ['a100@11-15', 'h200@16-20']);
+        assert.deepEqual(names('#SBATCH --part="gpu"'), ['gpu@16-19']);
+        assert.deepEqual(names('#SBATCH -pcpu'), ['cpu@10-13']);
+    });
+
+    it('finds names on srun lines but not in the launched program', () => {
+        assert.deepEqual(names('srun -p l40s python run.py -p 5'), ['l40s@8-12']);
+    });
+
+    it('finds names in partition variables', () => {
+        assert.deepEqual(names('export SBATCH_PARTITION=a,b'), ['a@24-25', 'b@26-27']);
+    });
+
+    it('finds nothing in plain comments', () => {
+        assert.deepEqual(names('# -p a100'), []);
+        assert.deepEqual(names('# SBATCH_PARTITION=a100'), []);
+    });
+});
+
+describe('findPartitionNameAt', () => {
+    it('picks the name under the cursor in a list', () => {
+        assert.equal(findPartitionNameAt('#SBATCH -p a100,h200', 17)?.name, 'h200');
+        assert.equal(findPartitionNameAt('#SBATCH -p a100,h200', 12)?.name, 'a100');
+    });
+
+    it('finds nothing off a name', () => {
+        assert.equal(findPartitionNameAt('#SBATCH -p a100,h200', 3), undefined);
+    });
+});
+
+describe('formatPartitionHover', () => {
+    const now = new Date(2026, 9, 9, 14, 30, 0);
+    const fetchedAt = new Date(now.getTime() - 2 * 60_000);
+
+    it('opens with the data\'s age, then the partition details', () => {
+        const [load] = buildPartitionLoads([], [cpuEntry({ partition: 'cpu', allocatedCpus: 40, idleCpus: 60 })]);
+        const markdown = formatPartitionHover('cpu', load, fetchedAt, now);
+
+        assert.match(markdown, /^Updated 2 min ago &nbsp; \[\$\(refresh\)\]\(command:slurmPartitionUsage\.refresh "Refresh partition data"\)\n\n---\n\n\*\*cpu\*\*/);
+        assert.match(markdown, /40\/100 CPUs · 60 idle/);
+    });
+
+    it('says when a name isn\'t a partition on this cluster', () => {
+        assert.match(formatPartitionHover('a10', undefined, fetchedAt, now), /\*\*a10\*\*\n\nNot found on this cluster\. Check the partition name\./);
     });
 });

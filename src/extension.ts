@@ -366,7 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register hover provider for partition stats on hover
     const hoverProvider = vscode.languages.registerHoverProvider(
         slurmScriptSelector,
-        new SlurmHoverProvider(slurmService)
+        new SlurmHoverProvider(slurmService, partitionDataStore)
     );
 
     // Suggest partitions and GPU types wherever a script names them

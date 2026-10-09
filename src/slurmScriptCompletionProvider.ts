@@ -13,7 +13,7 @@ import {
     formatGpuTypeDocumentation,
     GpuTypeCompletionContext,
 } from './gpuTypeCompletion';
-import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
+import { PARTITION_REFRESH_COMMAND, withPartitionDataFreshness } from './leaderboardRefreshTime';
 import { PartitionDataStore, PartitionSnapshot } from './partitionDataStore';
 import { readLineGpuTypes, readScriptHeader } from './slurmScriptAnalysis';
 import { resolveLineOrScript } from './slurmScriptOptions';
@@ -118,7 +118,7 @@ function createPartitionItems(
         item.range = range;
         // Keeps the ranking (matching GPU types, then GPU partitions, least occupied first); VS Code otherwise sorts alphabetically
         item.sortText = String(index).padStart(4, '0');
-        item.documentation = withRefreshFooter(formatPartitionLoadDocumentation(load), fetchedAt);
+        item.documentation = withFreshness(formatPartitionLoadDocumentation(load), fetchedAt);
         return item;
     });
 }
@@ -147,14 +147,19 @@ function createGpuTypeItems(
         item.range = range;
         // Keeps the most idle type first; VS Code otherwise sorts alphabetically
         item.sortText = String(index).padStart(4, '0');
-        item.documentation = withRefreshFooter(formatGpuTypeDocumentation(availability), fetchedAt);
+        item.documentation = withFreshness(formatGpuTypeDocumentation(availability), fetchedAt);
         return item;
     });
 }
 
-/** Data can be minutes old between refreshes, so the details say how old. */
-function withRefreshFooter(markdown: string, fetchedAt: Date): vscode.MarkdownString {
-    return new vscode.MarkdownString(`${markdown}\n\n_${formatLeaderboardRefreshLabel(fetchedAt)}_`);
+/**
+ * Data can be minutes old between refreshes, so the details open with how old
+ * it is and a link to refresh, the same line the partition hover shows.
+ */
+function withFreshness(markdown: string, fetchedAt: Date): vscode.MarkdownString {
+    const documentation = new vscode.MarkdownString(withPartitionDataFreshness(markdown, fetchedAt), true);
+    documentation.isTrusted = { enabledCommands: [PARTITION_REFRESH_COMMAND] };
+    return documentation;
 }
 
 /** The document's lines, read lazily so scanning a script's header stops at its first command. */
