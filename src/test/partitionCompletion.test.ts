@@ -6,6 +6,7 @@ import {
     findPartitionCompletionContext,
     formatPartitionLoadDescription,
     formatPartitionLoadDocumentation,
+    rankPartitionsForGpuTypes,
 } from '../partitionCompletion';
 
 /** Context with the cursor at `|` in the line */
@@ -29,7 +30,9 @@ function replaced(lineWithCursor: string): string | undefined {
 describe('findPartitionCompletionContext', () => {
     describe('#SBATCH directives', () => {
         it('completes after --partition=', () => {
-            assert.deepEqual(contextAt('#SBATCH --partition=|'), { prefix: '', replaceStart: 20, replaceEnd: 20, alreadyListed: [] });
+            assert.deepEqual(contextAt('#SBATCH --partition=|'), {
+                prefix: '', replaceStart: 20, replaceEnd: 20, alreadyListed: [], segment: { start: 7, kind: 'directive' },
+            });
         });
 
         it('completes a partially typed name', () => {
@@ -83,7 +86,7 @@ describe('findPartitionCompletionContext', () => {
     describe('multiple partitions', () => {
         it('completes the slot after the last comma, listing earlier ones', () => {
             assert.deepEqual(contextAt('#SBATCH --partition=gpu1,|'), {
-                prefix: '', replaceStart: 25, replaceEnd: 25, alreadyListed: ['gpu1'],
+                prefix: '', replaceStart: 25, replaceEnd: 25, alreadyListed: ['gpu1'], segment: { start: 7, kind: 'directive' },
             });
             assert.deepEqual(contextAt('#SBATCH -p gpu1,gpu2,c|')?.alreadyListed, ['gpu1', 'gpu2']);
             assert.equal(contextAt('#SBATCH -p gpu1,gpu2,c|')?.prefix, 'c');
@@ -122,6 +125,10 @@ describe('findPartitionCompletionContext', () => {
     });
 
     describe('environment variables', () => {
+        it('has no directive or command for a variable', () => {
+            assert.equal(contextAt('export SBATCH_PARTITION=|')?.segment, undefined);
+        });
+
         it('completes SBATCH_PARTITION, SALLOC_PARTITION and SLURM_PARTITION', () => {
             assert.equal(contextAt('export SBATCH_PARTITION=|')?.prefix, '');
             assert.equal(contextAt('SALLOC_PARTITION=a|')?.prefix, 'a');
@@ -258,5 +265,35 @@ describe('partition loads in mock mode', () => {
             const ratios = loads.filter(load => load.resource === resource).map(load => load.loadRatio);
             assert.deepEqual(ratios, [...ratios].sort((a, b) => a - b));
         }
+    });
+});
+
+describe('rankPartitionsForGpuTypes', () => {
+    const loads = buildPartitionLoads(
+        [
+            gpuEntry({ partition: 'quiet-a100', allocatedGpus: 0, idleGpus: 16, gpuTypes: [{ type: 'a100', count: 16 }] }),
+            gpuEntry({ partition: 'busy-h200', allocatedGpus: 15, gpuTypes: [{ type: 'h200', count: 16 }] }),
+            gpuEntry({ partition: 'mixed', allocatedGpus: 8, gpuTypes: [{ type: 'a100', count: 8 }, { type: 'h200', count: 8 }] }),
+        ],
+        [cpuEntry({ partition: 'cpu' })],
+    );
+    const ranked = (types: string[]) => rankPartitionsForGpuTypes(loads, types)
+        .map(({ load, missingGpuTypes }) => `${load.partition}${missingGpuTypes.length ? ` (no ${missingGpuTypes.join(', ')})` : ''}`);
+
+    it('keeps the usual order when no GPU type is requested', () => {
+        assert.deepEqual(ranked([]), ['quiet-a100', 'mixed', 'busy-h200', 'cpu']);
+    });
+
+    it('puts partitions with the requested type first, keeping the rest marked', () => {
+        assert.deepEqual(ranked(['h200']), ['mixed', 'busy-h200', 'quiet-a100 (no h200)', 'cpu (no h200)']);
+    });
+
+    it('only counts partitions with every requested type as a match', () => {
+        assert.deepEqual(ranked(['a100', 'h200']), ['mixed', 'quiet-a100 (no h200)', 'busy-h200 (no a100)', 'cpu (no a100, h200)']);
+    });
+
+    it('marks missing types in the description', () => {
+        const [, , mismatch] = rankPartitionsForGpuTypes(loads, ['h200']);
+        assert.equal(formatPartitionLoadDescription(mismatch.load, mismatch.missingGpuTypes), '0% busy · 16 idle GPUs · no h200');
     });
 });

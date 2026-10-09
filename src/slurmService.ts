@@ -848,7 +848,10 @@ export interface PartitionUsageEntry {
     idleGpus: number;
     runningJobs: number;
     pendingJobs: number;
+    /** Installed GPUs per type, including those on unavailable nodes */
     gpuTypes: ClusterLeaderboardGpuType[];
+    /** Idle GPUs per type on available nodes; absent when not derived from per-node data */
+    idleGpusByType?: ClusterLeaderboardGpuType[];
 }
 
 export interface PartitionUsageResult {
@@ -1272,24 +1275,62 @@ export function parseSprioOutput(stdout: string): JobPriorityFactors[] {
 
 export function parseScontrolNodeOutput(stdout: string): Map<string, number> {
     const allocatedGpusByNode = new Map<string, number>();
+    for (const [nodeName, allocations] of parseScontrolNodeGpuAllocations(stdout)) {
+        allocatedGpusByNode.set(nodeName, sumGpuAllocations(allocations));
+    }
+    return allocatedGpusByNode;
+}
+
+/**
+ * Allocated GPUs per node, by type where AllocTRES names one
+ * (`gres/gpu:a100=2`), otherwise as `generic`.
+ */
+export function parseScontrolNodeGpuAllocations(stdout: string): Map<string, ClusterLeaderboardGpuType[]> {
+    const allocationsByNode = new Map<string, ClusterLeaderboardGpuType[]>();
     // scontrol show node emits key=value tokens separated by whitespace / newlines.
     // Each node block begins with NodeName=<name>.
-    // We look for AllocTRES=... to sum gres/gpu (with or without a type qualifier).
     const nodeBlocks = stdout.split(/(?=\bNodeName=)/).filter(block => block.trim());
     for (const block of nodeBlocks) {
         const nodeMatch = block.match(/\bNodeName=(\S+)/);
         if (!nodeMatch) {
             continue;
         }
-        const nodeName = nodeMatch[1];
 
-        const allocTresMatch = block.match(/\bAllocTRES=(\S*)/);
-        const allocTresValue = allocTresMatch?.[1] ?? '';
-        const gpuAllocations = parseGpuAllocations(allocTresValue);
-        const totalAllocated = sumGpuAllocations(gpuAllocations);
-        allocatedGpusByNode.set(nodeName, totalAllocated);
+        const allocTresValue = block.match(/\bAllocTRES=(\S*)/)?.[1] ?? '';
+        allocationsByNode.set(nodeMatch[1], parseGpuAllocations(allocTresValue));
     }
-    return allocatedGpusByNode;
+    return allocationsByNode;
+}
+
+/**
+ * Idle GPUs per type on one node: its configured GPUs minus what is
+ * allocated. Typed allocations come off their own type; an untyped one comes
+ * off the node's types in order, which is exact for the usual single-type node.
+ */
+export function getNodeIdleGpusByType(
+    configured: ClusterLeaderboardGpuType[],
+    allocated: ClusterLeaderboardGpuType[],
+): Map<string, number> {
+    const idle = new Map<string, number>();
+    for (const { type, count } of configured) {
+        idle.set(type, (idle.get(type) ?? 0) + count);
+    }
+
+    let untyped = 0;
+    for (const { type, count } of allocated) {
+        if (type !== 'generic' && idle.has(type)) {
+            idle.set(type, idle.get(type)! - count);
+        } else {
+            untyped += count;
+        }
+    }
+
+    for (const [type, remaining] of idle) {
+        const taken = Math.min(Math.max(remaining, 0), untyped);
+        untyped -= taken;
+        idle.set(type, Math.max(0, remaining - taken));
+    }
+    return idle;
 }
 
 /**
@@ -1346,6 +1387,7 @@ export function parsePartitionUsageOutput(
     // GPU allocations to all of a node's partitions in phase 3.
     const nodePartitions = new Map<string, { partition: string; isDefault: boolean }[]>();
     const nodeGpuConfig = new Map<string, ClusterLeaderboardGpuType[]>(); // GPU config per node
+    const availableNodes = new Set<string>(); // allocated or idle, so its GPUs can be scheduled
     const seenNodesForCapacity = new Set<string>();
 
     const sinfoLines = sinfoNodeStdout.trim().split('\n').filter(line => line.trim());
@@ -1374,6 +1416,9 @@ export function parsePartitionUsageOutput(
         // Determine per-node state bucket (mirrors parseSinfoNodeStateSummary logic)
         const isAllocated = nodeState.startsWith('allocated') || nodeState.startsWith('mixed');
         const isIdle = nodeState.startsWith('idle');
+        if (isAllocated || isIdle) {
+            availableNodes.add(nodeName);
+        }
 
         if (!seenNodesForCapacity.has(nodeName)) {
             seenNodesForCapacity.add(nodeName);
@@ -1426,7 +1471,29 @@ export function parsePartitionUsageOutput(
     }
 
     // --- Phase 2: Get ground-truth per-node GPU allocation from scontrol ---
-    const allocatedGpusByNode = parseScontrolNodeOutput(scontrolStdout);
+    const gpuAllocationsByNode = parseScontrolNodeGpuAllocations(scontrolStdout);
+    const allocatedGpusByNode = new Map(
+        [...gpuAllocationsByNode].map(([nodeName, allocations]) => [nodeName, sumGpuAllocations(allocations)]),
+    );
+
+    // --- Phase 2b: Idle GPUs per type, so a partition mixing GPU types can say
+    // which ones are free; summed per partition over its available nodes ---
+    const idleGpuTypesByPartition = new Map<string, Map<string, number>>();
+    for (const [nodeName, partitions] of nodePartitions) {
+        const configured = nodeGpuConfig.get(nodeName);
+        if (!configured || !availableNodes.has(nodeName)) {
+            continue;
+        }
+
+        const nodeIdle = getNodeIdleGpusByType(configured, gpuAllocationsByNode.get(nodeName) ?? []);
+        for (const { partition } of partitions) {
+            const partitionIdle = idleGpuTypesByPartition.get(partition) ?? new Map<string, number>();
+            for (const [type, idle] of nodeIdle) {
+                partitionIdle.set(type, (partitionIdle.get(type) ?? 0) + idle);
+            }
+            idleGpuTypesByPartition.set(partition, partitionIdle);
+        }
+    }
 
     // --- Phase 3: Attribute node-level GPU allocations to every partition the node belongs to ---
     for (const [nodeName, allocatedGpus] of allocatedGpusByNode) {
@@ -1477,6 +1544,7 @@ export function parsePartitionUsageOutput(
     for (const entry of entriesByPartition.values()) {
         entry.idleGpus = Math.max(0, entry.availableGpus - entry.allocatedGpus);
         entry.gpuTypes = formatGpuTypeEntries(gpuTypesByPartition.get(entry.partition) || new Map<string, number>());
+        entry.idleGpusByType = formatGpuTypeEntries(idleGpuTypesByPartition.get(entry.partition) || new Map<string, number>());
     }
 
     const entries = Array.from(entriesByPartition.values())

@@ -11,7 +11,8 @@ import {
     normalizeLeaderboardEntryCount,
 } from './leaderboardRanking';
 import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvider';
-import { PartitionCompletionProvider, PARTITION_COMPLETION_TRIGGER_CHARACTERS } from './partitionCompletionProvider';
+import { SlurmScriptCompletionProvider, SLURM_SCRIPT_COMPLETION_TRIGGER_CHARACTERS } from './slurmScriptCompletionProvider';
+import { SlurmScriptDiagnostics } from './slurmScriptDiagnostics';
 import { PartitionDataStore } from './partitionDataStore';
 import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
@@ -368,13 +369,15 @@ export function activate(context: vscode.ExtensionContext) {
         new SlurmHoverProvider(slurmService)
     );
 
-    // Suggest partitions, least occupied first, wherever a script names one
-    const partitionCompletionProvider = new PartitionCompletionProvider(slurmService, partitionDataStore);
-    const partitionCompletionRegistration = vscode.languages.registerCompletionItemProvider(
+    // Suggest partitions and GPU types wherever a script names them
+    const slurmScriptCompletionRegistration = vscode.languages.registerCompletionItemProvider(
         slurmScriptSelector,
-        partitionCompletionProvider,
-        ...PARTITION_COMPLETION_TRIGGER_CHARACTERS,
+        new SlurmScriptCompletionProvider(slurmService, partitionDataStore),
+        ...SLURM_SCRIPT_COMPLETION_TRIGGER_CHARACTERS,
     );
+
+    // Underline GPU types the script's partitions don't have
+    const slurmScriptDiagnostics = new SlurmScriptDiagnostics(partitionDataStore, slurmScriptSelector);
 
     // Underline decorations for hoverable partition names
     const decorationProvider = new SlurmDecorationProvider();
@@ -1527,7 +1530,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(editorChangeListener);
     context.subscriptions.push(docChangeListener);
     context.subscriptions.push(hoverProvider);
-    context.subscriptions.push(partitionCompletionRegistration);
+    context.subscriptions.push(slurmScriptCompletionRegistration, slurmScriptDiagnostics);
     context.subscriptions.push(partitionUsageProvider, { dispose: () => partitionRefreshScheduler.stop() });
     context.subscriptions.push(decorationProvider);
     context.subscriptions.push(decorEditorListener);
