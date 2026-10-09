@@ -149,7 +149,8 @@
       },
       {
         "command": "slurmJobs.setAutoRefreshInterval",
-        "title": "Set Auto Refresh Interval"
+        "title": "Set Auto Refresh Interval",
+        "icon": "$(watch)"
       },
       {
         "command": "slurmJobs.cancelJob",
@@ -303,14 +304,9 @@
           "group": "navigation@3"
         },
         {
-          "command": "slurmJobs.toggleAutoRefresh",
+          "command": "slurmJobs.setAutoRefreshInterval",
           "when": "view == slurmJobs",
-          "group": "navigation@4"
-        },
-        {
-          "command": "slurmJobs.submitJob",
-          "when": "view == slurmJobs",
-          "group": "navigation@5"
+          "group": "navigation@8"
         },
         {
           "command": "slurmJobs.cancelAllJobs",

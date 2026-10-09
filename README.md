@@ -36,6 +36,7 @@ SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in
 
 ### Active Job Management
 - **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Completing, and other active states).
+- **Auto-Refresh Interval**: Use the watch icon (`$(watch)`) in the Active Jobs toolbar to pick how often jobs refresh, or turn auto-refresh off; the status bar item toggles it on and off with one click.
 - **Time Awareness**: Smart progress bars show elapsed vs. requested wall time.
 - **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
 - **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.

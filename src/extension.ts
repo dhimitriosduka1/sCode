@@ -100,6 +100,76 @@ function stopAutoRefresh(): void {
     autoRefreshScheduler.stop();
 }
 
+interface RefreshIntervalPickerOptions {
+    title: string;
+    /** Current interval, or 0 when auto-refresh is off */
+    current: number;
+    /** Interval kept while auto-refresh is off, pre-filled in Custom... */
+    saved?: number;
+    defaultValue: number;
+    presets: number[];
+    min: number;
+    max: number;
+    /** 'seconds' or 'minutes', for the custom input prompt */
+    unitName: string;
+    /** Renders an interval in the picker's unit, e.g. "30s" or "5 min" */
+    format: (value: number) => string;
+}
+
+/**
+ * Shared interval picker behind the toolbar watch icons, so every view offers
+ * the same presets, Off, and Custom... choices. Resolves to the chosen
+ * interval, 0 for Off, or undefined when dismissed.
+ */
+async function pickRefreshInterval(options: RefreshIntervalPickerOptions): Promise<number | undefined> {
+    const selected = await vscode.window.showQuickPick(
+        [
+            ...options.presets.map(value => ({
+                label: `Every ${options.format(value)}`,
+                description: value === options.defaultValue ? 'default' : undefined,
+                value: value as number | undefined,
+            })),
+            { label: 'Off', description: 'Only refresh manually', value: 0 },
+            {
+                label: 'Custom...',
+                description: `Enter an interval from ${options.min} to ${options.max} ${options.unitName}`,
+                value: undefined,
+            },
+        ],
+        {
+            placeHolder: options.current > 0 ? `Current: every ${options.format(options.current)}` : 'Current: off',
+            title: options.title,
+        }
+    );
+
+    if (!selected) {
+        return undefined;
+    }
+
+    if (selected.value !== undefined) {
+        return selected.value;
+    }
+
+    const input = await vscode.window.showInputBox({
+        prompt: `Enter refresh interval in ${options.unitName} (${options.min}-${options.max})`,
+        placeHolder: `e.g., ${options.defaultValue}`,
+        value: String(options.current || options.saved || options.defaultValue),
+        validateInput: (value) => {
+            const num = Number(value);
+            if (!Number.isInteger(num) || num < options.min || num > options.max) {
+                return `Please enter a whole number between ${options.min} and ${options.max}`;
+            }
+            return null;
+        },
+    });
+
+    return input === undefined ? undefined : Number(input);
+}
+
+function formatSeconds(seconds: number): string {
+    return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds}s`;
+}
+
 /**
  * Extension activation
  * Called when the extension is activated (e.g., when the SLURM view is opened)
@@ -558,80 +628,56 @@ export function activate(context: vscode.ExtensionContext) {
         );
     });
 
-    // Register set autorefresh interval command
+    // Register set autorefresh interval command (the watch icon in the Active Jobs toolbar)
     const setAutoRefreshIntervalCommand = vscode.commands.registerCommand('slurmJobs.setAutoRefreshInterval', async () => {
-        const config = vscode.workspace.getConfiguration('slurmClusterManager');
-        const currentInterval = config.get<number>('autoRefreshInterval', 30);
-
-        const input = await vscode.window.showInputBox({
-            prompt: 'Enter auto-refresh interval in seconds (5-3600)',
-            placeHolder: 'e.g., 30',
-            value: String(currentInterval),
-            validateInput: (value) => {
-                const num = parseInt(value, 10);
-                if (isNaN(num) || num < 5 || num > 3600) {
-                    return 'Please enter a number between 5 and 3600';
-                }
-                return null;
-            },
+        const { enabled, interval } = getAutoRefreshConfig();
+        const seconds = await pickRefreshInterval({
+            title: 'Set Auto Refresh Interval',
+            current: enabled ? interval : 0,
+            saved: interval,
+            defaultValue: 30,
+            presets: [10, 30, 60, 120, 300],
+            min: 5,
+            max: 3600,
+            unitName: 'seconds',
+            format: formatSeconds,
         });
 
-        if (input !== undefined) {
-            const newInterval = parseInt(input, 10);
-            await config.update('autoRefreshInterval', newInterval, vscode.ConfigurationTarget.Global);
-            vscode.window.showInformationMessage(`Auto-refresh interval set to ${newInterval} seconds`);
-        }
-    });
-
-    const setPartitionRefreshIntervalCommand = vscode.commands.registerCommand('slurmPartitionUsage.setRefreshInterval', async () => {
-        const currentMinutes = getPartitionRefreshMinutes();
-        const presets = [1, 2, 5, 10, 15, 30];
-        const selected = await vscode.window.showQuickPick(
-            [
-                ...presets.map(minutes => ({
-                    label: `Every ${minutes} min`,
-                    description: minutes === DEFAULT_PARTITION_REFRESH_MINUTES ? 'default' : undefined,
-                    minutes: minutes as number | undefined,
-                })),
-                { label: 'Off', description: 'Only refresh manually', minutes: 0 },
-                { label: 'Custom...', description: 'Enter an interval from 1 to 120 minutes', minutes: undefined },
-            ],
-            {
-                placeHolder: currentMinutes > 0 ? `Current: every ${currentMinutes} min` : 'Current: off',
-                title: 'Set GPU Partition Usage Refresh Interval',
-            }
-        );
-
-        if (!selected) {
+        if (seconds === undefined) {
             return;
         }
 
-        let newMinutes = selected.minutes;
-        if (newMinutes === undefined) {
-            const input = await vscode.window.showInputBox({
-                prompt: 'Enter refresh interval in minutes (1-120)',
-                placeHolder: 'e.g., 5',
-                value: String(currentMinutes || DEFAULT_PARTITION_REFRESH_MINUTES),
-                validateInput: (value) => {
-                    const num = Number(value);
-                    if (!Number.isInteger(num) || num < 1 || num > 120) {
-                        return 'Please enter a whole number between 1 and 120';
-                    }
-                    return null;
-                },
-            });
+        // Picking an interval also turns auto-refresh on; Off keeps the interval for next time
+        const config = vscode.workspace.getConfiguration('slurmClusterManager');
+        if (seconds > 0) {
+            await config.update('autoRefreshInterval', seconds, vscode.ConfigurationTarget.Global);
+        }
+        await config.update('autoRefreshEnabled', seconds > 0, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(seconds > 0
+            ? `Auto-refresh every ${formatSeconds(seconds)}`
+            : 'Auto-refresh turned off');
+    });
 
-            if (input === undefined) {
-                return;
-            }
+    const setPartitionRefreshIntervalCommand = vscode.commands.registerCommand('slurmPartitionUsage.setRefreshInterval', async () => {
+        const minutes = await pickRefreshInterval({
+            title: 'Set GPU Partition Usage Refresh Interval',
+            current: getPartitionRefreshMinutes(),
+            defaultValue: DEFAULT_PARTITION_REFRESH_MINUTES,
+            presets: [1, 2, 5, 10, 15, 30],
+            min: 1,
+            max: 120,
+            unitName: 'minutes',
+            format: value => `${value} min`,
+        });
 
-            newMinutes = Number(input);
+        if (minutes === undefined) {
+            return;
         }
 
         const config = vscode.workspace.getConfiguration('slurmClusterManager');
-        await config.update('partitionRefreshInterval', newMinutes, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(newMinutes > 0
-            ? `GPU Partition Usage refreshes every ${newMinutes} min`
+        await config.update('partitionRefreshInterval', minutes, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(minutes > 0
+            ? `GPU Partition Usage refreshes every ${minutes} min`
             : 'GPU Partition Usage auto-refresh turned off');
     });
 

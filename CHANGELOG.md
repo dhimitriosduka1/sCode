@@ -4,6 +4,10 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 
 ## [Unreleased]
 
+### Changed
+- **Active Jobs Refresh Interval**: The Active Jobs toolbar's Toggle Auto Refresh button is replaced by a watch icon (`$(watch)`) that opens the same interval picker as GPU Partition Usage: every 10s, 30s, 1, 2 or 5 min, Off, or a custom interval, instead of requiring a trip to Settings. Picking an interval also turns auto-refresh on; Off turns it off and keeps the interval for next time. The status bar item still toggles auto-refresh with one click. The watch icon sits at the end of the toolbar, where it is in GPU Partition Usage.
+- **Leaner Active Jobs Toolbar**: Removed the Submit Job button from the Active Jobs toolbar to free up space. Submitting from an open script via the editor title bar ▶ button is unchanged, and Submit Job remains available from the Command Palette.
+
 ### Added
 - **Fair Share Visibility** ([#3](https://github.com/dhimitriosduka1/sCode/issues/3)): Slurm fair share is now visible without dropping into a terminal. Active Jobs gains a header row with your Fair Tree fair share factor, and Hall of Shame rows show each user's factor alongside their GPU usage, so you can compare your standing against the people ahead of you in the queue. Sourced from `sshare`, with a single call shared across views and cached for a few minutes.
 - **Pending Job Priority Breakdown**: Pending jobs now show their `sprio` priority components in the tooltip — total priority plus the weighted fair share, age, QOS, partition, and job size contributions — and name the component contributing most to that job's priority. `sprio` is only queried when something is actually pending.
