@@ -312,6 +312,43 @@ describe('parsePartitionUsageOutput', () => {
         assert.equal(clusterAvailableGpus, 32);
     });
 
+    it('treats node state suffix flags and GRES socket-binding annotations as real Slurm emits them', () => {
+        // Real sinfo output carries a trailing flag character on the state
+        // (e.g. "mixed-" = MIXED + backfill-planned, "idle~" = powered down,
+        // "allocated+" = allocated + completing) and a "(S:0-1)" socket
+        // binding suffix on typed GRES. Neither should break bucketing or counts.
+        const sinfoNode = [
+            'n01|gpu|mixed-|gpu:a100:4(S:0-1)',
+            'n02|gpu|allocated+|gpu:a100:4(S:0-1)',
+            'n03|gpu|idle~|gpu:a100:4(S:0-1)',
+        ].join('\n');
+
+        const scontrol = [
+            scontrolBlock('n01', 2),
+            scontrolBlock('n02', 4),
+            scontrolBlock('n03', 0),
+        ].join('\n');
+
+        const { entries } = parsePartitionUsageOutput(sinfoNode, scontrol, '');
+
+        assert.deepEqual(entries, [{
+            partition: 'gpu',
+            isDefault: false,
+            totalNodes: 3,
+            allocatedNodes: 2,
+            idleNodes: 1,
+            otherNodes: 0,
+            totalGpus: 12,
+            availableGpus: 12,
+            allocatedGpus: 6,
+            idleGpus: 6,
+            runningJobs: 0,
+            pendingJobs: 0,
+            gpuTypes: [{ type: 'a100', count: 12 }],
+            idleGpusByType: [{ type: 'a100', count: 6 }],
+        }]);
+    });
+
     it('counts idle GPUs per type in a partition mixing GPU types', () => {
         const sinfoNode = [
             'a01|gpu|allocated|gpu:a100:4',
