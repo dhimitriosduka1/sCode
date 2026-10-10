@@ -1,221 +1,222 @@
-# SLURM Cluster Manager
+<p align="center">
+  <img src="icon.png" alt="SLURM Cluster Manager logo" width="96">
+</p>
 
-**Manage, monitor, and submit SLURM jobs directly from VS Code.**
-
-[![CI](https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml)
-[![Visual Studio Marketplace Version](https://vsmarketplacebadges.dev/version/DhimitriosDuka.slurm-cluster-manager.svg?label=Marketplace)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager)
-[![Open VSX Version](https://img.shields.io/open-vsx/v/DhimitriosDuka/slurm-cluster-manager?label=Open%20VSX)](https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdhimitriosduka1%2FsCode%2Fbadges%2Fdownloads.json)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager)
-[![Rating](https://vsmarketplacebadges.dev/rating/DhimitriosDuka.slurm-cluster-manager.svg?label=Rating)](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager&ssr=false#review-details)
-[![License: MIT](https://img.shields.io/github/license/dhimitriosduka1/sCode?label=License)](LICENSE)
-
-SLURM Cluster Manager brings your HPC workflow into your editor: monitor jobs in real time, inspect logs instantly, compare GPU usage, and take common actions (cancel/submit) without context-switching to a terminal.
-
-![Extension Icon](icon.png)
-
----
-
-## ✨ Highlights
-
-- **Live job monitoring** in a dedicated sidebar (Running / Pending / Completing / Job History)
-- **Visual progress bars** for time usage (`Elapsed / Time Limit`)
-- **GPU Partition Usage** so you can compare partitions before submitting
-- **Cluster Overview** showing which Slurm accounts are using the most GPUs
-- **Fair share visibility** so you can see why your jobs are queued behind everyone else's
-- **GPU stats** via `nvidia-smi` (when available)
-- **One-click actions**: cancel, cancel pending jobs, batch cancel
-- **Job History** grouped by date with configurable lookback range
-- **Instant log access** for `stdout` / `stderr`
-- **Cluster maintenance warnings** ahead of scheduled downtime
-
-![SLURM Cluster Manager sidebar overview](screenshots/full_sidebar_overview.png)
-
----
-
-## 🚀 Features
-
-### Active Job Management
-- **Real-time Monitoring**: View all active jobs at a glance (Running, Pending, Completing, and other active states).
-- **Auto-Refresh Interval**: Use the watch icon (`$(watch)`) in the Active Jobs toolbar to pick how often jobs refresh, or turn auto-refresh off; the status bar item toggles it on and off with one click.
-- **Time Awareness**: Smart progress bars show elapsed vs. requested wall time.
-- **Resource Stats**: Display allocated CPUs, memory, and node count for each job.
-- **GPU Visibility**: Uses `nvidia-smi` to surface GPU utilization and memory usage where supported.
-- **One-Click Actions**: Cancel jobs directly from the UI.
-- **Hold and Release**: Freeze pending jobs (`$(lock)`) to hold them, or unfreeze (`$(unlock)`) to release them back to the queue. Supports bulk hold and release on the `"Pending"` category header.
-- **Held Job Visual Indicator**: Held pending jobs display a distinct lock icon (orange) in the tree view to make their status immediately visible.
-- **Cancel All Running Jobs**: Cancel all running jobs at once via the bin icon (`$(trash)`) on the `"Running"` category header row.
-- **Copy Job ID**: Copy the master base Job ID (excluding array ranges/indices) to the clipboard using the inline/context-menu `$(copy)` action.
-- **Batch Cancel**: Select multiple jobs via checkboxes, then cancel them all at once. The "Cancel All" button becomes "Cancel Selected" when jobs are checked. Selections persist across refreshes.
-- **Pending Cleanup**: Cancel all pending jobs without stopping jobs that are already running.
-- **Smart Pending Display**: Pending jobs hide irrelevant info (Nodes, Elapsed, logs) and instead show human-readable pending reasons, estimated start time, and dependency indicators (🔗).
-- **Job Dependencies**: View dependency info (e.g., `afterok:12345`) in the expanded job details.
-- **Update Dependencies**: Change a pending job's dependency in place via the link icon (`$(link)`) — pick a target from your active jobs, enter a custom Job ID, or clear the dependency entirely. The job itself is excluded from the picker to prevent self-dependency.
-
-![Active SLURM jobs with progress, pending reasons, and expanded job details](screenshots/active_jobs.png)
-
-### Job Array Management
-Smart handling of SLURM job arrays with flexible cancellation and modification options:
-- **Cancel entire array**: Remove all jobs in the array at once
-- **Cancel pending jobs**: Cancel only pending jobs, keep running ones
-- **Cancel specific job(s)**: Flexible input supporting:
-  - Single index: `3`
-  - Range: `0-10` (indices 0 through 10 inclusive)
-  - Step: `0-20:2` (every 2nd job: 0, 2, 4, ..., 20)
-  - List: `1,3,5,7` (non-contiguous jobs)
-- **Bounds validation**: Automatically validates against actual array range
-- **Safety warnings**: Extra confirmation when cancelling >100 jobs
-- **Array Throttle Modification**: Update the concurrent task limit (`ArrayTaskThrottle`) of active/pending job arrays via the number icon (`$(symbol-number)`) on hover.
-
-> **Note:** Array-level cancel options only appear for pending jobs. Running array tasks are cancelled directly like any individual job.
-
-### Job History & Logs
-- **Integrated Job History**: Browse recent completed, failed, and cancelled jobs (default: last 7 days).
-- **Date Grouping**: Jobs are grouped by completion date with compact elapsed-time and end-time labels.
-- **Job History Range Control**: Use the toolbar action to switch between common lookback windows or enter a custom range.
-- **Refresh Awareness**: Job History includes a "last refreshed" row so you know when the data was fetched.
-- **Instant Log Access**: Right-click any job (active or historical) to open its `stdout` / `stderr`.
-- **Log Path Descriptions**: Displays resolved stdout/stderr file paths directly in the Job History sidebar tree view.
-- **Smart Path Resolution**: Automatically resolves log locations from `sbatch` directives and `scontrol` metadata, including relative paths, `~`, Slurm filename placeholders, array IDs, escaped spaces, and unavailable paths like `(null)`.
-
-![Job History grouped by date with expanded job details and stdout/stderr access](screenshots/job_history.png)
-
-### GPU Partition Usage
-- **GPU-only Partition View**: A dedicated sidebar view shows only partitions that advertise GPUs through Slurm GRES.
-- **Least-used First**: Rows are sorted from least used to most used by allocated GPU share, then pending-job pressure, idle GPUs, running jobs, and name.
-- **Available vs. Total GPUs**: Rows distinguish available GPUs from total GPUs so down/draining nodes do not make a partition look more usable than it is.
-- **Queue Pressure**: Running and pending job counts are shown per GPU partition, including pending jobs that target multiple partitions.
-- **GPU Type Breakdown**: Hover a partition row to see GPU types and capacity, such as `a100`, `h200`, or generic GPUs.
-- **Expandable Rows**: Expand a partition row to see its GPU counts, node counts, GPU types, and job counts as child rows.
-- **Background Refresh**: The view refreshes itself every 5 minutes (a progress bar shows while it runs), and the refresh button updates it on demand. Use the watch icon (`$(watch)`) in the toolbar or the `partitionRefreshInterval` setting to pick another interval or turn background refresh off. The same data feeds partition autocomplete, so both always agree.
-
-### Cluster Maintenance Warnings
-- **Downtime Heads-Up**: Active Jobs, GPU Partition Usage, and Cluster Overview show a warning row when a Slurm reservation flagged `MAINT` is upcoming or in progress.
-- **Countdown**: The row counts down to the start ("Cluster maintenance starts in 2d") or notes that maintenance is currently running.
-- **Reservation Details**: Hover the row for the reservation name, affected nodes, and start/end times.
-- **Works Anywhere**: Sourced from `scontrol show reservation`, so it works on any cluster that announces downtime that way.
-
-### Workflow Integrations
-- **Automatic Activation**: The extension starts with VS Code, so the status bar and auto-refresh come up without opening the sidebar first.
-- **Search & Filter**: Quickly find jobs by name.
-- **Cluster Hog Indicators**: Two fun indicators at the top of your job list:
-  - **Job Hog**: The user with the most running jobs (🐷 Job Hog, 🔥 Cluster Dominator, 🤗 CUDA Cuddler, 😋 Node Nom-Nom)
-  - **GPU Hog**: The user hoarding the most GPUs (🧛 VRAMpire, 🎮 GPU Gobbler, ⚡ Watt Wizard, 🏋️ Tensor Titan)
-
-### Fair Share & Job Priority
-- **Your fair share at a glance**: A row at the top of Active Jobs shows your Fair Tree fair share factor (`⚖️ Your fair share: 0.124`). It runs from 0 to 1 — the highest-ranked user on the cluster scores 1.00, so a lower value means your jobs queue further back.
-- **The account that counts**: Fair share is tracked per account, and a job uses the standing of the account it's charged to. With several accounts, the row shows the one your jobs run under (or your default account when nothing is queued) rather than your best one, and its tooltip lists every account's standing.
-- **Per-user fair share**: Hall of Shame rows show each user's fair share factor for the account their GPU jobs run under, so you can see how your standing compares to the people ahead of you in the queue.
-- **Why is this job pending?**: Pending jobs show their `sprio` priority breakdown in the tooltip — total priority plus the fair share, age, QOS, partition, and job size weights — and name the component contributing most.
-- **Shared, cached fetch**: A single `sshare` call is shared across views and cached for a few minutes, so this adds one command per refresh rather than one per view.
-- **Degrades gracefully**: Clusters without Slurm accounting or the multifactor priority plugin simply don't show these rows. Turn the whole feature off with `showFairShare`.
-
-### Hall of Shame
-- **Hall of Shame**: A dedicated sidebar view ranking GPU users by allocated GPUs and running GPU job count.
-- **Fair share factor**: Each row shows the user's Fair Tree fair share factor (`fair share 0.143`).
-- **GPU-only rankings**: CPU-only jobs and CPU-only users are excluded from the Hall of Shame.
-- **Slurm account context**: Rows show the Slurm account responsible for the GPU jobs, with all accounts listed in the tooltip when a user has jobs under multiple accounts.
-- **GPU type breakdown**: Hover a row to see how many GPUs are allocated by type, such as `a100`, `h200`, or generic GPUs.
-- **Cluster GPU share**: Rows show a progress bar for how much of the currently allocated cluster GPU pool each user is holding.
-- **Configurable size**: Use the Hall of Shame toolbar action or `leaderboardTopUserCount` setting to choose how many top GPU users to show.
-- **Manual refresh only** — no background polling, so it won't add load to your cluster.
-- **Last refreshed timestamp**: Shows when the Hall of Shame data was fetched so stale data is easy to spot.
-- **Your row stays visible**: Your own Hall of Shame row is highlighted and shown even when you're outside the configured top count.
-- Top 3 hogs get shame emojis: 💀 🔥 👹
-
-### Cluster Overview
-- **Account-level GPU Usage**: A dedicated sidebar view shows which Slurm accounts are using the most GPUs.
-- **GPU-only accounting**: CPU-only jobs are excluded so the view stays focused on GPU pressure.
-- **Top users per account**: Hover an account row to see the heaviest users under that account.
-- **GPU type breakdown**: Tooltips show how each account's GPU allocation is distributed by GPU type.
-- **Cluster share bars**: Rows show each account's share of currently allocated GPUs as a compact progress bar.
-- **Last refreshed timestamp**: Shows when the Cluster Overview was fetched.
-
-### Script Intelligence
-- **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit immediately.
-- **Submit with Dependency**: A link button next to Quick Submit starts an interactive workflow guiding you through selecting active dependency jobs and types (`afterok`, `afterany`, etc.).
-- **Partition Hover Stats**: Hover over a partition name in a submit script (`#SBATCH -p`, `--partition=`, `srun -p`, lists like `a100,h200`, …) to see its load, GPU or CPU usage, running/pending jobs, and nodes, the same numbers as GPU Partition Usage. The panel opens with how old the data is and a refresh button (`$(refresh)`), and a name that isn't a partition on the cluster says so.
-- **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
-- **Partition Autocomplete**: While typing a partition in a submit script, get every partition on the cluster as a suggestion, each with its load and idle GPUs (or CPUs, for CPU-only partitions). GPU partitions are listed first and CPU-only ones after, each group least busy first, with distinct icons for the two kinds. Works for `#SBATCH --partition=`, `-p`, abbreviations like `--part=`, the same options on `srun`/`salloc`/`sbatch` lines, and `SBATCH_PARTITION`-style variables. In lists like `--partition=gpu1,gpu2`, each slot is completed in turn and partitions already listed aren't offered again.
-- **GPU Type Autocomplete**: After `--gres=gpu:` or in `--gpus=` (and `-G`, `--gpus-per-node/task/socket`), get the GPU types you can actually get, with how many are idle, most idle first. Suggestions are limited to the partition(s) the request will run in, so you can't ask for `h200` on an A100-only partition: the script's `#SBATCH` partition, or a `-p` on the same `srun` line. If the partition has no GPUs at all, the list says so.
-- **Partitions Follow Your GPU Request**: When the script already asks for a GPU type, partition suggestions list the partitions that have it first; the rest stay available, marked like `· no h200`, so you can always switch hardware by picking another partition.
-- **Wrong GPU Type Warnings**: A GPU type the job's partition doesn't have gets a yellow squiggly underline, with a message naming the partition and the types it does have (e.g. *No h200 GPUs in partition a100-long. The selected partition only has GPUs of type a100.*), before Slurm rejects the submission.
-
-![GPU partition usage and submit-script partition hover stats](screenshots/gpu_submission_submit_script.png)
-
----
-
-## ⚙️ Configuration
-
-Configure the extension via **VS Code Settings** (`Cmd+,` on macOS / `Ctrl+,` on Windows/Linux):
-
-| Setting | Default | Description |
-|---|---:|---|
-| `autoRefreshInterval` | `30` | Refresh frequency (in seconds). Range: **5s → 1h** |
-| `autoRefreshEnabled` | `false` | Auto-start refreshing on window load |
-| `confirmCancelJob` | `true` | Ask for confirmation before cancelling a job |
-| `leaderboardTopUserCount` | `10` | Number of top GPU users to show in the Hall of Shame |
-| `partitionRefreshInterval` | `5` | Background refresh of GPU Partition Usage and partition autocomplete (in minutes, `0` = off). Range: **1 → 120 min** |
-| `submitDependencyBehavior` | `"prompt"` | Customize (`"prompt"` or `"never"`) whether to prompt for job dependencies on submission |
-| `showResourceHogs` | `true` | Show/hide the Job Hog and GPU Gobbler stats at the top of the active jobs list |
-| `showFairShare` | `true` | Show fair share standing and pending-job priority breakdowns (needs Slurm accounting + multifactor priority) |
-| `showOpenLogsSideBySideButton` | `true` | Show the per-job button that opens stdout and stderr in a split editor. The action stays in the right-click menu when off |
-| `openLogFileInPreview` | `true` | Open stdout/stderr logs in preview mode (reuses one tab). Set to `false` for permanent tabs |
-| `mockMode` | `false` | Enable local mock data for development and testing without requiring Slurm |
-
-> Tip: If you monitor many jobs, increasing `autoRefreshInterval` reduces SLURM command load.
-
-> Note: Auto-refresh pauses while the VS Code window is in the background and resumes when you return, so it never polls the cluster while you're away.
-
----
-
-## ✅ Requirements
-
-This extension **must run on a machine with direct access to SLURM commands**.  
-In practice, that means you should install it **only on the cluster side** (e.g., a login node / head node / SLURM-accessible node — whichever your site provides), not on your local computer.
-
-Required commands:
-- `squeue`
-- `sinfo`
-- `scontrol`
-- `sacct`
-- `sbatch`
-- `scancel`
-
-GPU Partition Usage requires GPU partitions to be exposed through Slurm GRES (`sinfo %G`). If your cluster tracks GPUs outside GRES, those partitions may not appear in the GPU Partition Usage view.
-
-### Important: No Remote Connection (Yet)
-At the moment, the extension **cannot connect to a remote cluster by itself**.
-It does **not** SSH into a server, tunnel commands, or forward SLURM calls.
-
-✅ **Supported setup:** Run VS Code *on the SLURM-accessible node* (or use **VS Code Remote - SSH** to open a remote VS Code session on that node) and install the extension **on the Remote target**.
-
-🚧 **Remote connection support is work-in-progress (WIP)** and will be added in a future release.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome — bug fixes, documentation improvements, and feature requests.
-
-- Report issues / request features: https://github.com/dhimitriosduka1/sCode/issues  
-- Pull requests are welcome!
-
-If you’re opening a PR, please include:
-- A short description of the change and why it helps
-- Screenshots/GIFs for UI updates (when applicable)
-
----
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE).
-
----
+<h1 align="center">SLURM Cluster Manager</h1>
 
 <p align="center">
-  If this extension helps you, consider giving it a ⭐ on <a href="https://github.com/dhimitriosduka1/sCode">GitHub</a>!
+  <b>Monitor, submit, and manage Slurm jobs without leaving VS Code.</b>
 </p>
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/dhimitriosduka1">Dhimitrios Duka</a> with <b>Google Antigravity</b>
+  <a href="https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager"><img src="https://vsmarketplacebadges.dev/version/DhimitriosDuka.slurm-cluster-manager.svg?label=Marketplace" alt="Visual Studio Marketplace version"></a>
+  <a href="https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager"><img src="https://img.shields.io/open-vsx/v/DhimitriosDuka/slurm-cluster-manager?label=Open%20VSX" alt="Open VSX version"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdhimitriosduka1%2FsCode%2Fbadges%2Fdownloads.json" alt="Downloads"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager&amp;ssr=false#review-details"><img src="https://vsmarketplacebadges.dev/rating/DhimitriosDuka.slurm-cluster-manager.svg?label=Rating" alt="Rating"></a>
+  <a href="https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml"><img src="https://github.com/dhimitriosduka1/sCode/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dhimitriosduka1/sCode?label=License" alt="License: MIT"></a>
+</p>
+
+<p align="center">
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#how-it-uses-your-cluster">Cluster load</a> ·
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
+
+SLURM Cluster Manager brings your cluster workflow into the editor. Follow running jobs, open their logs, compare partition availability, and check GPU requests before submitting—all from the VS Code sidebar and script editor.
+
+![SLURM Cluster sidebar alongside a submit script, showing active jobs, GPU partition usage, cluster overview, Hall of Shame, and job history](screenshots/full_sidebar_overview.png)
+
+## Highlights
+
+- **Follow every job.** See job states, elapsed time, pending reasons, and estimated start times.
+- **Open logs in a click.** Access stdout and stderr from active jobs and job history.
+- **Choose a suitable partition.** Compare GPU availability and get partition suggestions as you write a script.
+- **Catch GPU mismatches early.** Get warnings when a requested GPU type is unavailable in the selected partitions.
+- **Understand your priority.** Inspect your fair share and the priority components of pending jobs.
+- **Manage jobs from the sidebar.** Cancel, hold, release, update dependencies, and adjust job array concurrency.
+
+## Getting started
+
+1. **Connect to your cluster.** Use [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh) in VS Code to connect to your cluster’s node, then open the folder containing your job scripts.
+
+2. **Install the extension on the cluster.** In the connected VS Code window, open **Extensions**, search for **SLURM Cluster Manager**, and install it on the **SSH host**. You can also find it on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager) or [Open VSX](https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager).
+
+3. **Open the SLURM sidebar.** Click **SLURM Cluster** in the Activity Bar on the left. **Active Jobs** shows your running and queued jobs; **GPU Partition Usage** helps you compare partitions before submitting.
+
+4. **Submit a script.** Open a script containing `#SBATCH` directives, save your changes, and click **▶** in the editor title bar. To make the new job wait for another job, use the adjacent **link icon** to choose a dependency instead.
+
+5. **Follow your job.** Find it in **Active Jobs** and expand it to inspect its status and resources. Once it starts, click **stdout** or **stderr** to open its logs. Use the **refresh button** for an update, or the **watch icon** to enable automatic refresh. Finished jobs appear in **Job History**.
+
+## Features
+
+### Active jobs
+
+![Active Jobs with running and pending jobs expanded to show resources, pending reasons, submit scripts, and logs](screenshots/active_jobs.png)
+
+Jobs are grouped by state, with progress bars showing elapsed time against the requested time limit. Pending jobs show readable reasons such as “Waiting for resources,” estimated start times when available, and dependency indicators.
+
+- **Inspect details:** Expand a job for its partition, resources, time limit, dependencies, and available logs.
+- **Find jobs:** Search by name, job ID, or pending reason.
+- **Cancel jobs:** Cancel one job, checked jobs, all active jobs, or just the running or pending group.
+- **Hold and release:** Pause pending jobs or make them eligible to run again, individually or in bulk.
+- **Update dependencies:** Change or clear a pending job’s dependency.
+- **Copy IDs:** Copy a job ID; for arrays, the action copies the base array ID.
+- **Review scripts:** Open the current submit script and, when available, a copy saved when the extension first reads it for that job. The copy preserves the file at that point; it may differ from the version originally submitted to Slurm.
+
+
+### Job arrays
+
+Control arrays without entering commands in a terminal:
+
+- Cancel an entire array, only its pending tasks, or specific indices: `3`, `0-10`, `0-20:2`, or `1,3,5`.
+- Validate selected indices against the array’s bounds, with an extra confirmation when cancelling more than 100 tasks.
+- Change the maximum number of tasks allowed to run at once.
+
+Array cancellation options appear on pending array entries. Running tasks are cancelled individually like other running jobs.
+
+### Job history and logs
+
+![Job History grouped by day, with finished jobs expanded to show exit codes, resources, and log files](screenshots/job_history.png)
+
+Browse completed, failed, timed-out, and cancelled jobs, grouped by day. The default range is **7 days**; choose 1 day, 30 days, or a custom lookback from the toolbar. Search by name or job ID and page through longer histories.
+
+Expand a job to see its exit code, partition, nodes, CPUs, peak memory when reported, and start and end times. Open available stdout and stderr files directly from the job’s details.
+
+For running jobs, **Open Stdout and Stderr Side by Side** opens both logs in a split editor. If both streams use the same file, it opens once.
+
+Log paths are resolved from Slurm metadata and cached paths, including relative paths, `~`, filename placeholders such as `%j` and `%a`, and array task IDs. Historical paths depend on what the extension cached or Slurm still retains.
+
+### Submit script assistance
+
+![Partition hover in a submit script, showing GPU capacity, load, jobs, and node availability](screenshots/gpu_submission_submit_script.png)
+
+- **Partition suggestions:** Complete partition names with load and idle capacity alongside them. GPU partitions appear first, with each group ordered by load. Partitions matching the script’s requested GPU types are prioritised.
+- **GPU type suggestions:** Get GPU types and idle counts for the selected partitions in `--gres=gpu:`, `--gpus`, `-G`, `--gpus-per-node`, `--gpus-per-task`, and `--gpus-per-socket` options.
+- **GPU compatibility warnings:** See an underline when a requested GPU type is absent from the selected partitions, or when a GPU request targets a partition without GPUs.
+- **Partition details on hover:** Inspect GPU or CPU capacity, load, jobs, and nodes. The panel includes the data’s age, a refresh action, and a notice for unknown partition names.
+- **Editor submission:** Submit the saved script with **▶**, or use the dependency button to choose prerequisite jobs and dependency types.
+
+Partition completion supports `#SBATCH -p` and `--partition=`, unambiguous abbreviations such as `--part=`, options on `srun`/`salloc`/`sbatch` lines, partition environment variables, and comma-separated lists such as `-p a100,h200`.
+
+> **No suggestions inside `#SBATCH` comments?** Press `Ctrl+Space` to open the completion list.
+
+### GPU partition usage
+
+The **GPU Partition Usage** view ranks partitions by allocated GPU share, with queue pressure and idle capacity helping distinguish similarly loaded partitions.
+
+Expand a partition for allocated, idle, available, and total GPU counts, GPU types, node states, and running and pending jobs. Load is measured against **usable capacity**, so down or draining nodes do not make a partition appear less busy.
+
+Partition data refreshes at startup and every **5 minutes** by default. Use the refresh button for an immediate update, or the watch icon to change or disable the interval. Script suggestions, hovers, and warnings share this data.
+
+Use these figures to compare current availability; actual start times also depend on job requirements and cluster scheduling policies.
+
+### Fair share and priority
+
+The top of **Active Jobs** shows your fair share factor, for example `⚖️ Your fair share: 0.214`. With Fair Tree, a higher factor indicates a stronger fair share standing. It is one component of [Slurm’s job priority calculation](https://slurm.schedmd.com/priority_multifactor.html), not a queue position or start-time estimate.
+
+Fair share is tracked per account. The view prioritises an account used by your active jobs, then your default account when available. Hover the row to inspect all your accounts.
+
+Hover a pending job to see its weighted fair share, age, QOS, partition, and job size contributions, with the largest displayed contribution identified.
+
+These details require Slurm accounting and the multifactor priority plugin. Disable them with `slurmClusterManager.showFairShare`.
+
+### Cluster activity and maintenance
+
+- **Cluster Overview:** Compare Slurm accounts by allocated GPUs, GPU types, and share of the allocated GPU pool. Hover an account to see its top users.
+- **Hall of Shame:** View users ranked by allocated GPUs, with account details, GPU types, cluster share, and fair share when available. The top three get 💀 🔥 👹, and your own row remains visible even outside the configured top count.
+- **Resource hog indicators:** See the biggest job and GPU users at the top of Active Jobs, with titles such as 🐷 Job Hog and 🧛 VRAMpire. Hide them with `slurmClusterManager.showResourceHogs`.
+- **Maintenance warnings:** Active Jobs, GPU Partition Usage, and Cluster Overview show upcoming or active reservations flagged `MAINT`, with affected nodes and times on hover.
+
+Cluster Overview and Hall of Shame fetch data on first opening or explicit refresh and display when they were last updated.
+
+## Configuration
+
+Open **Settings** (`Cmd+,` on macOS or `Ctrl+,` on Windows/Linux) and search for **SLURM Cluster Manager**.
+
+All settings below use the `slurmClusterManager.` prefix, for example `slurmClusterManager.autoRefreshEnabled`.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `autoRefreshEnabled` | `false` | Automatically refresh Active Jobs and Job History. |
+| `autoRefreshInterval` | `30` | Seconds between job refreshes, from `5` to `3600`. |
+| `partitionRefreshInterval` | `5` | Minutes between partition refreshes; `0` disables background refresh. Maximum: `120`. |
+| `confirmCancelJob` | `true` | Ask before cancelling a job. |
+| `submitDependencyBehavior` | `"prompt"` | Currently has no effect. Use the editor’s dependency button to submit with dependencies. |
+| `showFairShare` | `true` | Show fair share and pending-job priority details. |
+| `showResourceHogs` | `true` | Show the biggest job and GPU users in Active Jobs. |
+| `leaderboardTopUserCount` | `10` | Number of top users in Hall of Shame, from `1` to `100`. Your own row remains visible. |
+| `showOpenLogsSideBySideButton` | `true` | Show the split-log button on active jobs. The action remains in the context menu when hidden. |
+| `openLogFileInPreview` | `true` | Open logs in reusable preview tabs. Set to `false` for permanent tabs. |
+| `mockMode` | `false` | Use built-in sample data without Slurm. |
+
+## How it uses your cluster
+
+The extension runs Slurm commands on the host where it is installed and shares cached data between views where possible.
+
+| Feature | When it queries Slurm |
+| --- | --- |
+| Active Jobs and Job History | When views need data, on refresh, and after relevant job actions. Optional auto-refresh defaults to every 30 seconds and is off initially. Expanding a historical job may also query its log paths. |
+| Partition data | At startup, on manual refresh, and every 5 minutes by default. Suggestions, hovers, and GPU warnings reuse the shared snapshot. |
+| Cluster Overview and Hall of Shame | On first opening or explicit refresh; no periodic polling. |
+| Fair share | A shared `sshare` result is cached for 5 minutes. Manually refreshing Active Jobs or Hall of Shame invalidates it. |
+| Pending-job priority | `sprio` is queried when pending jobs are loaded and `showFairShare` is enabled. |
+
+Scheduled job and partition refreshes pause while the VS Code window is unfocused. Increase the intervals or disable background refresh to reduce polling.
+
+Commands that change cluster state—such as `sbatch`, `scancel`, and `scontrol hold`, `release`, or `update`—run only when you choose the corresponding action.
+
+## Requirements
+
+- **VS Code 1.85 or newer**, or a compatible editor that supports extensions from Open VSX.
+- **Slurm commands available to the extension host.** With Remote - SSH, install the extension on the remote host. The extension does not establish an SSH connection itself.
+
+| Commands | Used for |
+| --- | --- |
+| `squeue`, `sinfo`, `scontrol` | Jobs, partitions, job details, maintenance, and job updates. |
+| `sacct` | Job history. |
+| `sbatch`, `scancel` | Job submission and cancellation. |
+| `sshare`, `sprio` | Optional fair share and priority details. |
+| `sacctmgr` | Optional lookup of your default account for fair share. |
+
+GPU Partition Usage requires GPUs to be configured as Slurm **GRES**, as reported by `sinfo -o %G`.
+
+## Troubleshooting
+
+**Active Jobs says “SLURM not available on this system.”**
+
+Check that `squeue` works on the host running the extension. With Remote - SSH, confirm that the Extensions view lists the extension under **SSH: your-host**. If Slurm was added to your environment after VS Code started, reload the remote window.
+
+**No fair share or priority details appear.**
+
+Enable `slurmClusterManager.showFairShare` and check that your cluster provides `sshare` and `sprio`, Slurm accounting, and the multifactor priority plugin.
+
+**A GPU partition is missing.**
+
+Check whether its GPUs appear in `sinfo -o %G`. The GPU view includes partitions that advertise GPUs through Slurm GRES.
+
+**Partition or GPU suggestions do not appear.**
+
+Press `Ctrl+Space`, especially inside `#SBATCH` comments. Check that the file is recognised as a shell script, plain text, `.slurm`, or `.sbatch`, and refresh GPU Partition Usage if the cluster data is unavailable or stale.
+
+**A job has no stdout or stderr file.**
+
+Pending jobs normally have no output yet. For running or finished jobs, check that the log exists and is accessible from the extension host. Older jobs may lack log links if their paths were never cached and Slurm no longer retains their details.
+
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome on [GitHub](https://github.com/dhimitriosduka1/sCode/issues). Explain the change and why it helps, and include a screenshot for visual updates.
+
+## Changelog and license
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Licensed under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  If this extension helps you, consider giving it a ⭐ on <a href="https://github.com/dhimitriosduka1/sCode">GitHub</a>.
+  <br>
+  Made with ❤️ by <a href="https://github.com/dhimitriosduka1">Dhimitrios Duka</a>
 </p>
