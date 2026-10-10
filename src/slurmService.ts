@@ -16,10 +16,20 @@ import {
     MOCK_SINFO_NODE_OUTPUT,
     MOCK_SPRIO_OUTPUT,
     MOCK_SQUEUE_PARTITION_JOBS_OUTPUT,
-    MOCK_SSHARE_OUTPUT,
+    createMockSshareOutput,
+    MOCK_DEFAULT_ACCOUNT,
 } from './mockData';
 
 const execAsync = promisify(exec);
+
+/** The local login name, which Slurm reports users by. */
+export function getCurrentUsername(): string | undefined {
+    try {
+        return os.userInfo().username || undefined;
+    } catch {
+        return process.env.USER || process.env.USERNAME;
+    }
+}
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
 
 /**
@@ -48,6 +58,8 @@ export interface SlurmJob {
     name: string;
     state: string;
     time: string;
+    /** The account the job is charged to */
+    account?: string;
     partition: string;
     nodes: string;
     stdoutPath: string;
@@ -848,7 +860,10 @@ export interface PartitionUsageEntry {
     idleGpus: number;
     runningJobs: number;
     pendingJobs: number;
+    /** Installed GPUs per type, including those on unavailable nodes */
     gpuTypes: ClusterLeaderboardGpuType[];
+    /** Idle GPUs per type on available nodes; absent when not derived from per-node data */
+    idleGpusByType?: ClusterLeaderboardGpuType[];
 }
 
 export interface PartitionUsageResult {
@@ -1272,24 +1287,62 @@ export function parseSprioOutput(stdout: string): JobPriorityFactors[] {
 
 export function parseScontrolNodeOutput(stdout: string): Map<string, number> {
     const allocatedGpusByNode = new Map<string, number>();
+    for (const [nodeName, allocations] of parseScontrolNodeGpuAllocations(stdout)) {
+        allocatedGpusByNode.set(nodeName, sumGpuAllocations(allocations));
+    }
+    return allocatedGpusByNode;
+}
+
+/**
+ * Allocated GPUs per node, by type where AllocTRES names one
+ * (`gres/gpu:a100=2`), otherwise as `generic`.
+ */
+export function parseScontrolNodeGpuAllocations(stdout: string): Map<string, ClusterLeaderboardGpuType[]> {
+    const allocationsByNode = new Map<string, ClusterLeaderboardGpuType[]>();
     // scontrol show node emits key=value tokens separated by whitespace / newlines.
     // Each node block begins with NodeName=<name>.
-    // We look for AllocTRES=... to sum gres/gpu (with or without a type qualifier).
     const nodeBlocks = stdout.split(/(?=\bNodeName=)/).filter(block => block.trim());
     for (const block of nodeBlocks) {
         const nodeMatch = block.match(/\bNodeName=(\S+)/);
         if (!nodeMatch) {
             continue;
         }
-        const nodeName = nodeMatch[1];
 
-        const allocTresMatch = block.match(/\bAllocTRES=(\S*)/);
-        const allocTresValue = allocTresMatch?.[1] ?? '';
-        const gpuAllocations = parseGpuAllocations(allocTresValue);
-        const totalAllocated = sumGpuAllocations(gpuAllocations);
-        allocatedGpusByNode.set(nodeName, totalAllocated);
+        const allocTresValue = block.match(/\bAllocTRES=(\S*)/)?.[1] ?? '';
+        allocationsByNode.set(nodeMatch[1], parseGpuAllocations(allocTresValue));
     }
-    return allocatedGpusByNode;
+    return allocationsByNode;
+}
+
+/**
+ * Idle GPUs per type on one node: its configured GPUs minus what is
+ * allocated. Typed allocations come off their own type; an untyped one comes
+ * off the node's types in order, which is exact for the usual single-type node.
+ */
+export function getNodeIdleGpusByType(
+    configured: ClusterLeaderboardGpuType[],
+    allocated: ClusterLeaderboardGpuType[],
+): Map<string, number> {
+    const idle = new Map<string, number>();
+    for (const { type, count } of configured) {
+        idle.set(type, (idle.get(type) ?? 0) + count);
+    }
+
+    let untyped = 0;
+    for (const { type, count } of allocated) {
+        if (type !== 'generic' && idle.has(type)) {
+            idle.set(type, idle.get(type)! - count);
+        } else {
+            untyped += count;
+        }
+    }
+
+    for (const [type, remaining] of idle) {
+        const taken = Math.min(Math.max(remaining, 0), untyped);
+        untyped -= taken;
+        idle.set(type, Math.max(0, remaining - taken));
+    }
+    return idle;
 }
 
 /**
@@ -1346,6 +1399,7 @@ export function parsePartitionUsageOutput(
     // GPU allocations to all of a node's partitions in phase 3.
     const nodePartitions = new Map<string, { partition: string; isDefault: boolean }[]>();
     const nodeGpuConfig = new Map<string, ClusterLeaderboardGpuType[]>(); // GPU config per node
+    const availableNodes = new Set<string>(); // allocated or idle, so its GPUs can be scheduled
     const seenNodesForCapacity = new Set<string>();
 
     const sinfoLines = sinfoNodeStdout.trim().split('\n').filter(line => line.trim());
@@ -1374,6 +1428,9 @@ export function parsePartitionUsageOutput(
         // Determine per-node state bucket (mirrors parseSinfoNodeStateSummary logic)
         const isAllocated = nodeState.startsWith('allocated') || nodeState.startsWith('mixed');
         const isIdle = nodeState.startsWith('idle');
+        if (isAllocated || isIdle) {
+            availableNodes.add(nodeName);
+        }
 
         if (!seenNodesForCapacity.has(nodeName)) {
             seenNodesForCapacity.add(nodeName);
@@ -1426,7 +1483,29 @@ export function parsePartitionUsageOutput(
     }
 
     // --- Phase 2: Get ground-truth per-node GPU allocation from scontrol ---
-    const allocatedGpusByNode = parseScontrolNodeOutput(scontrolStdout);
+    const gpuAllocationsByNode = parseScontrolNodeGpuAllocations(scontrolStdout);
+    const allocatedGpusByNode = new Map(
+        [...gpuAllocationsByNode].map(([nodeName, allocations]) => [nodeName, sumGpuAllocations(allocations)]),
+    );
+
+    // --- Phase 2b: Idle GPUs per type, so a partition mixing GPU types can say
+    // which ones are free; summed per partition over its available nodes ---
+    const idleGpuTypesByPartition = new Map<string, Map<string, number>>();
+    for (const [nodeName, partitions] of nodePartitions) {
+        const configured = nodeGpuConfig.get(nodeName);
+        if (!configured || !availableNodes.has(nodeName)) {
+            continue;
+        }
+
+        const nodeIdle = getNodeIdleGpusByType(configured, gpuAllocationsByNode.get(nodeName) ?? []);
+        for (const { partition } of partitions) {
+            const partitionIdle = idleGpuTypesByPartition.get(partition) ?? new Map<string, number>();
+            for (const [type, idle] of nodeIdle) {
+                partitionIdle.set(type, (partitionIdle.get(type) ?? 0) + idle);
+            }
+            idleGpuTypesByPartition.set(partition, partitionIdle);
+        }
+    }
 
     // --- Phase 3: Attribute node-level GPU allocations to every partition the node belongs to ---
     for (const [nodeName, allocatedGpus] of allocatedGpusByNode) {
@@ -1477,6 +1556,7 @@ export function parsePartitionUsageOutput(
     for (const entry of entriesByPartition.values()) {
         entry.idleGpus = Math.max(0, entry.availableGpus - entry.allocatedGpus);
         entry.gpuTypes = formatGpuTypeEntries(gpuTypesByPartition.get(entry.partition) || new Map<string, number>());
+        entry.idleGpusByType = formatGpuTypeEntries(idleGpuTypesByPartition.get(entry.partition) || new Map<string, number>());
     }
 
     const entries = Array.from(entriesByPartition.values())
@@ -1571,6 +1651,7 @@ export class SlurmService {
     private availabilityProbe?: Promise<boolean>;
     private fairShareCache?: { fetchedAt: number; result: FairShareResult };
     private fairSharePending?: Promise<FairShareResult>;
+    private defaultAccount?: Promise<string | undefined>;
 
     constructor(
         pathCache?: JobPathCache,
@@ -1614,9 +1695,9 @@ export class SlurmService {
         }
 
         try {
-            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason
+            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason|Account
             const { stdout } = await execAsync(
-                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r"'
+                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r|%a"'
             );
 
             const jobs: SlurmJob[] = [];
@@ -1640,6 +1721,7 @@ export class SlurmService {
                         nodes: parts[5].trim() || 'N/A',
                         timeLimit: parts[6].trim() || 'N/A',
                         startTime: parts[7].trim() || 'N/A',
+                        account: parts[9]?.trim() || undefined,
                         // These will be fetched from scontrol
                         stdoutPath: 'N/A',
                         stderrPath: 'N/A',
@@ -1800,7 +1882,7 @@ export class SlurmService {
      */
     async getFairShare(): Promise<FairShareResult> {
         if (this.isMockMode()) {
-            return { entries: parseSshareOutput(MOCK_SSHARE_OUTPUT), available: true };
+            return { entries: parseSshareOutput(createMockSshareOutput(getCurrentUsername())), available: true };
         }
 
         const cached = this.fairShareCache;
@@ -1837,6 +1919,22 @@ export class SlurmService {
 
         this.fairShareCache = { fetchedAt: Date.now(), result };
         return result;
+    }
+
+    /**
+     * The current user's default account, which jobs are charged to unless they
+     * pass --account. Read once per session, as it rarely changes; undefined
+     * when sacctmgr is unavailable.
+     */
+    getDefaultAccount(): Promise<string | undefined> {
+        if (this.isMockMode()) {
+            return Promise.resolve(MOCK_DEFAULT_ACCOUNT);
+        }
+
+        this.defaultAccount ??= this.commandRunner('sacctmgr -n -P show user $USER format=DefaultAccount')
+            .then(({ stdout }) => stdout.trim().split('\n')[0]?.trim() || undefined)
+            .catch(() => undefined);
+        return this.defaultAccount;
     }
 
     /** Drop the cached fair share data so the next read re-queries the cluster. */
@@ -2006,117 +2104,6 @@ export class SlurmService {
         }
     }
 
-    /**
-     * Get real-time stats for a SLURM partition
-     * @param partition The partition name
-     * @returns Partition stats or null if unavailable
-     */
-    async getPartitionStats(partition: string): Promise<{
-        totalGpus: number;
-        allocatedGpus: number;
-        idleGpus: number;
-        runningJobs: number;
-        pendingJobs: number;
-        nodesUp: number;
-        nodesTotal: number;
-        nodeStates: string;
-    } | null> {
-        if (this.isMockMode()) {
-            const entry = createMockPartitionUsageResult().entries.find(candidate => candidate.partition === partition);
-            const nodesUp = entry ? entry.allocatedNodes + entry.idleNodes : 0;
-
-            return {
-                totalGpus: entry?.availableGpus ?? 0,
-                allocatedGpus: entry?.allocatedGpus ?? 0,
-                idleGpus: entry?.idleGpus ?? 0,
-                runningJobs: entry?.runningJobs ?? 0,
-                pendingJobs: entry?.pendingJobs ?? this.getMutableMockJobs().filter(job => job.partition === partition && job.state === 'PD').length,
-                nodesUp,
-                nodesTotal: entry?.totalNodes ?? 0,
-                nodeStates: entry ? `${nodesUp}/${entry.totalNodes}` : '0/0',
-            };
-        }
-
-        try {
-            // Run sinfo and squeue in parallel for speed
-            const [sinfoResult, squeueResult, allocGpuResult] = await Promise.all([
-                // %D = nodes, %F = nodes state (allocated/idle/other/total), %G = GRES
-                execAsync(`sinfo -p ${partition} --noheader --format="%D %F %G"`),
-                // Job counts by state
-                execAsync(`squeue -p ${partition} --noheader --format="%t" 2>/dev/null`),
-                // Running jobs' GPU allocation
-                execAsync(`squeue -p ${partition} --noheader --state=R --format="%D|%b" 2>/dev/null`),
-            ]);
-
-            // Parse sinfo output
-            let totalGpus = 0;
-            let nodesUp = 0;
-            let nodesTotal = 0;
-
-            const sinfoLines = sinfoResult.stdout.trim().split('\n').filter(l => l.trim());
-            for (const line of sinfoLines) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length >= 3) {
-                    const nodeStates = parts[1].split('/');
-                    if (nodeStates.length === 4) {
-                        const allocated = parseInt(nodeStates[0], 10) || 0;
-                        const idle = parseInt(nodeStates[1], 10) || 0;
-                        const total = parseInt(nodeStates[3], 10) || 0;
-                        nodesUp += allocated + idle;
-                        nodesTotal += total;
-                    }
-
-                    const gres = parts[2];
-                    if (gres && gres !== '(null)') {
-                        const gpuMatch = gres.match(/gpu(?::[^:]+)?:(\d+)/);
-                        if (gpuMatch) {
-                            const gpusPerNode = parseInt(gpuMatch[1], 10);
-                            const nodeCount = parseInt(parts[0], 10) || 0;
-                            totalGpus += gpusPerNode * nodeCount;
-                        }
-                    }
-                }
-            }
-
-            // Count allocated GPUs from running jobs
-            let allocatedGpus = 0;
-            const gpuLines = allocGpuResult.stdout.trim().split('\n').filter(l => l.trim());
-            for (const line of gpuLines) {
-                const parts = line.split('|');
-                const hasNodeColumn = parts.length >= 2;
-                const nodeCount = hasNodeColumn ? parseNodeCount(parts[0]) : 1;
-                const gres = (hasNodeColumn ? parts.slice(1).join('|') : line).trim();
-                const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
-                allocatedGpus += sumGpuAllocations(gpuAllocations);
-            }
-
-            // Count running and pending jobs
-            let runningJobs = 0;
-            let pendingJobs = 0;
-            const jobLines = squeueResult.stdout.trim().split('\n').filter(l => l.trim());
-            for (const line of jobLines) {
-                const state = line.trim();
-                if (state === 'R') { runningJobs++; }
-                else if (state === 'PD') { pendingJobs++; }
-            }
-
-            const idleGpus = Math.max(0, totalGpus - allocatedGpus);
-
-            return {
-                totalGpus,
-                allocatedGpus,
-                idleGpus,
-                runningJobs,
-                pendingJobs,
-                nodesUp,
-                nodesTotal,
-                nodeStates: `${nodesUp}/${nodesTotal}`,
-            };
-        } catch (error) {
-            console.error(`Failed to get partition stats for ${partition}:`, error);
-            return null;
-        }
-    }
 
     /**
      * Cancel a SLURM job using scancel

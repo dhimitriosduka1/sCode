@@ -103,7 +103,8 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 
 ### Fair Share & Job Priority
 - **Your fair share at a glance**: A row at the top of Active Jobs shows your Fair Tree fair share factor (`⚖️ Your fair share: 0.124`). It runs from 0 to 1 — the highest-ranked user on the cluster scores 1.00, so a lower value means your jobs queue further back.
-- **Per-user fair share**: Hall of Shame rows show each user's fair share factor, so you can see how your standing compares to the people ahead of you in the queue.
+- **The account that counts**: Fair share is tracked per account, and a job uses the standing of the account it's charged to. With several accounts, the row shows the one your jobs run under (or your default account when nothing is queued) rather than your best one, and its tooltip lists every account's standing.
+- **Per-user fair share**: Hall of Shame rows show each user's fair share factor for the account their GPU jobs run under, so you can see how your standing compares to the people ahead of you in the queue.
 - **Why is this job pending?**: Pending jobs show their `sprio` priority breakdown in the tooltip — total priority plus the fair share, age, QOS, partition, and job size weights — and name the component contributing most.
 - **Shared, cached fetch**: A single `sshare` call is shared across views and cached for a few minutes, so this adds one command per refresh rather than one per view.
 - **Degrades gracefully**: Clusters without Slurm accounting or the multifactor priority plugin simply don't show these rows. Turn the whole feature off with `showFairShare`.
@@ -132,9 +133,12 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 ### Script Intelligence
 - **Quick Submit**: A ▶ button appears in the editor title bar when viewing any file containing `#SBATCH` directives. One click to submit immediately.
 - **Submit with Dependency**: A link button next to Quick Submit starts an interactive workflow guiding you through selecting active dependency jobs and types (`afterok`, `afterany`, etc.).
-- **Partition Hover Stats**: Hover over a partition name in `#SBATCH --partition=` to see real-time GPU usage, running/pending jobs, and node availability with a visual usage bar.
+- **Partition Hover Stats**: Hover over a partition name in a submit script (`#SBATCH -p`, `--partition=`, `srun -p`, lists like `a100,h200`, …) to see its load, GPU or CPU usage, running/pending jobs, and nodes, the same numbers as GPU Partition Usage. The panel opens with how old the data is and a refresh button (`$(refresh)`), and a name that isn't a partition on the cluster says so.
 - **Visual Hints**: Partition names get a dotted underline to show they're hoverable.
 - **Partition Autocomplete**: While typing a partition in a submit script, get every partition on the cluster as a suggestion, each with its load and idle GPUs (or CPUs, for CPU-only partitions). GPU partitions are listed first and CPU-only ones after, each group least busy first, with distinct icons for the two kinds. Works for `#SBATCH --partition=`, `-p`, abbreviations like `--part=`, the same options on `srun`/`salloc`/`sbatch` lines, and `SBATCH_PARTITION`-style variables. In lists like `--partition=gpu1,gpu2`, each slot is completed in turn and partitions already listed aren't offered again.
+- **GPU Type Autocomplete**: After `--gres=gpu:` or in `--gpus=` (and `-G`, `--gpus-per-node/task/socket`), get the GPU types you can actually get, with how many are idle, most idle first. Suggestions are limited to the partition(s) the request will run in, so you can't ask for `h200` on an A100-only partition: the script's `#SBATCH` partition, or a `-p` on the same `srun` line. If the partition has no GPUs at all, the list says so.
+- **Partitions Follow Your GPU Request**: When the script already asks for a GPU type, partition suggestions list the partitions that have it first; the rest stay available, marked like `· no h200`, so you can always switch hardware by picking another partition.
+- **Wrong GPU Type Warnings**: A GPU type the job's partition doesn't have gets a yellow squiggly underline, with a message naming the partition and the types it does have (e.g. *No h200 GPUs in partition a100-long. The selected partition only has GPUs of type a100.*), before Slurm rejects the submission.
 
 ![GPU partition usage and submit-script partition hover stats](screenshots/gpu_submission_submit_script.png)
 

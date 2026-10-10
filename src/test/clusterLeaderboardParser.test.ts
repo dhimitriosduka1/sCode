@@ -6,6 +6,7 @@ import {
     parseClusterLeaderboardOutput,
     parsePartitionUsageOutput,
     parseScontrolNodeOutput,
+    getNodeIdleGpusByType,
 } from '../slurmService';
 
 describe('parseClusterLeaderboardOutput', () => {
@@ -287,6 +288,7 @@ describe('parsePartitionUsageOutput', () => {
                 runningJobs: 1,
                 pendingJobs: 1,
                 gpuTypes: [{ type: 'a100', count: 20 }],
+                idleGpusByType: [{ type: 'a100', count: 14 }],
             },
             {
                 partition: 'h200',
@@ -302,11 +304,70 @@ describe('parsePartitionUsageOutput', () => {
                 runningJobs: 1,
                 pendingJobs: 0,
                 gpuTypes: [{ type: 'h200', count: 16 }],
+                idleGpusByType: [{ type: 'h200', count: 15 }],
             },
         ]);
         
         assert.equal(clusterAllocatedGpus, 3);
         assert.equal(clusterAvailableGpus, 32);
+    });
+
+    it('treats node state suffix flags and GRES socket-binding annotations as real Slurm emits them', () => {
+        // Real sinfo output carries a trailing flag character on the state
+        // (e.g. "mixed-" = MIXED + backfill-planned, "idle~" = powered down,
+        // "allocated+" = allocated + completing) and a "(S:0-1)" socket
+        // binding suffix on typed GRES. Neither should break bucketing or counts.
+        const sinfoNode = [
+            'n01|gpu|mixed-|gpu:a100:4(S:0-1)',
+            'n02|gpu|allocated+|gpu:a100:4(S:0-1)',
+            'n03|gpu|idle~|gpu:a100:4(S:0-1)',
+        ].join('\n');
+
+        const scontrol = [
+            scontrolBlock('n01', 2),
+            scontrolBlock('n02', 4),
+            scontrolBlock('n03', 0),
+        ].join('\n');
+
+        const { entries } = parsePartitionUsageOutput(sinfoNode, scontrol, '');
+
+        assert.deepEqual(entries, [{
+            partition: 'gpu',
+            isDefault: false,
+            totalNodes: 3,
+            allocatedNodes: 2,
+            idleNodes: 1,
+            otherNodes: 0,
+            totalGpus: 12,
+            availableGpus: 12,
+            allocatedGpus: 6,
+            idleGpus: 6,
+            runningJobs: 0,
+            pendingJobs: 0,
+            gpuTypes: [{ type: 'a100', count: 12 }],
+            idleGpusByType: [{ type: 'a100', count: 6 }],
+        }]);
+    });
+
+    it('counts idle GPUs per type in a partition mixing GPU types', () => {
+        const sinfoNode = [
+            'a01|gpu|allocated|gpu:a100:4',
+            'a02|gpu|idle|gpu:a100:4',
+            'h01|gpu|allocated|gpu:h200:8',
+            'h02|gpu|drain|gpu:h200:8',
+        ].join('\n');
+        const scontrol = [
+            scontrolBlock('a01', 3, 'a100'),
+            scontrolBlock('a02', 0, 'a100'),
+            scontrolBlock('h01', 8, 'h200'),
+            scontrolBlock('h02', 0, 'h200'),
+        ].join('\n');
+
+        const [entry] = parsePartitionUsageOutput(sinfoNode, scontrol, '').entries;
+
+        // a100: 8 available, 3 allocated; h200: the drained node's 8 aren't available, the other 8 are all taken
+        assert.deepEqual(entry.idleGpusByType, [{ type: 'a100', count: 5 }, { type: 'h200', count: 0 }]);
+        assert.equal(entry.idleGpus, 5);
     });
 
     it('filters out CPU-only partitions', () => {
@@ -383,5 +444,27 @@ describe('parsePartitionUsageOutput', () => {
 
     it('returns no partition usage for empty inputs', () => {
         assert.deepEqual(parsePartitionUsageOutput('', '', '').entries, []);
+    });
+});
+
+describe('getNodeIdleGpusByType', () => {
+    it('takes typed allocations off their own type', () => {
+        const idle = getNodeIdleGpusByType(
+            [{ type: 'a100', count: 4 }, { type: 'v100', count: 2 }],
+            [{ type: 'v100', count: 1 }],
+        );
+        assert.deepEqual([...idle], [['a100', 4], ['v100', 1]]);
+    });
+
+    it('takes an untyped allocation off the node\'s types in order', () => {
+        assert.deepEqual([...getNodeIdleGpusByType([{ type: 'a100', count: 4 }], [{ type: 'generic', count: 3 }])], [['a100', 1]]);
+        assert.deepEqual(
+            [...getNodeIdleGpusByType([{ type: 'a100', count: 2 }, { type: 'v100', count: 2 }], [{ type: 'generic', count: 3 }])],
+            [['a100', 0], ['v100', 1]],
+        );
+    });
+
+    it('never reports negative idle GPUs', () => {
+        assert.deepEqual([...getNodeIdleGpusByType([{ type: 'a100', count: 2 }], [{ type: 'a100', count: 5 }])], [['a100', 0]]);
     });
 });

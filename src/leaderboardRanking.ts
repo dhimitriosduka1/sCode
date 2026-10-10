@@ -1,5 +1,5 @@
 import { generateProgressBar } from './slurmService';
-import { FairShareSummary, formatFairShareFactor } from './fairShareRanking';
+import { FairShareSummary, formatFairShareAccounts, formatFairShareFactor } from './fairShareRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 export interface LeaderboardEntry {
@@ -48,7 +48,7 @@ export function formatLeaderboardEntryDescription(entry: LeaderboardEntry): stri
     const baseLabel = accountLabel ? `${accountLabel} · ${usageLabel}` : usageLabel;
 
     // The GPU share bar already occupies the trailing slot, so fair share stays
-    // numeric here and gets its own bar in the tooltip.
+    // a number here: the standing of the account their GPU jobs run under.
     return entry.fairShare
         ? `${baseLabel} · FS ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
         : baseLabel;
@@ -118,7 +118,7 @@ export function formatLeaderboardTooltipMarkdown(
             { label: `Slurm account${entry.accounts.length === 1 ? '' : 's'}`, value: accountLabel },
             { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
             ...(entry.fairShare
-                ? [{ label: 'Fair share', value: formatFairShareFactor(entry.fairShare.fairShareFactor) }]
+                ? [{ label: 'Fair share', value: formatFairShareAccounts(entry.fairShare) }]
                 : []),
         ],
         note: entry.isCurrentUser && entry.isOutsideTopEntries

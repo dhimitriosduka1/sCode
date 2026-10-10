@@ -1,6 +1,15 @@
 import { CpuPartitionUsage, PartitionUsageEntry } from './slurmService';
 import { formatPartitionUsageTooltipMarkdown, getPartitionUsageRatio } from './partitionUsageRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
+import {
+    findLineSegments,
+    findOptionOccurrencesInSegment,
+    findOptionValueAtCursor,
+    isPlainComment,
+    LineSegment,
+    PARTITION_OPTION,
+} from './slurmScriptOptions';
+import { withPartitionDataFreshness } from './leaderboardRefreshTime';
 
 /** Where a partition name is being typed, and which part of the line completing it replaces. */
 export interface PartitionCompletionContext {
@@ -11,21 +20,11 @@ export interface PartitionCompletionContext {
     replaceEnd: number;
     /** Partitions already named elsewhere in the same list, which should not be offered again */
     alreadyListed: string[];
+    /** The directive or command being typed in; absent for `SBATCH_PARTITION`-style variables */
+    segment?: LineSegment;
 }
 
-// sbatch/srun/salloc accept any unambiguous prefix of a long option; `--par` and
-// shorter collide with `--parsable`, so `--part` is the shortest that is unique.
-const LONG_PARTITION_OPTION = /^--part(?:i(?:t(?:i(?:o(?:n)?)?)?)?)?$/;
-const LONG_PARTITION_OPTION_WITH_VALUE = /^(--part(?:i(?:t(?:i(?:o(?:n)?)?)?)?)?)=/;
-const SHORT_PARTITION_OPTION = '-p';
-const SBATCH_DIRECTIVE = /^\s*#SBATCH(?=\s)/;
-const SLURM_COMMAND = /(?:^|[\s;|&(`])(srun|salloc|sbatch)(?=\s)/g;
 const PARTITION_ENVIRONMENT = /(?:^|[\s;])(?:export\s+)?(?:SBATCH|SALLOC|SLURM)_PARTITION=(["']?)[^\s"']*$/;
-
-interface Token {
-    text: string;
-    start: number;
-}
 
 /**
  * Finds the partition list being typed at `cursor`, covering every way a
@@ -38,13 +37,12 @@ interface Token {
  */
 export function findPartitionCompletionContext(line: string, cursor: number): PartitionCompletionContext | undefined {
     const before = line.slice(0, cursor);
-    // Comments never take a partition, except the #SBATCH directives themselves;
-    // that also leaves disabled `##SBATCH` lines alone
-    if (/^\s*#/.test(before) && !SBATCH_DIRECTIVE.test(before)) {
+    if (isPlainComment(before)) {
         return undefined;
     }
 
-    const valueStart = findOptionValueStart(before) ?? findEnvironmentValueStart(before);
+    const option = findOptionValueAtCursor(line, cursor, PARTITION_OPTION);
+    const valueStart = option?.valueStart ?? findEnvironmentValueStart(before);
     if (valueStart === undefined) {
         return undefined;
     }
@@ -65,23 +63,62 @@ export function findPartitionCompletionContext(line: string, cursor: number): Pa
         replaceStart: cursor - prefix.length,
         replaceEnd,
         alreadyListed: [...typedSlots.slice(0, -1), ...laterSlots].filter(slot => slot.length > 0),
+        segment: option && { start: option.segmentStart, kind: option.kind },
     };
 }
 
-/** Column where the partition value starts, when the cursor is in a partition option's value. */
-function findOptionValueStart(before: string): number | undefined {
-    const directive = before.match(SBATCH_DIRECTIVE);
-    if (directive) {
-        const tokens = tokenize(before, directive[0].length);
-        return findValueStartInTokens(tokens, false);
+/** A partition name written on a line, and the columns it spans. */
+export interface PartitionNameRange {
+    name: string;
+    start: number;
+    end: number;
+}
+
+const PARTITION_ENVIRONMENT_ASSIGNMENT = /(?:^|[\s;])(?:export\s+)?(?:SBATCH|SALLOC|SLURM)_PARTITION=(["']?)([^\s"']*)/g;
+
+/**
+ * Every partition name on a line, in the same places completion recognises:
+ * directives, `srun`/`salloc`/`sbatch` options, and `SBATCH_PARTITION`-style
+ * variables. Lists are split so each name has its own range.
+ */
+export function findPartitionNames(line: string): PartitionNameRange[] {
+    if (isPlainComment(line)) {
+        return [];
     }
 
-    const commandEnd = findLastSlurmCommandEnd(before);
-    if (commandEnd === undefined) {
-        return undefined;
+    const values = findLineSegments(line)
+        .flatMap(segment => findOptionOccurrencesInSegment(line, segment, PARTITION_OPTION));
+    for (const match of line.matchAll(PARTITION_ENVIRONMENT_ASSIGNMENT)) {
+        values.push({ option: '', value: match[2], valueStart: (match.index ?? 0) + match[0].length - match[2].length });
     }
 
-    return findValueStartInTokens(tokenize(before, commandEnd), true);
+    const names: PartitionNameRange[] = [];
+    for (const { value, valueStart } of values) {
+        let start = valueStart;
+        for (const name of value.split(',')) {
+            if (name) {
+                names.push({ name, start, end: start + name.length });
+            }
+            start += name.length + 1;
+        }
+    }
+    return names;
+}
+
+/** The partition name at a column, if any. */
+export function findPartitionNameAt(line: string, character: number): PartitionNameRange | undefined {
+    return findPartitionNames(line).find(range => character >= range.start && character <= range.end);
+}
+
+/**
+ * Hover panel for a partition name: how fresh the data is, then the same
+ * details as the completion list, or a not-found note that hints at a typo.
+ */
+export function formatPartitionHover(name: string, load: PartitionLoad | undefined, fetchedAt: Date, now: Date = new Date()): string {
+    const details = load
+        ? formatPartitionLoadDocumentation(load)
+        : formatTooltipMarkdown({ title: name, summary: 'Not found on this cluster. Check the partition name.' });
+    return withPartitionDataFreshness(details, fetchedAt, now);
 }
 
 function findEnvironmentValueStart(before: string): number | undefined {
@@ -92,97 +129,6 @@ function findEnvironmentValueStart(before: string): number | undefined {
 
     const valueAndQuote = match[0].slice(match[0].indexOf('=') + 1);
     return before.length - valueAndQuote.length + match[1].length;
-}
-
-function findLastSlurmCommandEnd(before: string): number | undefined {
-    let end: number | undefined;
-    for (const match of before.matchAll(SLURM_COMMAND)) {
-        end = (match.index ?? 0) + match[0].length;
-    }
-    return end;
-}
-
-/**
- * The last token is the one under the cursor. It is a partition value when it
- * is the `=`/attached part of a partition option, or follows a bare one.
- */
-function findValueStartInTokens(tokens: Token[], stopAtProgram: boolean): number | undefined {
-    if (tokens.length === 0) {
-        return undefined;
-    }
-
-    const current = tokens[tokens.length - 1];
-    const previous = tokens[tokens.length - 2];
-    let optionIndex: number;
-    let valueStart: number;
-
-    const longWithValue = current.text.match(LONG_PARTITION_OPTION_WITH_VALUE);
-    if (longWithValue) {
-        optionIndex = tokens.length - 1;
-        valueStart = current.start + longWithValue[0].length;
-    } else if (current.text.startsWith(SHORT_PARTITION_OPTION) && current.text.length > SHORT_PARTITION_OPTION.length
-        && !current.text.startsWith('--')) {
-        optionIndex = tokens.length - 1;
-        valueStart = current.start + SHORT_PARTITION_OPTION.length;
-    } else if (previous && !current.text.startsWith('-')
-        && (previous.text === SHORT_PARTITION_OPTION || LONG_PARTITION_OPTION.test(previous.text))) {
-        optionIndex = tokens.length - 2;
-        valueStart = current.start;
-    } else {
-        return undefined;
-    }
-
-    if (stopAtProgram && !isInCommandOptions(tokens, optionIndex)) {
-        return undefined;
-    }
-
-    // Skip an opening quote: `--partition="a,b"`
-    const firstChar = currentValueFirstChar(tokens[tokens.length - 1], valueStart);
-    return firstChar === '"' || firstChar === "'" ? valueStart + 1 : valueStart;
-}
-
-function currentValueFirstChar(token: Token, valueStart: number): string | undefined {
-    return token.text.charAt(valueStart - token.start) || undefined;
-}
-
-/**
- * Whether the token at `optionIndex` is still one of the Slurm command's own
- * options, rather than an argument of the program it launches
- * (`srun python train.py -p 5`). The program starts at the first bare word
- * that can't be the value of the option before it.
- */
-function isInCommandOptions(tokens: Token[], optionIndex: number): boolean {
-    for (let index = 0; index < optionIndex; index++) {
-        const token = tokens[index].text;
-        if (token.startsWith('-')) {
-            continue;
-        }
-
-        const previous = tokens[index - 1]?.text;
-        const isOptionValue = previous !== undefined && previous.startsWith('-') && !previous.includes('=');
-        if (!isOptionValue) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function tokenize(text: string, offset: number): Token[] {
-    const tokens: Token[] = [];
-    const pattern = /\S+/g;
-    const segment = text.slice(offset);
-
-    for (const match of segment.matchAll(pattern)) {
-        tokens.push({ text: match[0], start: offset + (match.index ?? 0) });
-    }
-
-    // A trailing space means the cursor starts a new, empty token
-    if (/\s$/.test(segment) || segment.length === 0) {
-        tokens.push({ text: '', start: text.length });
-    }
-
-    return tokens;
 }
 
 /** How busy a partition is, ranked on the resource that matters for it. */
@@ -243,9 +189,36 @@ export function buildPartitionLoads(
 
 const RESOURCE_ORDER: Record<PartitionLoad['resource'], number> = { GPU: 0, CPU: 1 };
 
+/** A partition to suggest, with any requested GPU types it lacks. */
+export interface PartitionSuggestion {
+    load: PartitionLoad;
+    /** Requested GPU types this partition doesn't have; empty when it fits the request */
+    missingGpuTypes: string[];
+}
+
+/**
+ * Puts partitions offering every requested GPU type first, keeping the
+ * least-busy order within each group. Nothing is hidden: the partition is
+ * how hardware is chosen, so switching to other GPUs must stay one pick away,
+ * with the mismatch spelled out instead.
+ */
+export function rankPartitionsForGpuTypes(loads: PartitionLoad[], requestedGpuTypes: string[]): PartitionSuggestion[] {
+    const requested = [...new Set(requestedGpuTypes)];
+    const suggestions = loads.map(load => {
+        const offered = new Set(load.gpuUsage?.gpuTypes.map(gpuType => gpuType.type) ?? []);
+        return { load, missingGpuTypes: requested.filter(type => !offered.has(type)) };
+    });
+
+    return [
+        ...suggestions.filter(suggestion => suggestion.missingGpuTypes.length === 0),
+        ...suggestions.filter(suggestion => suggestion.missingGpuTypes.length > 0),
+    ];
+}
+
 /** Short line shown beside the partition name in the completion list. */
-export function formatPartitionLoadDescription(load: PartitionLoad): string {
-    return `${Math.round(load.loadRatio * 100)}% busy · ${load.idle} idle ${load.resource}${load.idle === 1 ? '' : 's'}`;
+export function formatPartitionLoadDescription(load: PartitionLoad, missingGpuTypes: string[] = []): string {
+    const description = `${Math.round(load.loadRatio * 100)}% busy · ${load.idle} idle ${load.resource}${load.idle === 1 ? '' : 's'}`;
+    return missingGpuTypes.length > 0 ? `${description} · no ${missingGpuTypes.join(', ')}` : description;
 }
 
 /** Details panel for the selected completion, matching the GPU Partition Usage tooltip. */
