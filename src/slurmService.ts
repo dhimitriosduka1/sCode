@@ -16,10 +16,20 @@ import {
     MOCK_SINFO_NODE_OUTPUT,
     MOCK_SPRIO_OUTPUT,
     MOCK_SQUEUE_PARTITION_JOBS_OUTPUT,
-    MOCK_SSHARE_OUTPUT,
+    createMockSshareOutput,
+    MOCK_DEFAULT_ACCOUNT,
 } from './mockData';
 
 const execAsync = promisify(exec);
+
+/** The local login name, which Slurm reports users by. */
+export function getCurrentUsername(): string | undefined {
+    try {
+        return os.userInfo().username || undefined;
+    } catch {
+        return process.env.USER || process.env.USERNAME;
+    }
+}
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
 
 /**
@@ -48,6 +58,8 @@ export interface SlurmJob {
     name: string;
     state: string;
     time: string;
+    /** The account the job is charged to */
+    account?: string;
     partition: string;
     nodes: string;
     stdoutPath: string;
@@ -1639,6 +1651,7 @@ export class SlurmService {
     private availabilityProbe?: Promise<boolean>;
     private fairShareCache?: { fetchedAt: number; result: FairShareResult };
     private fairSharePending?: Promise<FairShareResult>;
+    private defaultAccount?: Promise<string | undefined>;
 
     constructor(
         pathCache?: JobPathCache,
@@ -1682,9 +1695,9 @@ export class SlurmService {
         }
 
         try {
-            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason
+            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason|Account
             const { stdout } = await execAsync(
-                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r"'
+                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r|%a"'
             );
 
             const jobs: SlurmJob[] = [];
@@ -1708,6 +1721,7 @@ export class SlurmService {
                         nodes: parts[5].trim() || 'N/A',
                         timeLimit: parts[6].trim() || 'N/A',
                         startTime: parts[7].trim() || 'N/A',
+                        account: parts[9]?.trim() || undefined,
                         // These will be fetched from scontrol
                         stdoutPath: 'N/A',
                         stderrPath: 'N/A',
@@ -1868,7 +1882,7 @@ export class SlurmService {
      */
     async getFairShare(): Promise<FairShareResult> {
         if (this.isMockMode()) {
-            return { entries: parseSshareOutput(MOCK_SSHARE_OUTPUT), available: true };
+            return { entries: parseSshareOutput(createMockSshareOutput(getCurrentUsername())), available: true };
         }
 
         const cached = this.fairShareCache;
@@ -1905,6 +1919,22 @@ export class SlurmService {
 
         this.fairShareCache = { fetchedAt: Date.now(), result };
         return result;
+    }
+
+    /**
+     * The current user's default account, which jobs are charged to unless they
+     * pass --account. Read once per session, as it rarely changes; undefined
+     * when sacctmgr is unavailable.
+     */
+    getDefaultAccount(): Promise<string | undefined> {
+        if (this.isMockMode()) {
+            return Promise.resolve(MOCK_DEFAULT_ACCOUNT);
+        }
+
+        this.defaultAccount ??= this.commandRunner('sacctmgr -n -P show user $USER format=DefaultAccount')
+            .then(({ stdout }) => stdout.trim().split('\n')[0]?.trim() || undefined)
+            .catch(() => undefined);
+        return this.defaultAccount;
     }
 
     /** Drop the cached fair share data so the next read re-queries the cluster. */

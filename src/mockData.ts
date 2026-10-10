@@ -25,6 +25,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'train-transformer',
             state: 'R',
             time: '00:42:10',
+            account: 'atlas_lab',
             partition: 'h200',
             nodes: 'gpu-node[01]',
             stdoutPath: '/work/vision_lab/runs/train-transformer/logs/91001.out',
@@ -42,6 +43,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'large-sweep',
             state: 'PD',
             time: '0:00',
+            account: 'atlas_lab',
             partition: 'a100-long',
             nodes: 'N/A',
             stdoutPath: 'N/A',
@@ -60,6 +62,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'dependent-eval',
             state: 'PD',
             time: '0:00',
+            account: 'atlas_lab',
             partition: 'h200',
             nodes: 'N/A',
             stdoutPath: 'N/A',
@@ -79,6 +82,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'array-postprocess',
             state: 'PD',
             time: '0:00',
+            account: 'atlas_lab',
             partition: 'debug-gpu',
             nodes: 'N/A',
             stdoutPath: 'N/A',
@@ -97,6 +101,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'array-postprocess',
             state: 'PD',
             time: '0:00',
+            account: 'atlas_lab',
             partition: 'debug-gpu',
             nodes: 'N/A',
             stdoutPath: 'N/A',
@@ -115,6 +120,7 @@ export function createMockJobs(): SlurmJob[] {
             name: 'cleanup',
             state: 'CG',
             time: '00:04:12',
+            account: 'vision_lab',
             partition: 'cpu',
             nodes: 'cpu-node[02]',
             stdoutPath: '/work/data_lab/logs/cleanup-91005.out',
@@ -408,6 +414,22 @@ export const MOCK_SQUEUE_PARTITION_JOBS_OUTPUT = [
 // The account column is indented by tree depth, exactly as Slurm prints it.
 // nova42 hoards GPUs and ranks last; rune barely uses the cluster and tops the
 // Fair Tree ranking.
+/**
+ * Mock `sshare` output, with the current user added under two accounts so
+ * the Active Jobs fair share row shows in mock mode: atlas_lab, where the
+ * mock jobs run and the mock default account, and vision_lab, which has the
+ * better standing but isn't the one their jobs are charged to.
+ */
+export function createMockSshareOutput(username: string | undefined): string {
+    if (!username || MOCK_SSHARE_OUTPUT.includes(`|${username}|`)) {
+        return MOCK_SSHARE_OUTPUT;
+    }
+    return [MOCK_SSHARE_OUTPUT, `   atlas_lab|${username}|0.214286`, `   vision_lab|${username}|0.642857`].join('\n');
+}
+
+/** The default account mock mode reports for the current user */
+export const MOCK_DEFAULT_ACCOUNT = 'atlas_lab';
+
 export const MOCK_SSHARE_OUTPUT = [
     'root||1.000000',
     '  atlas_lab||0.142857',

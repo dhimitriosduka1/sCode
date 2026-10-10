@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import {
+import { getCurrentUsername,
     parseFairShareNumber,
     parseSprioOutput,
     parseSshareOutput,
@@ -170,6 +170,34 @@ describe('SlurmService fair share', () => {
         });
 
         assert.equal((await service.getJobPriorityFactors()).size, 0);
+    });
+
+    it('reads the default account once per session', async () => {
+        const commands: string[] = [];
+        const service = createService(async (command) => {
+            commands.push(command);
+            return { stdout: 'atlas_lab\n', stderr: '' };
+        });
+
+        assert.equal(await service.getDefaultAccount(), 'atlas_lab');
+        assert.equal(await service.getDefaultAccount(), 'atlas_lab');
+        assert.deepEqual(commands, ['sacctmgr -n -P show user $USER format=DefaultAccount']);
+    });
+
+    it('reports no default account when sacctmgr is missing or empty', async () => {
+        assert.equal(await createService(async () => { throw new Error('sacctmgr: command not found'); }).getDefaultAccount(), undefined);
+        assert.equal(await createService(async () => ({ stdout: '', stderr: '' })).getDefaultAccount(), undefined);
+    });
+
+    it('includes the current user in mock fair share data, under two accounts', async () => {
+        const service = new SlurmService(undefined, undefined, async (command) => {
+            throw new Error(`Unexpected command in mock mode: ${command}`);
+        }, () => true);
+        const user = getCurrentUsername();
+
+        const accounts = (await service.getFairShare()).entries.filter(row => row.username === user).map(row => row.account);
+        assert.deepEqual(accounts, ['atlas_lab', 'vision_lab']);
+        assert.equal(await service.getDefaultAccount(), 'atlas_lab');
     });
 
     it('serves mock fair share data without running commands', async () => {

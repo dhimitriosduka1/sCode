@@ -103,7 +103,8 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 
 ### Fair Share & Job Priority
 - **Your fair share at a glance**: A row at the top of Active Jobs shows your Fair Tree fair share factor (`⚖️ Your fair share: 0.124`). It runs from 0 to 1 — the highest-ranked user on the cluster scores 1.00, so a lower value means your jobs queue further back.
-- **Per-user fair share**: Hall of Shame rows show each user's fair share factor, so you can see how your standing compares to the people ahead of you in the queue.
+- **The account that counts**: Fair share is tracked per account, and a job uses the standing of the account it's charged to. With several accounts, the row shows the one your jobs run under (or your default account when nothing is queued) rather than your best one, and its tooltip lists every account's standing.
+- **Per-user fair share**: Hall of Shame rows show each user's fair share factor for the account their GPU jobs run under, so you can see how your standing compares to the people ahead of you in the queue.
 - **Why is this job pending?**: Pending jobs show their `sprio` priority breakdown in the tooltip — total priority plus the fair share, age, QOS, partition, and job size weights — and name the component contributing most.
 - **Shared, cached fetch**: A single `sshare` call is shared across views and cached for a few minutes, so this adds one command per refresh rather than one per view.
 - **Degrades gracefully**: Clusters without Slurm accounting or the multifactor priority plugin simply don't show these rows. Turn the whole feature off with `showFairShare`.

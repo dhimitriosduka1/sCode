@@ -401,6 +401,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register the refresh command
     const refreshCommand = vscode.commands.registerCommand('slurmJobs.refresh', () => {
+        // Auto-refresh reuses the shared fair share cache; a manual refresh
+        // re-queries sshare, as the Hall of Shame's refresh does
+        slurmService.invalidateFairShareCache();
         slurmJobProvider.refresh();
         // Update context key after refresh (provider prunes stale checked IDs)
         // Use setTimeout to let the tree data provider finish its async work

@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import * as os from 'os';
-import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, getCurrentUsername, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
-    formatFairShareFactor,
     formatFairShareHeaderLabel,
+    formatFairShareTooltip,
     findJobPriorityFactors,
     formatJobPriorityDetails,
     getDominantPriorityComponent,
     getFairShareSummary,
+    rankJobAccounts,
 } from './fairShareRanking';
 import { getSlurmJobRowParts } from './slurmJobRow';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
@@ -17,13 +17,6 @@ import { SubmitScriptCache } from './submitScriptCache';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
-function getCurrentUsername(): string | undefined {
-    try {
-        return os.userInfo().username || undefined;
-    } catch {
-        return process.env.USER || process.env.USERNAME;
-    }
-}
 
 /**
  * Status categories for grouping jobs
@@ -323,10 +316,7 @@ class FairShareItem extends vscode.TreeItem {
     constructor(summary: FairShareSummary) {
         super(formatFairShareHeaderLabel(summary), vscode.TreeItemCollapsibleState.None);
         this.description = summary.account;
-        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
-            title: 'Your fair share',
-            summary: formatFairShareFactor(summary.fairShareFactor),
-        }));
+        this.tooltip = new vscode.MarkdownString(formatFairShareTooltip(summary));
         this.contextValue = 'fairShare';
     }
 }
@@ -590,8 +580,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     // shared sshare cache, so re-rendering costs nothing.
                     if (!this.hasFetchedFairShare) {
                         const hasPendingJobs = this.cachedJobs.some(job => job.state === 'PD');
-                        const [fairShare, priorityFactors] = await Promise.all([
+                        const [fairShare, defaultAccount, priorityFactors] = await Promise.all([
                             this.slurmService.getFairShare(),
+                            // Jobs are charged to it unless they pass --account
+                            this.slurmService.getDefaultAccount(),
                             // sprio only describes queued jobs — skip it when nothing is pending.
                             hasPendingJobs
                                 ? this.slurmService.getJobPriorityFactors()
@@ -603,7 +595,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                         }
 
                         const lookup = buildFairShareLookup(fairShare.entries);
-                        this.cachedFairShareSummary = getFairShareSummary(lookup, this.currentUsernameProvider());
+                        // The standing that applies is the account the jobs run under, not the user's best one
+                        this.cachedFairShareSummary = getFairShareSummary(lookup, this.currentUsernameProvider(), {
+                            jobAccounts: rankJobAccounts(this.cachedJobs),
+                            defaultAccount,
+                        });
                         this.cachedPriorityFactors = priorityFactors;
                         this.hasFetchedFairShare = true;
                     }

@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import * as os from 'os';
-import { SlurmService } from './slurmService';
+import { getCurrentUsername, SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import {
@@ -54,13 +53,6 @@ class LeaderboardRefreshItem extends vscode.TreeItem {
     }
 }
 
-function getCurrentUsername(): string | undefined {
-    try {
-        return os.userInfo().username || undefined;
-    } catch {
-        return process.env.USER || process.env.USERNAME;
-    }
-}
 
 function isFairShareEnabled(): boolean {
     const config = vscode.workspace.getConfiguration('slurmClusterManager');
@@ -131,7 +123,8 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
                 const fairShareLookup = buildFairShareLookup(fairShare.entries);
                 this.cachedEntries = entries.map(entry => ({
                     ...entry,
-                    fairShare: getFairShareSummary(fairShareLookup, entry.username),
+                    // The accounts their GPU jobs run under decide which standing applies
+                    fairShare: getFairShareSummary(fairShareLookup, entry.username, { jobAccounts: entry.accounts }),
                 }));
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
