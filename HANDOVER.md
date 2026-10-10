@@ -21,8 +21,16 @@ git fetch origin
 git switch wip/cluster-verification
 ```
 
-`package.json` on the laptop carries a local version bump (`1.6.x`) that is **never**
-committed; the branch has the real version.
+### State at handover (2026-10-10)
+
+- `wip/cluster-verification` is **fully pushed**: the laptop's local branch matched
+  `origin/wip/cluster-verification`, with no untracked files.
+- The only thing deliberately **not** pushed is the laptop's local version bump in
+  `package.json` (`1.6.0` → `1.6.77`, for local `.vsix` builds). The branch has the real
+  version, `1.6.0`. Never commit a version change unless the user asks for a release.
+- The laptop's local `main` also has `7edb15e` and `a55dd53`, but `origin/main` does not.
+  Once verification passes, the plan is to merge `wip/cluster-verification` into `main`
+  and push, with the user's go-ahead.
 
 ```bash
 npm ci
