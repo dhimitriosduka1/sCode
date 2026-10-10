@@ -193,6 +193,21 @@ describe('leaderboard ranking', () => {
         );
     });
 
+    it('spells out fair share in the row, as Active Jobs does', () => {
+        const withFairShare = {
+            ...entry('nova42', 24, 3, ['atlas_lab']),
+            fairShare: {
+                username: 'nova42',
+                account: 'atlas_lab',
+                fairShareFactor: 0.142857,
+                source: 'only' as const,
+                accounts: [{ account: 'atlas_lab', fairShareFactor: 0.142857 }],
+            },
+        };
+
+        assert.equal(formatLeaderboardEntryDescription(withFairShare), 'atlas_lab · 24 GPUs · 3 GPU jobs · fair share 0.143');
+    });
+
     it('formats GPU leaderboard row descriptions with cluster share progress at the end', () => {
         assert.equal(
             formatLeaderboardEntryRowDescription(entry('mixed-user', 4, 2, ['mswk_inst']), 16),

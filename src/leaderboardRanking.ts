@@ -49,8 +49,9 @@ export function formatLeaderboardEntryDescription(entry: LeaderboardEntry): stri
 
     // The GPU share bar already occupies the trailing slot, so fair share stays
     // a number here: the standing of the account their GPU jobs run under.
+    // Spelled out, matching "Your fair share" in Active Jobs.
     return entry.fairShare
-        ? `${baseLabel} · FS ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
+        ? `${baseLabel} · fair share ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
         : baseLabel;
 }
 

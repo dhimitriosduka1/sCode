@@ -111,7 +111,7 @@ Smart handling of SLURM job arrays with flexible cancellation and modification o
 
 ### Hall of Shame
 - **Hall of Shame**: A dedicated sidebar view ranking GPU users by allocated GPUs and running GPU job count.
-- **Fair share factor**: Each row shows the user's Fair Tree fair share factor (`FS 0.143`).
+- **Fair share factor**: Each row shows the user's Fair Tree fair share factor (`fair share 0.143`).
 - **GPU-only rankings**: CPU-only jobs and CPU-only users are excluded from the Hall of Shame.
 - **Slurm account context**: Rows show the Slurm account responsible for the GPU jobs, with all accounts listed in the tooltip when a user has jobs under multiple accounts.
 - **GPU type breakdown**: Hover a row to see how many GPUs are allocated by type, such as `a100`, `h200`, or generic GPUs.
