@@ -106,7 +106,7 @@ describe('SlurmService username', () => {
 
         await service.getJobs();
 
-        assert.deepEqual(commands[1], ['squeue', '-u', 'alice', '--noheader', '--format=%i|%j|%t|%M|%P|%N|%l|%S|%r|%a|%E']);
+        assert.deepEqual(commands[1], ['squeue', '-u', 'alice', '--noheader', '--format=%i|%j|%t|%M|%P|%N|%l|%S|%r|%a']);
     });
 });
 
@@ -122,7 +122,10 @@ describe('SlurmService over SSH', () => {
             if (argv[0] === 'squeue') {
                 return { stdout: squeueLine, stderr: '' };
             }
-            // The script that runs scontrol for each job, after a marker line
+            if (argv[0] === 'scontrol') {
+                return { stdout: scontrolOutput, stderr: '' };
+            }
+            // Over SSH, the script that runs scontrol for each job, after a marker line
             const [, , , , marker, ...jobIds] = argv;
             return { stdout: jobIds.map(id => `${marker} ${id}\n${scontrolOutput}\n`).join(''), stderr: '' };
         };
@@ -261,8 +264,11 @@ describe('job details', () => {
         ]);
     });
 
-    it('fetches every job\'s details in one command, whatever the job count', async () => {
-        // Stand-ins for squeue and scontrol, run by the real shell script
+    /**
+     * Runs getJobs against stand-ins for squeue and scontrol, run for real, and
+     * returns the commands the service started and the scontrol calls made.
+     */
+    async function getJobsWithStandIns(remoteHost: string | undefined) {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scode-scontrol-'));
         const write = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}`, { mode: 0o755 });
         write('squeue', [
@@ -288,100 +294,38 @@ describe('job details', () => {
                 commands.push(argv[0]);
                 return localCommandRunner(argv, options);
             });
+            service.resetSession(remoteHost);
 
             const jobs = await service.getJobs();
-
-            assert.deepEqual(jobs.map(job => [job.jobId, job.stdoutPath]), [
-                ['101', '/work/101.out'],
-                ['102_3', '/work/array.out'],
-                ['103', '/work/103.out'],
-            ]);
-            // id, squeue, one command for all jobs, and one for the array task's fallback
-            assert.deepEqual(commands, ['id', 'squeue', 'sh', 'sh']);
-            assert.deepEqual(fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n'), [
-                'show job 101', 'show job 102_3', 'show job 103', 'show job 102',
-            ]);
+            const calls = fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n');
+            return { jobs, commands, calls };
         } finally {
             process.env.PATH = originalPath;
             fs.rmSync(dir, { recursive: true, force: true });
         }
-    });
-});
-
-describe('job details between refreshes', () => {
-    /** A cluster whose queue the test changes between refreshes, recording which jobs scontrol is asked about */
-    function createCluster() {
-        const cluster = {
-            queue: [] as string[],
-            asked: [] as string[][],
-            dependencies: new Map<string, string>(),
-        };
-        const runner: SlurmCommandRunner = async argv => {
-            if (argv[0] === 'id') {
-                return { stdout: 'alice\n', stderr: '' };
-            }
-            if (argv[0] === 'squeue') {
-                return { stdout: cluster.queue.join('\n'), stderr: '' };
-            }
-            const [, , , , marker, ...jobIds] = argv;
-            cluster.asked.push(jobIds);
-            return {
-                stdout: jobIds.map(id => {
-                    const dependency = cluster.dependencies.get(id) ?? '(null)';
-                    return `${marker} ${id}\nJobId=${id} StdOut=/work/${id}.out WorkDir=/work Dependency=${dependency}\n`;
-                }).join(''),
-                stderr: '',
-            };
-        };
-        return { cluster, service: createService(runner) };
     }
 
-    const row = (id: string, state: string, nodes: string, dependency = '(null)') =>
-        `${id}|job${id}|${state}|0:00|gpu|${nodes}|1:00:00|N/A|None|lab|${dependency}`;
+    const expectedPaths = [
+        ['101', '/work/101.out'],
+        ['102_3', '/work/array.out'],
+        ['103', '/work/103.out'],
+    ];
 
-    it('asks scontrol only about new jobs and jobs that changed state', async () => {
-        const { cluster, service } = createCluster();
-        cluster.queue = [row('1', 'R', 'node01'), row('2', 'PD', '')];
+    it('over SSH, fetches every job\'s details in one command, whatever the job count', async () => {
+        const { jobs, commands, calls } = await getJobsWithStandIns('mycluster');
 
-        await service.getJobs();
-        assert.deepEqual(cluster.asked, [['1', '2']]);
-
-        // Nothing changed: nothing to ask
-        const unchanged = await service.getJobs();
-        assert.deepEqual(cluster.asked, [['1', '2']]);
-        assert.equal(unchanged.find(job => job.jobId === '1')?.stdoutPath, '/work/1.out');
-
-        // Job 2 started and job 3 arrived; job 1 is as it was
-        cluster.queue = [row('1', 'R', 'node01'), row('2', 'R', 'node02'), row('3', 'PD', '')];
-        await service.getJobs();
-        assert.deepEqual(cluster.asked, [['1', '2'], ['2', '3']]);
+        assert.deepEqual(jobs.map(job => [job.jobId, job.stdoutPath]), expectedPaths);
+        // id, squeue, one command for all jobs, and one for the array task's fallback
+        assert.deepEqual(commands, ['id', 'squeue', 'sh', 'sh']);
+        assert.deepEqual(calls, ['show job 101', 'show job 102_3', 'show job 103', 'show job 102']);
     });
 
-    it('asks again about a job that left the queue and came back, and after a new session', async () => {
-        const { cluster, service } = createCluster();
-        cluster.queue = [row('1', 'R', 'node01')];
-        await service.getJobs();
+    it('on this machine, runs scontrol for each job, all at once', async () => {
+        const { jobs, commands, calls } = await getJobsWithStandIns(undefined);
 
-        cluster.queue = [];
-        await service.getJobs();
-        cluster.queue = [row('1', 'R', 'node01')];
-        await service.getJobs();
-        assert.deepEqual(cluster.asked, [['1'], ['1']]);
-
-        service.resetSession('mycluster');
-        await service.getJobs();
-        assert.deepEqual(cluster.asked, [['1'], ['1'], ['1']]);
-    });
-
-    it('takes the dependency from squeue, so a changed one shows without asking scontrol', async () => {
-        const { cluster, service } = createCluster();
-        cluster.dependencies.set('2', 'afterok:1(unfulfilled)');
-        cluster.queue = [row('2', 'PD', '', 'afterok:1(unfulfilled)')];
-        assert.equal((await service.getJobs())[0].dependency, 'afterok:1(unfulfilled)');
-
-        // Cleared with Update Dependency; scontrol's kept answer still has the old one
-        cluster.queue = [row('2', 'PD', '')];
-        assert.equal((await service.getJobs())[0].dependency, undefined);
-        assert.equal(cluster.asked.length, 1);
+        assert.deepEqual(jobs.map(job => [job.jobId, job.stdoutPath]), expectedPaths);
+        assert.deepEqual(commands, ['id', 'squeue', 'scontrol', 'scontrol', 'scontrol', 'scontrol']);
+        // Run in parallel, so in no particular order
+        assert.deepEqual([...calls].sort(), ['show job 101', 'show job 102', 'show job 102_3', 'show job 103']);
     });
 });

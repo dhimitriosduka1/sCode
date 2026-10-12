@@ -86,13 +86,6 @@ export function splitMarkedJobOutput(stdout: string, marker: string): Map<string
 
 type ScontrolJobDetails = ReturnType<typeof parseJobDetailsOutput>;
 
-/** A job's scontrol details, kept between refreshes, with the squeue values they were read under */
-interface KnownJobDetails {
-    state: string;
-    nodes: string;
-    details: ScontrolJobDetails;
-}
-
 const UNKNOWN_JOB_DETAILS: ScontrolJobDetails = {
     stdoutPath: 'N/A',
     stderrPath: 'N/A',
@@ -1708,10 +1701,10 @@ export class SlurmService {
     private readonly sessionLookups = new Map<string, Promise<string>>();
     /** The host commands run on over SSH; undefined when they run on this machine */
     private remoteHost?: string;
+    /** Bumped by resetSession, so answers from an earlier session aren't kept */
+    private session = 0;
     private fairShareCache?: { fetchedAt: number; result: FairShareResult };
     private fairSharePending?: Promise<FairShareResult>;
-    /** Active jobs' scontrol details by job ID, so a refresh asks only about new and changed jobs */
-    private readonly knownJobDetails = new Map<string, KnownJobDetails>();
     private defaultAccount?: Promise<string | undefined>;
 
     constructor(
@@ -1742,11 +1735,12 @@ export class SlurmService {
      */
     resetSession(remoteHost?: string): void {
         this.remoteHost = remoteHost;
+        this.session++;
         this.availabilityProbe = undefined;
         this.sessionLookups.clear();
-        this.knownJobDetails.clear();
         this.defaultAccount = undefined;
         this.fairShareCache = undefined;
+        this.fairSharePending = undefined;
     }
 
     /** Runs a Slurm command, noticing when the SSH connection to the cluster has gone */
@@ -1836,9 +1830,9 @@ export class SlurmService {
         }
 
         try {
-            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason|Account|Dependency
+            // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason|Account
             const { stdout } = await this.run([
-                'squeue', '-u', await this.lookupUsername(), '--noheader', '--format=%i|%j|%t|%M|%P|%N|%l|%S|%r|%a|%E',
+                'squeue', '-u', await this.lookupUsername(), '--noheader', '--format=%i|%j|%t|%M|%P|%N|%l|%S|%r|%a',
             ]);
 
             const jobs: SlurmJob[] = [];
@@ -1874,44 +1868,15 @@ export class SlurmService {
                         job.pendingReason = normalizePendingReason(parts[8]);
                     }
 
-                    // From squeue, so it's current on every refresh, unlike the kept scontrol details
-                    if (parts.length > 10) {
-                        const dependency = normalizeSlurmPathValue(parts[10]);
-                        job.dependency = dependency !== 'N/A' ? dependency : undefined;
-                    }
-
                     jobs.push(job);
                 }
             }
 
-            // A job's details from scontrol (logs, script, folder, GPUs, memory) don't change
-            // while it waits or runs, so they're kept between refreshes and asked for only for
-            // new jobs and jobs that changed state or nodes, as a job that starts gets its
-            // nodes and GPUs
-            const changedJobs = jobs.filter(job => {
-                const known = this.knownJobDetails.get(job.jobId);
-                return !known || known.state !== job.state || known.nodes !== job.nodes;
-            });
-            const fetchedDetails = await this.fetchJobDetails(changedJobs);
-            for (const job of changedJobs) {
-                const details = fetchedDetails.get(job.jobId);
-                // A job scontrol didn't answer for is asked about again next time
-                if (details) {
-                    this.knownJobDetails.set(job.jobId, { state: job.state, nodes: job.nodes, details });
-                }
-            }
+            // Detailed info (stdout, stderr, command) from scontrol
+            const fetchedDetails = await this.fetchJobDetails(jobs);
 
-            // Jobs that have left the queue won't be asked about again
-            const activeJobIds = new Set(jobs.map(job => job.jobId));
-            for (const jobId of this.knownJobDetails.keys()) {
-                if (!activeJobIds.has(jobId)) {
-                    this.knownJobDetails.delete(jobId);
-                }
-            }
-
-            const hasSqueueDependency = stdout.trim().split('\n').some(line => line.split('|').length > 10);
             await Promise.all(jobs.map(async job => {
-                const details = this.knownJobDetails.get(job.jobId)?.details ?? UNKNOWN_JOB_DETAILS;
+                const details = fetchedDetails.get(job.jobId) ?? UNKNOWN_JOB_DETAILS;
                 // Expand any remaining placeholders in paths
                 job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir);
                 job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir);
@@ -1920,14 +1885,10 @@ export class SlurmService {
                 job.gpuCount = details.gpuCount;
                 job.gpuType = details.gpuType;
                 job.memory = details.memory;
-                if (!hasSqueueDependency) {
-                    job.dependency = details.dependency;
-                }
+                job.dependency = details.dependency;
 
-                // Cache the paths for later use in history; kept details were cached when they were read
-                if (fetchedDetails.has(job.jobId)) {
-                    await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
-                }
+                // Cache the paths for later use in history
+                await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
 
                 // Cache the submit script if not already cached. Over SSH the script is
                 // on the cluster, and a file at the same path here would be a different one.
@@ -1946,11 +1907,21 @@ export class SlurmService {
     }
 
     /**
-     * scontrol details for the given jobs, by job ID, read in as few commands
-     * as possible. An array task scontrol no longer knows by its own ID falls
-     * back to its array's details.
+     * scontrol details for the given jobs, by job ID. An array task scontrol
+     * no longer knows by its own ID falls back to its array's details.
+     *
+     * On this machine, one scontrol per job, all at once, is quickest. Over
+     * SSH every command costs a round trip, so all jobs share one command.
      */
     private async fetchJobDetails(jobs: SlurmJob[]): Promise<Map<string, ScontrolJobDetails>> {
+        if (!this.remoteHost) {
+            const details = new Map<string, ScontrolJobDetails>();
+            await Promise.all(jobs.map(async job => {
+                details.set(job.jobId, await this.getJobDetails(job.jobId));
+            }));
+            return details;
+        }
+
         const ids = jobs.map(job => cleanJobIdForScontrol(job.jobId));
         const outputs = await this.getJobDetailOutputs(ids);
 
@@ -1969,6 +1940,28 @@ export class SlurmService {
             }
         });
         return details;
+    }
+
+    /**
+     * Get detailed job info from scontrol (stdout, stderr, command paths)
+     */
+    async getJobDetails(jobId: string): Promise<ScontrolJobDetails> {
+        const cleanedId = cleanJobIdForScontrol(jobId);
+        try {
+            const { stdout } = await this.run(['scontrol', 'show', 'job', cleanedId]);
+            return parseJobDetailsOutput(stdout);
+        } catch {
+            const baseId = extractBaseJobId(jobId);
+            if (baseId !== cleanedId) {
+                try {
+                    const { stdout } = await this.run(['scontrol', 'show', 'job', baseId]);
+                    return parseJobDetailsOutput(stdout);
+                } catch {
+                    // fall through
+                }
+            }
+            return UNKNOWN_JOB_DETAILS;
+        }
     }
 
     /**
@@ -2085,14 +2078,19 @@ export class SlurmService {
             return this.fairSharePending;
         }
 
-        this.fairSharePending = this.fetchFairShare().finally(() => {
-            this.fairSharePending = undefined;
+        const pending = this.fetchFairShare().finally(() => {
+            // A reset meanwhile may have started a call of its own
+            if (this.fairSharePending === pending) {
+                this.fairSharePending = undefined;
+            }
         });
+        this.fairSharePending = pending;
 
-        return this.fairSharePending;
+        return pending;
     }
 
     private async fetchFairShare(): Promise<FairShareResult> {
+        const session = this.session;
         let result: FairShareResult;
 
         try {
@@ -2108,7 +2106,10 @@ export class SlurmService {
             result = { entries: [], available: false };
         }
 
-        this.fairShareCache = { fetchedAt: Date.now(), result };
+        // An answer from before a reset may be another cluster's
+        if (this.session === session) {
+            this.fairShareCache = { fetchedAt: Date.now(), result };
+        }
         return result;
     }
 

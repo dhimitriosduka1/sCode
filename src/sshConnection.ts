@@ -5,8 +5,17 @@ import * as os from 'os';
 import * as path from 'path';
 import { SlurmCommandResult, SlurmCommandRunner, SlurmNotConnectedError, writeInput } from './slurmCommandRunner';
 
-/** Arguments no shell can misread, sent unquoted so commands stay readable */
-const PLAIN_ARGUMENT = /^[A-Za-z0-9_@%+=:,./-]+$/;
+/**
+ * Arguments no shell can misread, sent unquoted so commands stay readable. A
+ * leading `=` is left out, as zsh expands `=name` to a command's path.
+ */
+const PLAIN_ARGUMENT = /^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+=:,./-]*$/;
+
+/**
+ * Runs a command from a directory. In `sh` rather than the login shell, whose
+ * syntax can differ (csh, fish); the directory and command are its arguments.
+ */
+const RUN_IN_DIRECTORY_SCRIPT = 'cd "$1" && shift && exec "$@"';
 
 /** A Host alias from ~/.ssh/config or user@hostname: nothing ssh could take for an option */
 const SSH_HOST = /^[A-Za-z0-9_.@][A-Za-z0-9_.@-]*$/;
@@ -40,8 +49,8 @@ export function quoteShellArgument(arg: string): string {
 
 /** The command line the cluster's shell runs, optionally from a directory on the cluster */
 export function buildRemoteCommand(argv: readonly string[], cwd?: string): string {
-    const command = argv.map(quoteShellArgument).join(' ');
-    return cwd ? `cd -- ${quoteShellArgument(cwd)} && ${command}` : command;
+    const command = cwd ? ['sh', '-c', RUN_IN_DIRECTORY_SCRIPT, 'sh', cwd, ...argv] : argv;
+    return command.map(quoteShellArgument).join(' ');
 }
 
 /** Explains what's wrong with an SSH host setting, or returns undefined when it's usable */
@@ -209,9 +218,9 @@ export class SshConnection {
                 throw new SlurmNotConnectedError(this.host);
             }
             // Name the Slurm command, not the ssh plumbing around it
-            const stderr = error instanceof SshProcessError ? error.stderr : String(error);
+            const reason = error instanceof Error ? error.message : String(error);
             const timedOut = error instanceof SshProcessError && error.timedOut ? ' (timed out)' : '';
-            throw new Error(`Command failed: ${argv.join(' ')}${timedOut}\n${stderr}`.trim());
+            throw new Error(`Command failed: ${argv.join(' ')}${timedOut}\n${reason}`.trim());
         } finally {
             this.releaseSlot();
         }

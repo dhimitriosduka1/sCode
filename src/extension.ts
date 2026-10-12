@@ -400,8 +400,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('slurmClusterManager.connect', () => clusterConnection.connect()),
         // A row's click passes its host; its inline button passes the row
-        vscode.commands.registerCommand(CONNECT_TO_HOST_COMMAND, (target: string | SshTargetItem) =>
-            clusterConnection.connect(typeof target === 'string' ? target : target.host.alias)),
+        vscode.commands.registerCommand(CONNECT_TO_HOST_COMMAND, (target?: string | SshTargetItem) =>
+            clusterConnection.connect(typeof target === 'string' ? target : target?.host.alias)),
         vscode.commands.registerCommand('slurmClusterManager.connectToOtherHost', () => clusterConnection.connectToOtherHost()),
         vscode.commands.registerCommand('slurmClusterManager.disconnect', () => clusterConnection.disconnect()),
         vscode.commands.registerCommand('slurmClusterManager.refreshSshTargets', () => sshTargetsProvider.refresh()),

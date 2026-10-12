@@ -137,6 +137,28 @@ describe('SlurmService fair share', () => {
         assert.equal(calls, 2);
     });
 
+    it('does not keep an answer from before a reset, which may be another cluster\'s', async () => {
+        let releaseFirst: (result: { stdout: string; stderr: string }) => void = () => undefined;
+        let calls = 0;
+        const service = createService(async () => {
+            calls++;
+            if (calls === 1) {
+                return new Promise(resolve => { releaseFirst = resolve; });
+            }
+            return { stdout: '  vision_lab|pixelwave|0.9', stderr: '' };
+        });
+
+        const first = service.getFairShare();
+        service.resetSession('othercluster');
+        const second = await service.getFairShare();
+        releaseFirst({ stdout: '  atlas_lab|nova42|0.1', stderr: '' });
+        await first;
+
+        assert.equal(second.entries[0].account, 'vision_lab');
+        assert.equal((await service.getFairShare()).entries[0].account, 'vision_lab');
+        assert.equal(calls, 2);
+    });
+
     it('shares a single in-flight sshare call between concurrent callers', async () => {
         let calls = 0;
         const service = createService(async () => {

@@ -41,6 +41,9 @@ describe('quoteShellArgument', () => {
         assert.equal(quoteShellArgument('a100; rm -rf ~'), `'a100; rm -rf ~'`);
         assert.equal(quoteShellArgument('$(id)'), `'$(id)'`);
         assert.equal(quoteShellArgument('~/logs'), `'~/logs'`);
+        // zsh expands =name to a command's path
+        assert.equal(quoteShellArgument('=sbatch'), `'=sbatch'`);
+        assert.equal(quoteShellArgument('jobid=5'), 'jobid=5');
         assert.equal(quoteShellArgument(''), `''`);
     });
 
@@ -63,12 +66,32 @@ describe('buildRemoteCommand', () => {
         );
     });
 
-    it('runs from a directory on the cluster', () => {
+    it('runs from a directory on the cluster, in sh whatever the login shell', () => {
         assert.equal(
             buildRemoteCommand(['sbatch', 'train.sbatch'], '/work/my runs'),
-            `cd -- '/work/my runs' && sbatch train.sbatch`,
+            `sh -c 'cd "$1" && shift && exec "$@"' sh '/work/my runs' sbatch train.sbatch`,
         );
     });
+
+    // sshd hands the command line to the login shell as `$SHELL -c <line>`
+    const shells = ['/bin/sh', '/bin/bash', '/bin/zsh', '/usr/bin/zsh'].filter(shell => fs.existsSync(shell));
+    for (const shell of shells) {
+        it(`reaches the program unchanged through ${shell}`, async () => {
+            const { localCommandRunner } = await import('../slurmCommandRunner');
+            const args = [`it's $(id) \`id\` "$HOME" ~ *`, '=sbatch', '--format=%i|%j', '', 'a b'];
+
+            const plain = await localCommandRunner([shell, '-c', buildRemoteCommand(['printf', '[%s]', ...args])]);
+            assert.equal(plain.stdout, args.map(arg => `[${arg}]`).join(''));
+
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scode cwd '));
+            try {
+                const inDir = await localCommandRunner([shell, '-c', buildRemoteCommand(['pwd'], fs.realpathSync(dir))]);
+                assert.equal(inDir.stdout.trim(), fs.realpathSync(dir));
+            } finally {
+                fs.rmSync(dir, { recursive: true, force: true });
+            }
+        });
+    }
 });
 
 describe('validateSshHost', () => {
@@ -216,6 +239,17 @@ describe('SshConnection', () => {
             assert.doesNotMatch(error.message, /ControlMaster|BatchMode/);
             return true;
         });
+    });
+
+    it('keeps ssh\'s reason when a command fails without saying why', async () => {
+        const connection = createConnection(async args => {
+            if (args.includes('-O')) {
+                return { stdout: '', stderr: '' };
+            }
+            throw new SshProcessError('ERR_CHILD_PROCESS_STDIO_MAXBUFFER', '', false);
+        });
+
+        await assert.rejects(connection.run(['scontrol', 'show', 'node']), /Command failed: scontrol show node\n.*ERR_CHILD_PROCESS_STDIO_MAXBUFFER/);
     });
 
     it('checks and closes the connection through its socket', async () => {

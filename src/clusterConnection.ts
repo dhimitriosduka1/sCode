@@ -28,7 +28,8 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 export class ClusterConnection implements vscode.Disposable {
     private ssh: SshConnection | undefined;
-    private connected = false;
+    /** Undefined until first found out, so finding an open connection isn't taken for a change */
+    private connected: boolean | undefined;
     private loginTerminal: vscode.Terminal | undefined;
     private loggingInTo: string | undefined;
     private readonly changeEmitter = new vscode.EventEmitter<void>();
@@ -46,7 +47,7 @@ export class ClusterConnection implements vscode.Disposable {
         void this.refreshConnectedState();
 
         const keepalive = setInterval(() => {
-            if (this.ssh && this.connected) {
+            if (this.ssh && this.connected === true) {
                 void this.run(['true']).catch(() => undefined);
             }
         }, KEEPALIVE_INTERVAL_MS);
@@ -126,7 +127,7 @@ export class ClusterConnection implements vscode.Disposable {
 
     private async logIn(ssh: SshConnection): Promise<void> {
         if (await ssh.isConnected()) {
-            this.setConnected(true);
+            this.announceLogin();
             vscode.window.setStatusBarMessage(`$(check) Connected to ${ssh.host}`, 5000);
             return;
         }
@@ -151,7 +152,7 @@ export class ClusterConnection implements vscode.Disposable {
 
         if (outcome === 'connected') {
             terminal.dispose();
-            this.setConnected(true);
+            this.announceLogin();
             vscode.window.setStatusBarMessage(`$(check) Connected to ${ssh.host}`, 5000);
         } else if (outcome === 'failed') {
             vscode.window.showErrorMessage(`Couldn't connect to ${ssh.host}. The terminal shows what ssh reported.`);
@@ -247,7 +248,7 @@ export class ClusterConnection implements vscode.Disposable {
         }
 
         this.ssh = ssh;
-        this.connected = false;
+        this.connected = undefined;
         void this.setConnectedContext();
         void this.refreshConnectedState();
         this.changeEmitter.fire();
@@ -294,16 +295,30 @@ export class ClusterConnection implements vscode.Disposable {
         }
     }
 
+    /**
+     * Records whether the connection is open. Only a change is announced: the
+     * first finding matches what the views found themselves.
+     */
     private setConnected(connected: boolean): void {
         if (this.connected === connected) {
             return;
         }
+        const isChange = this.connected !== undefined;
         this.connected = connected;
+        void this.setConnectedContext();
+        if (isChange) {
+            this.changeEmitter.fire();
+        }
+    }
+
+    /** After the user logs in, everything is read again, whatever was known before */
+    private announceLogin(): void {
+        this.connected = true;
         void this.setConnectedContext();
         this.changeEmitter.fire();
     }
 
     private setConnectedContext(): Thenable<unknown> {
-        return vscode.commands.executeCommand('setContext', CONNECTED_CONTEXT_KEY, this.ssh !== undefined && this.connected);
+        return vscode.commands.executeCommand('setContext', CONNECTED_CONTEXT_KEY, this.ssh !== undefined && this.connected === true);
     }
 }

@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
     ClusterFileError,
     expandClusterHome,
@@ -8,7 +11,7 @@ import {
     resolveClusterPath,
     validateClusterFolder,
 } from '../clusterFiles';
-import { SlurmNotConnectedError } from '../slurmCommandRunner';
+import { localCommandRunner, SlurmNotConnectedError } from '../slurmCommandRunner';
 
 describe('resolveClusterPath', () => {
     it('keeps absolute paths, tidied', () => {
@@ -82,14 +85,15 @@ describe('mapToClusterFolder', () => {
 });
 
 describe('readClusterFile', () => {
-    it('reads the end of the file with tail, one byte past the limit', async () => {
+    it('reads one byte past the limit, passing the path as an argument of a fixed script', async () => {
         const calls: (readonly string[])[] = [];
         const content = await readClusterFile(async argv => {
             calls.push(argv);
             return { stdout: 'epoch 1\nepoch 2\n', stderr: '' };
         }, '/work/alice/logs/1.out', 100);
 
-        assert.deepEqual(calls, [['tail', '-c', '101', '--', '/work/alice/logs/1.out']]);
+        assert.deepEqual(calls[0].slice(0, 2), ['sh', '-c']);
+        assert.deepEqual(calls[0].slice(3), ['sh', '/work/alice/logs/1.out', '101']);
         assert.deepEqual(content, { text: 'epoch 1\nepoch 2\n', truncated: false });
     });
 
@@ -99,18 +103,42 @@ describe('readClusterFile', () => {
         assert.deepEqual(content, { text: 'epoch 2\nepoch 3\n', truncated: true });
     });
 
-    it('tells a missing file, a directory, and an unreadable file apart', async () => {
+    const problemOf = (promise: Promise<unknown>) => promise.then(
+        () => undefined,
+        error => error instanceof ClusterFileError ? error.problem : 'other',
+    );
+
+    it('tells problems apart by the script\'s own words, not the echoed command line', async () => {
+        // The failed command line holds every word within the script's text
         const failWith = (stderr: string) => readClusterFile(async argv => {
             throw new Error(`Command failed: ${argv.join(' ')}\n${stderr}`);
         }, '/work/x');
-        const problemOf = (promise: Promise<unknown>) => promise.then(
-            () => undefined,
-            error => error instanceof ClusterFileError ? error.problem : 'other',
-        );
 
-        assert.equal(await problemOf(failWith('tail: cannot open \'/work/x\' for reading: No such file or directory')), 'not-found');
-        assert.equal(await problemOf(failWith('tail: error reading \'/work/x\': Is a directory')), 'directory');
-        assert.equal(await problemOf(failWith('tail: cannot open \'/work/x\' for reading: Permission denied')), 'unreadable');
+        assert.equal(await problemOf(failWith('@@scode-not-found')), 'not-found');
+        assert.equal(await problemOf(failWith('@@scode-directory')), 'directory');
+        assert.equal(await problemOf(failWith('@@scode-unreadable')), 'unreadable');
+        // Whatever language the cluster reports in, tail's own words decide nothing
+        assert.equal(await problemOf(failWith('tail: Datei oder Verzeichnis nicht gefunden')), 'other');
+    });
+
+    it('reads real files, and tells real problems apart, with the real shell', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scode-files-'));
+        try {
+            const log = path.join(dir, `job $(id) 7.out`);
+            fs.writeFileSync(log, 'epoch 1\nepoch 2\n');
+            const unreadable = path.join(dir, 'secret.out');
+            fs.writeFileSync(unreadable, 'x', { mode: 0o000 });
+
+            assert.deepEqual(await readClusterFile(localCommandRunner, log), { text: 'epoch 1\nepoch 2\n', truncated: false });
+            assert.equal(await problemOf(readClusterFile(localCommandRunner, path.join(dir, 'missing.out'))), 'not-found');
+            assert.equal(await problemOf(readClusterFile(localCommandRunner, dir)), 'directory');
+            // root can read anything
+            if (process.getuid?.() !== 0) {
+                assert.equal(await problemOf(readClusterFile(localCommandRunner, unreadable)), 'unreadable');
+            }
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it('lets a lost connection through for the caller to handle', async () => {

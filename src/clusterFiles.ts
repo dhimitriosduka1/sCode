@@ -12,6 +12,25 @@ export const CLUSTER_FILE_MAX_BYTES = 4 * 1024 * 1024;
 
 export type ClusterFileProblem = 'unresolved' | 'not-found' | 'directory' | 'unreadable';
 
+/**
+ * Reads the end of a file after checking it can be read. Problems are reported
+ * with fixed words rather than left to tail, whose messages depend on the
+ * cluster's language and whose handling of a directory varies. The path and
+ * byte count are the script's arguments, never part of it.
+ */
+const READ_FILE_END_SCRIPT = [
+    'if [ -d "$1" ]; then echo "@@scode-directory" >&2; exit 1; fi',
+    'if [ ! -e "$1" ]; then echo "@@scode-not-found" >&2; exit 1; fi',
+    'if [ ! -r "$1" ]; then echo "@@scode-unreadable" >&2; exit 1; fi',
+    'exec tail -c "$2" -- "$1"',
+].join('; ');
+
+const PROBLEM_MARKERS: [string, ClusterFileProblem][] = [
+    ['@@scode-directory', 'directory'],
+    ['@@scode-not-found', 'not-found'],
+    ['@@scode-unreadable', 'unreadable'],
+];
+
 export class ClusterFileError extends Error {
     constructor(readonly problem: ClusterFileProblem, readonly filePath: string, message: string) {
         super(message);
@@ -112,7 +131,10 @@ export async function readClusterFile(
     let stdout: string;
     try {
         // One byte more than is shown tells whether there's more
-        ({ stdout } = await run(['tail', '-c', String(maxBytes + 1), '--', filePath], { maxBuffer: maxBytes + 64 * 1024 }));
+        ({ stdout } = await run(
+            ['sh', '-c', READ_FILE_END_SCRIPT, 'sh', filePath, String(maxBytes + 1)],
+            { maxBuffer: maxBytes + 64 * 1024 },
+        ));
     } catch (error) {
         throw classifyReadError(error, filePath);
     }
@@ -127,15 +149,10 @@ export async function readClusterFile(
 
 function classifyReadError(error: unknown, filePath: string): unknown {
     const message = error instanceof Error ? error.message : String(error);
-    if (/No such file or directory/i.test(message)) {
-        return new ClusterFileError('not-found', filePath, message);
-    }
-    if (/Is a directory/i.test(message)) {
-        return new ClusterFileError('directory', filePath, message);
-    }
-    if (/Permission denied/i.test(message)) {
-        return new ClusterFileError('unreadable', filePath, message);
-    }
-    // Including a lost connection, which callers handle themselves
-    return error;
+    // A marker on a line of its own: the failed command line, which is echoed in
+    // the message too, holds every marker within the script's text
+    const lines = message.split('\n').map(line => line.trim());
+    const problem = PROBLEM_MARKERS.find(([marker]) => lines.includes(marker))?.[1];
+    // Anything else, including a lost connection, is the caller's to handle
+    return problem ? new ClusterFileError(problem, filePath, message) : error;
 }
