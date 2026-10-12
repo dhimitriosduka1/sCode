@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getCurrentUsername, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -12,6 +12,7 @@ import {
     rankJobAccounts,
 } from './fairShareRanking';
 import { getSlurmJobRowParts } from './slurmJobRow';
+import { createUnavailableItem } from './unavailableItem';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { SubmitScriptCache } from './submitScriptCache';
 
@@ -397,13 +398,13 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     /** In-flight root fetch, shared by concurrent getChildren() calls */
     private pendingRootItems: { generation: number; promise: Promise<vscode.TreeItem[]> } | undefined;
 
-    private currentUsernameProvider: () => string | undefined;
+    private currentUsernameProvider: () => Promise<string | undefined> | string | undefined;
 
     constructor(
         slurmService: SlurmService,
         scriptCache?: SubmitScriptCache,
         checkedJobIds?: Set<string>,
-        currentUsernameProvider: () => string | undefined = getCurrentUsername,
+        currentUsernameProvider: () => Promise<string | undefined> | string | undefined = () => slurmService.getUsername(),
     ) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
@@ -511,9 +512,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private async loadRootItems(generation: number): Promise<vscode.TreeItem[]> {
         try {
             // Check if SLURM is available
-            const isAvailable = await this.slurmService.isAvailable();
-            if (!isAvailable) {
-                return [new MessageItem('SLURM not available on this system', 'warning')];
+            const availability = await this.slurmService.getAvailability();
+            if (!availability.available) {
+                return [createUnavailableItem(availability, 'SLURM not available on this system')];
             }
 
             // Fetch and cache jobs only if cache is empty
@@ -580,8 +581,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     // shared sshare cache, so re-rendering costs nothing.
                     if (!this.hasFetchedFairShare) {
                         const hasPendingJobs = this.cachedJobs.some(job => job.state === 'PD');
-                        const [fairShare, defaultAccount, priorityFactors] = await Promise.all([
+                        const [fairShare, username, defaultAccount, priorityFactors] = await Promise.all([
                             this.slurmService.getFairShare(),
+                            this.currentUsernameProvider(),
                             // Jobs are charged to it unless they pass --account
                             this.slurmService.getDefaultAccount(),
                             // sprio only describes queued jobs — skip it when nothing is pending.
@@ -596,7 +598,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
                         const lookup = buildFairShareLookup(fairShare.entries);
                         // The standing that applies is the account the jobs run under, not the user's best one
-                        this.cachedFairShareSummary = getFairShareSummary(lookup, this.currentUsernameProvider(), {
+                        this.cachedFairShareSummary = getFairShareSummary(lookup, username, {
                             jobAccounts: rankJobAccounts(this.cachedJobs),
                             defaultAccount,
                         });
@@ -737,19 +739,20 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 job.submitScript,
                 false
             ));
+        }
 
-            // Cached version (if available)
-            if (this.scriptCache && this.scriptCache.has(job.jobId)) {
-                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId);
-                const cachedAt = this.scriptCache.formatCacheTime(job.jobId);
-                if (cachedPath) {
-                    children.push(new SubmitScriptItem(
-                        'Submit Script (cached)',
-                        cachedPath,
-                        true,
-                        cachedAt
-                    ));
-                }
+        // Cached version (if available). A script sent to sbatch over SSH has no
+        // path Slurm knows, so this copy can be the only one.
+        if (this.scriptCache && this.scriptCache.has(job.jobId)) {
+            const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId);
+            const cachedAt = this.scriptCache.formatCacheTime(job.jobId);
+            if (cachedPath) {
+                children.push(new SubmitScriptItem(
+                    'Submit Script (cached)',
+                    cachedPath,
+                    true,
+                    cachedAt
+                ));
             }
         }
 

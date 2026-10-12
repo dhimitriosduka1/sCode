@@ -18,6 +18,12 @@ import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmSer
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
+import { ClusterConnection } from './clusterConnection';
+import { ClusterFileProvider } from './clusterFileProvider';
+import { ClusterSubmitFolders } from './clusterSubmitFolders';
+import { getUserSshConfigPath } from './sshConfigHosts';
+import { CONNECT_TO_HOST_COMMAND, openSshConfigFile, SshTargetItem, SshTargetsProvider } from './sshTargetsProvider';
+import { CAN_CONNECT_OVER_SSH } from './unavailableItem';
 
 import * as fs from 'fs';
 
@@ -242,13 +248,27 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 
+    // Decides whether Slurm commands run here or on the cluster over SSH
+    const clusterConnection = new ClusterConnection();
+    context.subscriptions.push(clusterConnection);
+
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(
         jobPathCache,
         submitScriptCache,
-        undefined,
+        clusterConnection.run,
         isMockModeEnabled
     );
+    slurmService.resetSession(clusterConnection.host);
+
+    // Logs and submit scripts, read from the cluster when commands run there over SSH
+    const clusterFileProvider = new ClusterFileProvider(
+        clusterConnection.run,
+        () => clusterConnection.host,
+        () => slurmService.getHomeDirectory(),
+    );
+    context.subscriptions.push(clusterFileProvider);
+    const clusterSubmitFolders = new ClusterSubmitFolders(context.workspaceState, () => slurmService.getHomeDirectory());
 
     // Track checked (selected) jobs for batch cancellation
     const checkedJobIds = new Set<string>();
@@ -333,6 +353,115 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: leaderboardProvider,
         showCollapseAll: false,
     });
+
+    // Re-reads everything from the cluster, after the data's source changed
+    function reloadClusterData() {
+        checkedJobIds.clear();
+        partitionDataStore.clear();
+        void refreshPartitionData();
+        partitionUsageProvider.refresh();
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+        slurmJobProvider.refresh();
+        jobHistoryProvider.refresh();
+        clusterOverviewProvider.refresh();
+        leaderboardProvider.refresh();
+    }
+
+    // Without Slurm here or a connection to it, the sidebar shows only the SSH
+    // hosts to connect to, as Remote Explorer does; once Slurm answers, the usual views
+    const sshTargetsProvider = new SshTargetsProvider();
+    const sshTargetsView = vscode.window.createTreeView('slurmSshTargets', { treeDataProvider: sshTargetsProvider });
+    sshTargetsProvider.setView(sshTargetsView);
+    context.subscriptions.push(sshTargetsView);
+
+    let layoutGeneration = 0;
+    async function updateLayout(): Promise<void> {
+        const generation = ++layoutGeneration;
+        const availability = await slurmService.getAvailability();
+        if (generation !== layoutGeneration) {
+            return;
+        }
+        sshTargetsProvider.setStatus(clusterConnection.host, availability);
+        await vscode.commands.executeCommand(
+            'setContext',
+            'slurmClusterManager.needsCluster',
+            !availability.available && CAN_CONNECT_OVER_SSH,
+        );
+    }
+    void updateLayout();
+
+    context.subscriptions.push(clusterConnection.onDidChange(() => {
+        slurmService.resetSession(clusterConnection.host);
+        reloadClusterData();
+        void updateLayout();
+    }));
+    context.subscriptions.push(clusterConnection.onDidChangeLogin(host => sshTargetsProvider.setConnecting(host)));
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('slurmClusterManager.connect', () => clusterConnection.connect()),
+        // A row's click passes its host; its inline button passes the row
+        vscode.commands.registerCommand(CONNECT_TO_HOST_COMMAND, (target: string | SshTargetItem) =>
+            clusterConnection.connect(typeof target === 'string' ? target : target.host.alias)),
+        vscode.commands.registerCommand('slurmClusterManager.connectToOtherHost', () => clusterConnection.connectToOtherHost()),
+        vscode.commands.registerCommand('slurmClusterManager.disconnect', () => clusterConnection.disconnect()),
+        vscode.commands.registerCommand('slurmClusterManager.refreshSshTargets', () => sshTargetsProvider.refresh()),
+        vscode.commands.registerCommand('slurmClusterManager.openSshConfig', openSshConfigFile),
+        // The list follows edits to the SSH config saved here
+        vscode.workspace.onDidSaveTextDocument(document => {
+            if (document.uri.scheme === 'file' && document.uri.fsPath === getUserSshConfigPath()) {
+                sshTargetsProvider.refresh();
+            }
+        }),
+    );
+
+    context.subscriptions.push(vscode.commands.registerCommand('slurmClusterManager.setClusterSubmitFolder', async () => {
+        if (!clusterConnection.host) {
+            vscode.window.showInformationMessage('A cluster folder is only needed when Slurm commands run on a cluster over SSH (slurmClusterManager.sshHost).');
+            return;
+        }
+        await clusterSubmitFolders.choose(clusterConnection.host);
+    }));
+
+    // Logs and submit scripts are on the cluster when commands run there over
+    // SSH; saved copies of submit scripts are always on this machine
+    function openJobFile(
+        filePath: string,
+        options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean },
+    ): Promise<boolean> {
+        if (clusterConnection.host && !isMockModeEnabled() && !submitScriptCache.isCachedCopy(filePath)) {
+            const preview = vscode.workspace.getConfiguration('slurmClusterManager').get<boolean>('openLogFileInPreview', true);
+            return clusterFileProvider.open(filePath, { ...options, preview });
+        }
+        return openLogFile(filePath, options);
+    }
+
+    /**
+     * Submits a script. Over SSH, it's submitted from the matching folder in
+     * the workspace's copy on the cluster. Undefined when the user cancels
+     * or has already been told why it failed.
+     */
+    async function submitScript(scriptPath: string, dependency?: string): Promise<{ success: boolean; message: string } | undefined> {
+        const host = clusterConnection.host;
+        if (!host || isMockModeEnabled()) {
+            return slurmService.submitJob(scriptPath, undefined, dependency);
+        }
+
+        const folder = await clusterSubmitFolders.folderFor(host, scriptPath);
+        if (!folder) {
+            return undefined;
+        }
+
+        const result = await slurmService.submitJob(scriptPath, folder, dependency);
+        // The workspace's copy isn't where it was said to be
+        if (!result.success && /\bcd: /.test(result.message)) {
+            const choice = await vscode.window.showErrorMessage(`Couldn't submit from ${folder} on ${host}: the folder doesn't exist.`, 'Change Folder');
+            if (choice) {
+                await clusterSubmitFolders.choose(host);
+            }
+            return undefined;
+        }
+        return result;
+    }
 
 
     // Detect SLURM scripts and set context key for editor title button
@@ -468,7 +597,7 @@ export function activate(context: vscode.ExtensionContext) {
     const openFileCommand = vscode.commands.registerCommand(
         'slurmJobs.openFile',
         async (filePath: string, options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean }) => {
-            await openLogFile(filePath, options);
+            await openJobFile(filePath, options);
         },
     );
 
@@ -499,15 +628,15 @@ export function activate(context: vscode.ExtensionContext) {
         // Slurm jobs can be configured to merge both streams into one file; opening
         // that single path twice would just show the same editor in one column.
         if (stdoutPath && stderrPath && stdoutPath === stderrPath) {
-            await openLogFile(stdoutPath);
+            await openJobFile(stdoutPath);
             return;
         }
 
         // Anchor the first file in the active column so the second one splits off it,
         // rather than stacking both into whichever group happened to be focused.
-        const stdoutOpened = stdoutPath ? await openLogFile(stdoutPath, { viewColumn: vscode.ViewColumn.Active }) : false;
+        const stdoutOpened = stdoutPath ? await openJobFile(stdoutPath, { viewColumn: vscode.ViewColumn.Active }) : false;
         if (stderrPath) {
-            await openLogFile(stderrPath, {
+            await openJobFile(stderrPath, {
                 viewColumn: stdoutOpened ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active,
             });
         }
@@ -695,15 +824,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (e.affectsConfiguration('slurmClusterManager.mockMode')) {
-            checkedJobIds.clear();
-            partitionDataStore.clear();
-            void refreshPartitionData();
-            partitionUsageProvider.refresh();
-            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
-            slurmJobProvider.refresh();
-            jobHistoryProvider.refresh();
-            clusterOverviewProvider.refresh();
-            leaderboardProvider.refresh();
+            reloadClusterData();
+            void updateLayout();
         }
 
         if (e.affectsConfiguration('slurmClusterManager.partitionRefreshInterval')) {
@@ -1147,7 +1269,10 @@ export function activate(context: vscode.ExtensionContext) {
         const scriptPath = selected.label;
 
         // Submit the job immediately (no dependency)
-        const result = await slurmService.submitJob(scriptPath, undefined, undefined);
+        const result = await submitScript(scriptPath);
+        if (!result) {
+            return;
+        }
 
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
@@ -1231,7 +1356,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Submit the job
-        const result = await slurmService.submitJob(scriptPath, undefined, dependency);
+        const result = await submitScript(scriptPath, dependency);
+        if (!result) {
+            return;
+        }
 
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
@@ -1252,7 +1380,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const scriptPath = fileUri.fsPath;
-        const result = await slurmService.submitJob(scriptPath, undefined, undefined);
+        const result = await submitScript(scriptPath);
+        if (!result) {
+            return;
+        }
 
         if (result.success) {
             vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);
@@ -1279,7 +1410,10 @@ export function activate(context: vscode.ExtensionContext) {
             return; // User cancelled
         }
 
-        const result = await slurmService.submitJob(scriptPath, undefined, dependency);
+        const result = await submitScript(scriptPath, dependency);
+        if (!result) {
+            return;
+        }
 
         if (result.success) {
             vscode.window.setStatusBarMessage(`$(check) ${result.message}`, 5000);

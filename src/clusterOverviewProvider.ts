@@ -11,6 +11,7 @@ import {
     sortClusterAccountOverviewEntries,
 } from './clusterOverviewRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
+import { createUnavailableItem } from './unavailableItem';
 
 class ClusterOverviewRefreshItem extends vscode.TreeItem {
     constructor(refreshedAt: Date) {
@@ -94,6 +95,11 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailability();
+            if (!availability.available) {
+                return [createUnavailableItem(availability, 'SLURM not available')];
+            }
+
             if (!this.hasFetchedEntries) {
                 [this.cachedEntries, this.cachedMaintenanceWindows] = await Promise.all([
                     this.slurmService.getClusterAccountOverview(),

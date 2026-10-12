@@ -3,6 +3,7 @@ import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from '
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { MaintenanceWindow, PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import { PartitionDataStore } from './partitionDataStore';
+import { createUnavailableItem } from './unavailableItem';
 import {
     formatPartitionUsageDescription,
     formatPartitionUsageGpuBreakdown,
@@ -173,6 +174,11 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailability();
+            if (!availability.available) {
+                return [createUnavailableItem(availability, 'SLURM not available')];
+            }
+
             const [snapshot] = await Promise.all([
                 this.store.getSnapshot(),
                 this.fetchMaintenanceOnce(),

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
+import { SlurmAvailability } from './slurmAvailability';
+import { createUnavailableItem } from './unavailableItem';
 import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
 import {
     formatHistoryJobDescription,
@@ -169,7 +171,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
     private slurmService: SlurmService;
     private cachedJobs: HistoryJob[] = [];
-    private cachedSlurmAvailable: boolean | null = null;
+    private cachedSlurmAvailability: SlurmAvailability | null = null;
     private lastRefreshedAt: Date | undefined;
     private hasFetchedJobs = false;
     /** Bumped on every refresh so results from a superseded fetch are discarded */
@@ -193,7 +195,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         this.generation++;
         this.pendingRootItems = undefined;
         this.cachedJobs = [];
-        this.cachedSlurmAvailable = null;
+        this.cachedSlurmAvailability = null;
         this.lastRefreshedAt = undefined;
         this.hasFetchedJobs = false;
         this._onDidChangeTreeData.fire();
@@ -310,11 +312,11 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             // Skip availability check if we already have cached jobs
             if (!this.hasFetchedJobs) {
                 // Check if SLURM is available (cache the result)
-                if (this.cachedSlurmAvailable === null) {
-                    this.cachedSlurmAvailable = await this.slurmService.isAvailable();
+                if (this.cachedSlurmAvailability === null) {
+                    this.cachedSlurmAvailability = await this.slurmService.getAvailability();
                 }
-                if (!this.cachedSlurmAvailable) {
-                    return [new HistoryMessageItem('SLURM not available', 'warning')];
+                if (!this.cachedSlurmAvailability.available) {
+                    return [createUnavailableItem(this.cachedSlurmAvailability, 'SLURM not available')];
                 }
 
                 // Fetch history

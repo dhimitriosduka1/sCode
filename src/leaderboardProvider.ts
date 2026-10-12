@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { getCurrentUsername, SlurmService } from './slurmService';
+import { SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
+import { createUnavailableItem } from './unavailableItem';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import {
     DEFAULT_LEADERBOARD_ENTRY_COUNT,
@@ -76,9 +77,12 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
     private cachedEntries: LeaderboardEntry[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
-    private currentUsernameProvider: () => string | undefined;
+    private currentUsernameProvider: () => Promise<string | undefined> | string | undefined;
 
-    constructor(slurmService: SlurmService, currentUsernameProvider: () => string | undefined = getCurrentUsername) {
+    constructor(
+        slurmService: SlurmService,
+        currentUsernameProvider: () => Promise<string | undefined> | string | undefined = () => slurmService.getUsername(),
+    ) {
         this.slurmService = slurmService;
         this.currentUsernameProvider = currentUsernameProvider;
     }
@@ -111,6 +115,11 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
+            const availability = await this.slurmService.getAvailability();
+            if (!availability.available) {
+                return [createUnavailableItem(availability, 'SLURM not available')];
+            }
+
             // Fetch data once until manual refresh, even when the result is empty.
             if (!this.hasFetchedEntries) {
                 const [entries, fairShare] = await Promise.all([
@@ -146,7 +155,7 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
 
             const visibleEntries = getVisibleLeaderboardEntries(
                 gpuEntries,
-                this.currentUsernameProvider(),
+                await this.currentUsernameProvider(),
                 topUserCount,
             );
             items.push(...visibleEntries.map(entry => new LeaderboardEntryItem(entry, topUserCount, totalGpuCount)));

@@ -51,34 +51,46 @@
     "views": {
       "slurm-explorer": [
         {
+          "id": "slurmSshTargets",
+          "name": "SSH Targets",
+          "icon": "$(remote-explorer)",
+          "contextualTitle": "SLURM SSH Targets",
+          "when": "slurmClusterManager.needsCluster"
+        },
+        {
           "id": "slurmPartitionUsage",
           "name": "GPU Partition Usage",
           "icon": "$(server-process)",
-          "contextualTitle": "SLURM GPU Partition Usage"
+          "contextualTitle": "SLURM GPU Partition Usage",
+          "when": "!slurmClusterManager.needsCluster"
         },
         {
           "id": "slurmClusterOverview",
           "name": "Cluster Overview",
           "icon": "$(dashboard)",
-          "contextualTitle": "SLURM Cluster Overview"
+          "contextualTitle": "SLURM Cluster Overview",
+          "when": "!slurmClusterManager.needsCluster"
         },
         {
           "id": "slurmLeaderboard",
           "name": "Hall of Shame",
           "icon": "$(flame)",
-          "contextualTitle": "SLURM Hall of Shame"
+          "contextualTitle": "SLURM Hall of Shame",
+          "when": "!slurmClusterManager.needsCluster"
         },
         {
           "id": "slurmJobs",
           "name": "Active Jobs",
           "icon": "$(tasklist)",
-          "contextualTitle": "SLURM Active Jobs"
+          "contextualTitle": "SLURM Active Jobs",
+          "when": "!slurmClusterManager.needsCluster"
         },
         {
           "id": "slurmHistory",
           "name": "Job History",
           "icon": "$(history)",
-          "contextualTitle": "SLURM Job History"
+          "contextualTitle": "SLURM Job History",
+          "when": "!slurmClusterManager.needsCluster"
         }
       ]
     },
@@ -257,9 +269,69 @@
         "command": "slurmJobs.releaseAllPendingJobs",
         "title": "Release All Pending Jobs",
         "icon": "$(unlock)"
+      },
+      {
+        "command": "slurmClusterManager.connect",
+        "title": "Connect to Cluster",
+        "category": "SLURM",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "slurmClusterManager.disconnect",
+        "title": "Disconnect from Cluster",
+        "category": "SLURM",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "slurmClusterManager.setClusterSubmitFolder",
+        "title": "Set Cluster Folder for This Workspace",
+        "category": "SLURM",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "slurmClusterManager.connectToHost",
+        "title": "Connect",
+        "category": "SLURM",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "slurmClusterManager.connectToOtherHost",
+        "title": "Connect to Host...",
+        "category": "SLURM",
+        "icon": "$(add)"
+      },
+      {
+        "command": "slurmClusterManager.refreshSshTargets",
+        "title": "Refresh SSH Targets",
+        "category": "SLURM",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "slurmClusterManager.openSshConfig",
+        "title": "Open SSH Configuration File",
+        "category": "SLURM",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "slurmClusterManager.disconnect",
+          "when": "slurmClusterManager.sshConnected"
+        },
+        {
+          "command": "slurmClusterManager.setClusterSubmitFolder",
+          "when": "config.slurmClusterManager.sshHost"
+        },
+        {
+          "command": "slurmClusterManager.connectToHost",
+          "when": "false"
+        },
+        {
+          "command": "slurmClusterManager.refreshSshTargets",
+          "when": "false"
+        }
+      ],
       "editor/title": [
         {
           "command": "slurmJobs.submitCurrentFile",
@@ -273,6 +345,21 @@
         }
       ],
       "view/title": [
+        {
+          "command": "slurmClusterManager.connectToOtherHost",
+          "when": "view == slurmSshTargets",
+          "group": "navigation@1"
+        },
+        {
+          "command": "slurmClusterManager.openSshConfig",
+          "when": "view == slurmSshTargets",
+          "group": "navigation@2"
+        },
+        {
+          "command": "slurmClusterManager.refreshSshTargets",
+          "when": "view == slurmSshTargets",
+          "group": "navigation@3"
+        },
         {
           "command": "slurmPartitionUsage.refresh",
           "when": "view == slurmPartitionUsage",
@@ -355,6 +442,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "slurmClusterManager.connectToHost",
+          "when": "view == slurmSshTargets && viewItem == sshTarget",
+          "group": "inline@1"
+        },
         {
           "command": "slurmJobs.cancelAllPendingJobs",
           "when": "view == slurmJobs && (viewItem == statusCategoryPending || viewItem == statusCategoryPendingHasNonHeld || viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
@@ -502,6 +594,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "slurmSshTargets",
+        "contents": "SLURM isn't available on this machine. Connect to your cluster's login node over SSH to manage your jobs from here.\nNo hosts were found in ~/.ssh/config.\n[Connect to Host...](command:slurmClusterManager.connectToOtherHost)\n[Open SSH Configuration File](command:slurmClusterManager.openSshConfig)"
+      }
+    ],
     "configuration": {
       "title": "SLURM Cluster Manager",
       "properties": {
@@ -526,6 +624,12 @@
           "type": "boolean",
           "default": false,
           "description": "Use local mock Slurm data for extension development without requiring Slurm commands"
+        },
+        "slurmClusterManager.sshHost": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Run Slurm commands on this host over SSH, for when VS Code isn't running on the cluster. Use a `Host` from `~/.ssh/config` or `user@hostname`. You log in once with **SLURM: Connect to Cluster**, and every command reuses that connection. Logs and scripts open read-only from the cluster, and scripts are submitted from this workspace's copy there, which you choose once. Leave empty when VS Code runs on a login node or in a Remote - SSH window. Not supported on Windows yet."
         },
         "slurmClusterManager.partitionRefreshInterval": {
           "type": "number",

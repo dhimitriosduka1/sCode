@@ -19,6 +19,12 @@ export const PARTITION_OPTION: SlurmOptionSpec = {
     short: '-p',
 };
 
+// `--job` alone is ambiguous with `--jobid`, so `--job-` is the shortest prefix
+export const JOB_NAME_OPTION: SlurmOptionSpec = {
+    long: /^--job-(?:n(?:a(?:m(?:e)?)?)?)?$/,
+    short: '-J',
+};
+
 /** Where a line's options come from: a directive, or the command it runs. */
 export type SlurmLineKind = 'directive' | 'srun' | 'salloc' | 'sbatch';
 
@@ -167,6 +173,22 @@ export function resolveLineOrScript<T>(kind: SlurmLineKind, lineValues: T[], scr
 export function readSegmentPartitions(line: string, segment: LineSegment): string[] {
     const occurrences = findOptionOccurrencesInSegment(line, segment, PARTITION_OPTION);
     return occurrences.length > 0 ? splitList(occurrences[occurrences.length - 1].value) : [];
+}
+
+/**
+ * Every value a script's `#SBATCH` header gives an option, in order. Like
+ * sbatch, only directives above the first command count.
+ */
+export function readHeaderOptionValues(lines: Iterable<string>, spec: SlurmOptionSpec): string[] {
+    const values: string[] = [];
+    for (const line of lines) {
+        if (isDirective(line)) {
+            values.push(...findOptionOccurrencesInSegment(line, findLineSegments(line)[0], spec).map(occurrence => occurrence.value));
+        } else if (line.trim() && !/^\s*#/.test(line)) {
+            break;
+        }
+    }
+    return values;
 }
 
 /** Splits a comma-separated option value, dropping empty items. */

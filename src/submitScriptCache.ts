@@ -165,6 +165,12 @@ export class SubmitScriptCache {
         return this.cache.get(jobId)?.originalPath;
     }
 
+    /** Whether a path is one of this cache's copies, which are always on this machine */
+    isCachedCopy(filePath: string): boolean {
+        const relative = path.relative(this.cacheDir, path.resolve(filePath));
+        return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+    }
+
     /**
      * Check if a job has a cached script
      */

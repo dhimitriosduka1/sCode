@@ -6,8 +6,11 @@ describe('SlurmService job history', () => {
     it('fetches allocation rows with a larger buffer and parses completed history', async () => {
         const commands: string[] = [];
         const optionsSeen: unknown[] = [];
-        const commandRunner: SlurmCommandRunner = async (command, options) => {
-            commands.push(command);
+        const commandRunner: SlurmCommandRunner = async (argv, options) => {
+            if (argv[0] === 'id') {
+                return { stdout: 'alice\n', stderr: '' };
+            }
+            commands.push(argv.join(' '));
             optionsSeen.push(options);
             return {
                 stdout: [
@@ -25,7 +28,7 @@ describe('SlurmService job history', () => {
         const jobs = await service.getJobHistory(3);
 
         assert.equal(commands.length, 1);
-        assert.match(commands[0], /^sacct -X -u \$USER --starttime=\d{4}-\d{2}-\d{2}/);
+        assert.match(commands[0], /^sacct -X -u alice --starttime=\d{4}-\d{2}-\d{2}/);
         assert.match(commands[0], /--parsable2/);
         assert.match(commands[0], /--format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS/);
         assert.equal((optionsSeen[0] as { maxBuffer?: number }).maxBuffer, 16 * 1024 * 1024);

@@ -174,14 +174,14 @@ describe('SlurmService fair share', () => {
 
     it('reads the default account once per session', async () => {
         const commands: string[] = [];
-        const service = createService(async (command) => {
-            commands.push(command);
-            return { stdout: 'atlas_lab\n', stderr: '' };
+        const service = createService(async (argv) => {
+            commands.push(argv.join(' '));
+            return { stdout: argv[0] === 'id' ? 'alice\n' : 'atlas_lab\n', stderr: '' };
         });
 
         assert.equal(await service.getDefaultAccount(), 'atlas_lab');
         assert.equal(await service.getDefaultAccount(), 'atlas_lab');
-        assert.deepEqual(commands, ['sacctmgr -n -P show user $USER format=DefaultAccount']);
+        assert.deepEqual(commands, ['id -un', 'sacctmgr -n -P show user alice format=DefaultAccount']);
     });
 
     it('reports no default account when sacctmgr is missing or empty', async () => {

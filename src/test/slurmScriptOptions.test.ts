@@ -3,7 +3,9 @@ import * as assert from 'node:assert/strict';
 import {
     findLineSegments,
     findOptionOccurrencesInSegment,
+    JOB_NAME_OPTION,
     PARTITION_OPTION,
+    readHeaderOptionValues,
     readSegmentPartitions,
     resolveLineOrScript,
 } from '../slurmScriptOptions';
@@ -74,5 +76,22 @@ describe('resolveLineOrScript', () => {
 
     it('knows nothing for an sbatch line, which submits another script', () => {
         assert.deepEqual(resolveLineOrScript('sbatch', [], ['header']), []);
+    });
+});
+
+describe('readHeaderOptionValues', () => {
+    it('reads a job name in every form sbatch accepts', () => {
+        for (const directive of ['#SBATCH --job-name=train', '#SBATCH --job-name train', '#SBATCH -J train', '#SBATCH -Jtrain', '#SBATCH --job-n=train']) {
+            assert.deepEqual(readHeaderOptionValues(['#!/bin/bash', directive], JOB_NAME_OPTION), ['train'], directive);
+        }
+    });
+
+    it('ignores directives below the first command, as sbatch does', () => {
+        const script = ['#!/bin/bash', '#SBATCH -p gpu', '', 'module load cuda', '#SBATCH --job-name=late'];
+        assert.deepEqual(readHeaderOptionValues(script, JOB_NAME_OPTION), []);
+    });
+
+    it('does not take --jobid for a job name', () => {
+        assert.deepEqual(readHeaderOptionValues(['#SBATCH --jobid=5'], JOB_NAME_OPTION), []);
     });
 });
