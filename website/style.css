@@ -12,6 +12,8 @@
   --field: light-dark(#eef0eb, #1a1e1b);
   --underline: light-dark(#acb5a9, #4a534b);
   --panel-line: light-dark(#30332f, #2c312d);
+  --notice: light-dark(#2e5942, #234633);
+  --notice-ink: light-dark(#fff, #e2efe6);
   --column-gap: 48px;
   --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
@@ -35,7 +37,19 @@ kbd { font-size: .9em; }
 .skip-link { position: absolute; top: 12px; left: 12px; z-index: 3; transform: translateY(-160%); background: var(--paper); padding: 8px 16px; }
 .skip-link:focus { transform: translateY(0); }
 
-.site-notice { padding: 8px 20px; background: var(--selected); color: var(--ink); font-size: 12px; line-height: 1.5; text-align: center; }
+.site-notice { position: relative; overflow: hidden; background: var(--notice); color: var(--notice-ink); font-size: 12px; line-height: 1.5; }
+.notice-text { padding: 8px 20px; text-align: center; }
+/* main.js fills the ticker with two identical halves; sliding one half's width loops seamlessly. */
+.ticker { display: none; }
+.ticker-half { display: flex; flex: none; justify-content: space-around; min-width: 100vw; }
+.ticker span { padding: 8px 28px; white-space: nowrap; }
+.ticker span::before { content: "•"; margin-right: 28px; opacity: .55; }
+@keyframes ticker { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: no-preference) {
+  .site-notice.is-ticker .notice-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .site-notice.is-ticker .ticker { display: flex; width: max-content; animation: ticker 30s linear infinite; }
+  .site-notice:hover .ticker { animation-play-state: paused; }
+}
 .site-header { min-height: 100px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; letter-spacing: -.25px; text-decoration: none; }
 .brand img { display: block; flex: none; }

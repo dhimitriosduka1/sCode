@@ -158,6 +158,26 @@ if (navigator.clipboard?.writeText) {
   });
 }
 
+// The notice scrolls as a ticker. Screen readers keep the original sentence; the moving copies are hidden from them.
+const notice = document.querySelector('.site-notice');
+const noticeText = notice.querySelector('.notice-text').textContent;
+const tickerHalf = () => {
+  const half = document.createElement('div');
+  half.className = 'ticker-half';
+  for (let i = 0; i < 6; i++) {
+    const item = document.createElement('span');
+    item.textContent = noticeText;
+    half.append(item);
+  }
+  return half;
+};
+const ticker = document.createElement('div');
+ticker.className = 'ticker';
+ticker.setAttribute('aria-hidden', 'true');
+ticker.append(tickerHalf(), tickerHalf());
+notice.append(ticker);
+notice.classList.add('is-ticker');
+
 // The page is light until the toggle switches it to dark, which is remembered.
 const root = document.documentElement;
 const themeToggle = document.querySelector('.theme-toggle');
