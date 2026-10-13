@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SLURM Cluster Manager — Slurm in VS Code</title>
+  <meta name="description" content="A free Slurm extension that works in VS Code and every editor built on it. Monitor your jobs, find free GPUs, and open logs in a click.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f8f9f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121513" media="(prefers-color-scheme: dark)">
+  <script>try { const theme = localStorage.getItem('theme'); if (theme) document.documentElement.dataset.theme = theme; } catch {}</script>
+  <meta property="og:title" content="SLURM Cluster Manager — Slurm in VS Code">
+  <meta property="og:description" content="Less squeue, more science. Monitor your jobs, find free GPUs, and open logs in a click.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="SLURM Cluster Manager home">
+      <img src="assets/icon.svg" alt="" width="30" height="30">
+      <span>SLURM Cluster Manager</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#install">Get started</a>
+      <a href="https://github.com/dhimitriosduka1/sCode">GitHub <span aria-hidden="true">↗</span></a>
+      <button class="theme-toggle" type="button" aria-label="Switch to dark theme" hidden>
+        <svg class="moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5a5.8 5.8 0 1 0 7.3 7.3Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="sun" viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="8" cy="8" r="2.9"/><path d="M8 1.2v1.5M8 13.3v1.5M1.2 8h1.5M13.3 8h1.5M3.2 3.2l1 1M11.8 11.8l1 1M3.2 12.8l1-1M11.8 4.2l1-1"/></g></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <div class="hero-copy">
+          <h1 id="hero-title">Slurm, in<br>your editor.</h1>
+          <p class="intro">Less <strong>squeue</strong>, more science.<br class="desktop-break"> Monitor your jobs, find free GPUs, and open logs in a click.</p>
+        </div>
+        <div class="hero-actions">
+          <a class="button" href="https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager">Install for VS Code <span aria-hidden="true">↗</span></a>
+          <a class="alternative" href="https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager">Also on Open VSX <span aria-hidden="true">↗</span></a>
+          <p class="availability">Free and open source · MIT</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="product" aria-label="Extension recordings">
+      <div class="viewer-toolbar">
+        <div class="viewer-tabs" role="tablist" aria-label="Extension demos" hidden>
+          <button type="button" id="tab-overview" role="tab" aria-selected="true" aria-controls="product-panel" tabindex="0" data-group="overview">Walkthrough</button>
+          <button type="button" id="tab-scripts" role="tab" aria-selected="false" aria-controls="product-panel" tabindex="-1" data-group="scripts">Scripts</button>
+          <button type="button" id="tab-jobs" role="tab" aria-selected="false" aria-controls="product-panel" tabindex="-1" data-group="jobs">Jobs</button>
+          <button type="button" id="tab-logs" role="tab" aria-selected="false" aria-controls="product-panel" tabindex="-1" data-group="logs">Logs</button>
+          <button type="button" id="tab-cluster" role="tab" aria-selected="false" aria-controls="product-panel" tabindex="-1" data-group="cluster">Cluster</button>
+          <button type="button" id="tab-history" role="tab" aria-selected="false" aria-controls="product-panel" tabindex="-1" data-group="history">History</button>
+        </div>
+      </div>
+      <div class="recording-row" hidden>
+        <div class="recordings" role="group" aria-label="Recordings"></div>
+      </div>
+      <p id="viewer-description" class="viewer-description" aria-live="polite">A whole session in under two minutes: check the cluster, write a training script with the partition and GPUs suggested, submit it, queue an evaluation behind it, and read the logs.</p>
+      <div id="product-panel" class="product-panel">
+        <video id="product-video" src="assets/demos/walkthrough.mp4" muted loop playsinline preload="metadata" width="1440" height="1170" aria-label="From script to logs" aria-describedby="viewer-description">
+          <a href="assets/demos/walkthrough.mp4">Watch the walkthrough video</a>.
+        </video>
+      </div>
+      <p id="viewer-status" class="viewer-status" role="status"></p>
+    </section>
+
+    <section id="features" class="features" aria-label="Features">
+      <article>
+        <h2>Before you submit</h2>
+        <p>Partition and GPU suggestions come from your cluster, sorted by how busy each partition is. Ask for a GPU type a partition doesn’t have and the line is flagged before sbatch ever sees it.</p>
+      </article>
+      <article>
+        <h2>While it waits</h2>
+        <p>Pending jobs say why they’re waiting and, when Slurm has a guess, when they’ll start. Running ones show how much of their time limit they’ve used.</p>
+      </article>
+      <article>
+        <h2>When it runs</h2>
+        <p>Open stdout and stderr in the editor, side by side if you want both. After it finishes, Job History shows its exit code and peak memory, with links to the logs.</p>
+      </article>
+    </section>
+
+    <section id="install" class="setup section-row" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <p class="eyebrow">Getting started</p>
+        <h2 id="setup-title">From install<br> to first job.</h2>
+        <a class="text-link" href="https://github.com/dhimitriosduka1/sCode#readme">Documentation <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="setup-content">
+        <ol class="steps">
+          <li>
+            <h3>Connect to the cluster</h3>
+            <p>Use <a href="https://code.visualstudio.com/docs/remote/ssh">Remote&nbsp;–&nbsp;SSH</a> to open a window on a login node, or any host where <code>squeue</code> works, then open your project folder.</p>
+          </li>
+          <li>
+            <h3>Install on the remote host</h3>
+            <p>In the Extensions view, find <a href="https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager">SLURM Cluster Manager</a> and choose <strong>Install in SSH: <var>host</var></strong>. It runs in the remote extension host and calls Slurm from there.</p>
+          </li>
+          <li>
+            <h3>Submit your first job</h3>
+            <p>Open a script with <code>#SBATCH</code> directives, save it, and click <strong>Submit to SLURM</strong> (▶) in the editor title bar. The job appears under <strong>Active Jobs</strong> in the SLURM Cluster sidebar.</p>
+          </li>
+        </ol>
+        <div class="install-command">
+          <p>Or run this in Quick Open (<kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>P</kbd>) from the remote window:</p>
+          <div class="command-line">
+            <code id="install-command">ext install DhimitriosDuka.slurm-cluster-manager</code>
+            <button class="copy-command" type="button" aria-label="Copy extension install command" hidden>Copy</button>
+          </div>
+          <p id="copy-status" class="copy-status" role="status"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="details-section section-row" aria-labelledby="details-title">
+      <div class="section-heading">
+        <p class="eyebrow">Questions</p>
+        <h2 id="details-title">The practical bits.</h2>
+      </div>
+      <div class="questions">
+        <details>
+          <summary>What do I need?<span aria-hidden="true">+</span></summary>
+          <div class="answer">
+            <p>VS Code 1.85 or newer, or any fork of it, like Cursor, Windsurf, or VSCodium. Slurm’s commands have to work where the extension runs, which with Remote&nbsp;–&nbsp;SSH means the cluster.</p>
+            <p>It reads with <code>squeue</code>, <code>sinfo</code>, <code>scontrol</code>, and <code>sacct</code>. Anything that changes a job, like <code>sbatch</code> or <code>scancel</code>, runs only when you click the action. Fair share and priority also need <code>sshare</code> and <code>sprio</code>, and the GPU views need GPUs set up as Slurm GRES.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Will it put load on the scheduler?<span aria-hidden="true">+</span></summary>
+          <div class="answer">
+            <p>Very little. Jobs are fetched when a view opens, after you act on a job, or when you press refresh. Auto-refresh is off unless you turn it on.</p>
+            <p>Partition data is fetched every few minutes and shared by every view and suggestion. Scheduled refreshes pause while VS Code is in the background, and you can change or turn off the intervals in <a href="https://github.com/dhimitriosduka1/sCode#configuration">settings</a>.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Can I run it on my workstation and connect to the cluster?<span aria-hidden="true">+</span></summary>
+          <div class="answer">
+            <p>Not yet. Running the extension locally and connecting to a remote Slurm cluster over SSH is a work in progress and will be included in a future release.</p>
+            <p>Until then, install it on the cluster through Remote&nbsp;–&nbsp;SSH, as described in <a href="#install">Getting started</a>.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer wrap">
+    <p>Made by <a href="https://github.com/dhimitriosduka1">Dhimitrios Duka</a></p>
+    <nav aria-label="Project links">
+      <a href="https://github.com/dhimitriosduka1/sCode/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/dhimitriosduka1/sCode/issues">Report an issue <span aria-hidden="true">↗</span></a>
+    </nav>
+  </footer>
+
+</body>
+</html>
