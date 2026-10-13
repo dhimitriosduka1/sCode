@@ -1,6 +1,6 @@
 :root {
-  /* Follows the system theme; the header toggle pins one through data-theme. */
-  color-scheme: light dark;
+  /* Light by default; the header toggle switches to dark through data-theme. */
+  color-scheme: light;
   --paper: light-dark(#f8f9f6, #121513);
   --ink: light-dark(#252a27, #e2e6e0);
   --muted: light-dark(#636b64, #98a198);
@@ -15,7 +15,6 @@
   --column-gap: 48px;
   --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
-:root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
@@ -36,6 +35,7 @@ kbd { font-size: .9em; }
 .skip-link { position: absolute; top: 12px; left: 12px; z-index: 3; transform: translateY(-160%); background: var(--paper); padding: 8px 16px; }
 .skip-link:focus { transform: translateY(0); }
 
+.site-notice { padding: 8px 20px; background: var(--selected); color: var(--ink); font-size: 12px; line-height: 1.5; text-align: center; }
 .site-header { min-height: 100px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; letter-spacing: -.25px; text-decoration: none; }
 .brand img { display: block; flex: none; }

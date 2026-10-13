@@ -158,33 +158,28 @@ if (navigator.clipboard?.writeText) {
   });
 }
 
-// The page follows the system theme until the toggle is used. Picking the system's own theme
-// clears the override, so later system changes apply again.
+// The page is light until the toggle switches it to dark, which is remembered.
 const root = document.documentElement;
 const themeToggle = document.querySelector('.theme-toggle');
-const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+const themeColor = document.querySelector('meta[name="theme-color"]');
 const themeColors = { light: '#f8f9f6', dark: '#121513' };
 
 function applyTheme() {
-  const mode = root.dataset.theme || (systemDark.matches ? 'dark' : 'light');
+  const mode = root.dataset.theme === 'dark' ? 'dark' : 'light';
   root.dataset.mode = mode;
   themeToggle.setAttribute('aria-label', `Switch to ${mode === 'dark' ? 'light' : 'dark'} theme`);
-  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-    meta.content = root.dataset.theme ? themeColors[mode] : themeColors[meta.media.includes('dark') ? 'dark' : 'light'];
-  }
+  themeColor.content = themeColors[mode];
 }
 
 themeToggle.hidden = false;
 themeToggle.addEventListener('click', () => {
-  const next = root.dataset.mode === 'dark' ? 'light' : 'dark';
-  const system = systemDark.matches ? 'dark' : 'light';
+  const dark = root.dataset.mode !== 'dark';
   try {
-    if (next === system) localStorage.removeItem('theme');
-    else localStorage.setItem('theme', next);
+    if (dark) localStorage.setItem('theme', 'dark');
+    else localStorage.removeItem('theme');
   } catch {}
-  if (next === system) delete root.dataset.theme;
-  else root.dataset.theme = next;
+  if (dark) root.dataset.theme = 'dark';
+  else delete root.dataset.theme;
   applyTheme();
 });
-systemDark.addEventListener('change', applyTheme);
 applyTheme();

@@ -5,10 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SLURM Cluster Manager — Slurm in VS Code</title>
   <meta name="description" content="A free Slurm extension that works in VS Code and every editor built on it. Monitor your jobs, find free GPUs, and open logs in a click.">
-  <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f8f9f6" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121513" media="(prefers-color-scheme: dark)">
-  <script>try { const theme = localStorage.getItem('theme'); if (theme) document.documentElement.dataset.theme = theme; } catch {}</script>
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f8f9f6">
+  <script>try { if (localStorage.getItem('theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch {}</script>
   <meta property="og:title" content="SLURM Cluster Manager — Slurm in VS Code">
   <meta property="og:description" content="Less squeue, more science. Monitor your jobs, find free GPUs, and open logs in a click.">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
@@ -17,6 +16,7 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
+  <p class="site-notice">This site is a work in progress.</p>
   <header class="site-header wrap">
     <a class="brand" href="./" aria-label="SLURM Cluster Manager home">
       <img src="assets/icon.svg" alt="" width="30" height="30">
