@@ -23,7 +23,7 @@ class PartitionUsageRefreshItem extends vscode.TreeItem {
         this.contextValue = 'partitionUsageRefreshInfo';
         this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt, {
             title: 'GPU Partition Usage refresh',
-            refreshCommandLabel: 'Refresh GPU Partition Usage',
+            refreshCommandLabel: 'Refresh Partition Usage',
             autoRefreshMinutes: refreshIntervalMinutes,
         }));
     }

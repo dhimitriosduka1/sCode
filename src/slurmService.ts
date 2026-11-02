@@ -864,12 +864,18 @@ export interface PartitionUsageEntry {
     gpuTypes: ClusterLeaderboardGpuType[];
     /** Idle GPUs per type on available nodes; absent when not derived from per-node data */
     idleGpusByType?: ClusterLeaderboardGpuType[];
+    /** RealMemory (MB) of allocated or idle nodes; absent when scontrol reports none */
+    usableMemoryMb?: number;
+    /** AllocMem (MB) on those same nodes */
+    allocatedMemoryMb?: number;
 }
 
 export interface PartitionUsageResult {
     entries: PartitionUsageEntry[];
     clusterAllocatedGpus: number;
     clusterAvailableGpus: number;
+    /** Partitions without GPUs, which entries leaves out */
+    cpuOnlyEntries?: PartitionUsageEntry[];
 }
 
 /** CPU allocation for one partition, from `sinfo --format="%P|%C"` */
@@ -1314,6 +1320,20 @@ export function parseScontrolNodeGpuAllocations(stdout: string): Map<string, Clu
     return allocationsByNode;
 }
 
+/** RealMemory and AllocMem (MB) per node from `scontrol show node`; nodes lacking either are left out. */
+export function parseScontrolNodeMemory(stdout: string): Map<string, { realMb: number; allocatedMb: number }> {
+    const memoryByNode = new Map<string, { realMb: number; allocatedMb: number }>();
+    for (const block of stdout.split(/(?=\bNodeName=)/)) {
+        const nodeName = block.match(/\bNodeName=(\S+)/)?.[1];
+        const realMb = block.match(/\bRealMemory=(\d+)/)?.[1];
+        const allocatedMb = block.match(/\bAllocMem=(\d+)/)?.[1];
+        if (nodeName && realMb && allocatedMb) {
+            memoryByNode.set(nodeName, { realMb: parseInt(realMb, 10), allocatedMb: parseInt(allocatedMb, 10) });
+        }
+    }
+    return memoryByNode;
+}
+
 /**
  * Idle GPUs per type on one node: its configured GPUs minus what is
  * allocated. Typed allocations come off their own type; an untyped one comes
@@ -1527,6 +1547,20 @@ export function parsePartitionUsageOutput(
         }
     }
 
+    // --- Phase 3b: Memory of schedulable nodes, from scontrol RealMemory/AllocMem ---
+    for (const [nodeName, memory] of parseScontrolNodeMemory(scontrolStdout)) {
+        if (!availableNodes.has(nodeName)) {
+            continue;
+        }
+        for (const { partition } of nodePartitions.get(nodeName) ?? []) {
+            const entry = entriesByPartition.get(partition);
+            if (entry) {
+                entry.usableMemoryMb = (entry.usableMemoryMb ?? 0) + memory.realMb;
+                entry.allocatedMemoryMb = (entry.allocatedMemoryMb ?? 0) + memory.allocatedMb;
+            }
+        }
+    }
+
     // --- Phase 4: Count running and pending jobs from squeue (no GPU counting here) ---
     const squeueLines = squeueStdout.trim().split('\n').filter(line => line.trim());
     for (const line of squeueLines) {
@@ -1559,13 +1593,13 @@ export function parsePartitionUsageOutput(
         entry.idleGpusByType = formatGpuTypeEntries(idleGpuTypesByPartition.get(entry.partition) || new Map<string, number>());
     }
 
-    const entries = Array.from(entriesByPartition.values())
-        .filter(entry => entry.totalGpus > 0);
+    const allEntries = Array.from(entriesByPartition.values());
 
     return {
-        entries,
+        entries: allEntries.filter(entry => entry.totalGpus > 0),
         clusterAllocatedGpus,
         clusterAvailableGpus,
+        cpuOnlyEntries: allEntries.filter(entry => entry.totalGpus === 0),
     };
 }
 
