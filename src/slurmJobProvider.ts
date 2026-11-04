@@ -299,11 +299,13 @@ class SubmitScriptItem extends vscode.TreeItem {
         this.contextValue = 'submitScript';
         this.description = isCached ? '(cached at submission)' : filePath;
 
-        // Make the item clickable to open the file
+        // Make the item clickable to open the file. Scripts open from this machine,
+        // editable, also when connected to a cluster: the file system is shared,
+        // and the cached copy is kept here
         this.command = {
             command: 'slurmJobs.openFile',
             title: 'Open File',
-            arguments: [filePath],
+            arguments: [filePath, { onThisMachine: true }],
         };
     }
 }
@@ -740,9 +742,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             ));
 
             // Cached version (if available)
-            if (this.scriptCache && this.scriptCache.has(job.jobId)) {
-                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId);
-                const cachedAt = this.scriptCache.formatCacheTime(job.jobId);
+            const cluster = this.slurmService.getAccount().cluster;
+            if (this.scriptCache && this.scriptCache.has(job.jobId, cluster)) {
+                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId, cluster);
+                const cachedAt = this.scriptCache.formatCacheTime(job.jobId, cluster);
                 if (cachedPath) {
                     children.push(new SubmitScriptItem(
                         'Submit Script (cached)',

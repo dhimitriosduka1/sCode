@@ -4,6 +4,7 @@ import { SshConfigHost } from './sshConfigHosts';
 import { getCurrentUsername, getLocalAccount, localCommandRunner, SlurmAccount, SlurmCommandRunner } from './slurmService';
 import {
     buildMasterArgs,
+    checkSharedFolder,
     createSshCommandRunner,
     ensurePrivateSocketDir,
     getSocketPath,
@@ -12,6 +13,7 @@ import {
     RemoteFileStat,
     removeStaleSocket,
     resolveSshUser,
+    SharedFolderCheck,
     statRemoteFile,
     statRemoteFiles,
     SSH_FAILURE_EXIT_CODE,
@@ -61,20 +63,13 @@ export class ClusterConnection implements vscode.Disposable {
         return this.state;
     }
 
-    /**
-     * Who Slurm knows the user as wherever commands run: the account ssh logs in
-     * as on the connected host, or this machine's login name when commands run here.
-     */
-    getUsername(): string | undefined {
-        return this.state.kind === 'connected' && this.username ? this.username : getCurrentUsername();
-    }
-
     /** Who the user is wherever commands run, with the host when that is a cluster. */
     getAccount(): SlurmAccount {
         if (this.state.kind !== 'connected') {
             return getLocalAccount();
         }
-        return { username: this.getUsername(), homeDir: this.homeDir, cluster: this.state.host.alias };
+        // The account ssh logs in as there
+        return { username: this.username || getCurrentUsername(), homeDir: this.homeDir, cluster: this.state.host.alias };
     }
 
     /** Stats a file on the connected host; throws when not connected to `alias`. */
@@ -199,10 +194,26 @@ export class ClusterConnection implements vscode.Disposable {
             resolveSshUser(target.alias).then((user) => user ?? host.user),
             readRemoteHome(target),
         ]);
+        // Only computers that share the cluster's file system at the same paths are
+        // supported, so that logs, scripts and working folders are the same files here
+        const shared: SharedFolderCheck = homeDir
+            ? await checkSharedFolder(target, homeDir)
+            : { shared: false, reason: `${host.alias} did not say where your home folder is` };
         if (superseded()) {
             if (ownsMaster) {
                 await this.stopAbandonedMaster(target);
             }
+            return;
+        }
+        if (!shared.shared) {
+            if (ownsMaster) {
+                await stopMaster(target);
+            }
+            this.setState({
+                kind: 'local',
+                notice: `Did not connect to ${host.alias}: this computer does not share its file system (${shared.reason}). `
+                    + 'Connecting over SSH works only from computers that mount the cluster\'s file systems at the same paths.',
+            });
             return;
         }
         this.target = target;

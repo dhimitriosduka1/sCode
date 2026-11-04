@@ -1737,11 +1737,7 @@ export class SlurmService {
 
     /** Who the user is on the cluster commands run on. */
     getAccount(): SlurmAccount {
-        try {
-            return this.accountProvider();
-        } catch {
-            return getLocalAccount();
-        }
+        return this.accountProvider();
     }
 
     /** Who Slurm knows the user as on the cluster commands run on. */
@@ -1852,7 +1848,7 @@ export class SlurmService {
 
                 // Cache the submit script if not already cached
                 if (this.scriptCache && job.submitScript && job.submitScript !== 'N/A') {
-                    job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript);
+                    job.cachedSubmitScript = await this.scriptCache.cacheScript(job.jobId, job.submitScript, this.getAccount().cluster);
                 }
             }));
 

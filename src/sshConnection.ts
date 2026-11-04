@@ -1,5 +1,5 @@
 import { ChildProcess, execFile, ExecFileOptions, spawn } from 'child_process';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
@@ -314,7 +314,47 @@ export async function statRemoteFiles(
     return filePaths.map((_filePath, index) => parseRemoteStat(lines[index] ?? ''));
 }
 
-export type ExecFileBufferRunner =(file: string, args: string[], options: ExecFileOptions) => Promise<Buffer>;
+export type SharedFolderCheck = { shared: true } | { shared: false; reason: string };
+
+/**
+ * Whether this computer sees the cluster's `folder` as the same folder, at the
+ * same path: a file written to it here, under a random name, must show up
+ * there. Remote Slurm relies on this, so that every path (logs, scripts,
+ * working folders) means the same file on both sides. The file is removed
+ * again straight away.
+ */
+export async function checkSharedFolder(
+    target: SshTarget,
+    folder: string,
+    run: ExecFileRunner = execFileRunner,
+): Promise<SharedFolderCheck> {
+    if (!fs.existsSync(folder)) {
+        return { shared: false, reason: `${folder} does not exist on this computer` };
+    }
+    const probe = path.join(folder, `.scode-shared-check-${randomBytes(16).toString('hex')}`);
+    try {
+        fs.writeFileSync(probe, '', { mode: 0o600, flag: 'wx' });
+    } catch {
+        return { shared: false, reason: `${folder} cannot be written to on this computer` };
+    }
+    try {
+        await statRemoteFile(target, probe, run);
+        return { shared: true };
+    } catch (error) {
+        if (error instanceof RemoteFileError && error.reason === 'missing') {
+            return { shared: false, reason: `a file written to ${folder} here does not show up there` };
+        }
+        return { shared: false, reason: `checking ${folder} there failed: ${(error as Error).message}` };
+    } finally {
+        try {
+            fs.unlinkSync(probe);
+        } catch {
+            // Gone already
+        }
+    }
+}
+
+export type ExecFileBufferRunner = (file: string, args: string[], options: ExecFileOptions) => Promise<Buffer>;
 
 const execFileBufferRunner: ExecFileBufferRunner = (file, args, options) => new Promise((resolve, reject) => {
     execFile(file, args, { ...options, env: SSH_ENV, encoding: 'buffer' }, (error, stdout, stderr) => {
@@ -399,8 +439,8 @@ export async function removeStaleSocket(target: SshTarget): Promise<void> {
 }
 
 export type MasterStartResult =
-    /** Our master is signed in and serving the socket; `stop` ends it. */
-    | { status: 'started'; stop: () => void }
+    /** Our master is signed in and serving the socket. */
+    | { status: 'started' }
     /** Another master (e.g. another window's) took the socket first; ours was stopped. */
     | { status: 'shared' }
     | { status: 'failed'; stderr: string };
@@ -462,12 +502,6 @@ export function startMasterInBackground(
             resolve(result);
         };
 
-        const stop = () => {
-            if (!exited) {
-                child.kill();
-            }
-        };
-
         // Each check waits for the previous one, so slow checks never pile up
         const poll = async () => {
             if (settled || exited) {
@@ -482,7 +516,7 @@ export function startMasterInBackground(
                 return;
             }
             if (pid === child.pid) {
-                finish({ status: 'started', stop });
+                finish({ status: 'started' });
             } else if (pid !== undefined) {
                 finish({ status: 'shared' });
             } else if (Date.now() - startedAt >= timeoutMs) {

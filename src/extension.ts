@@ -179,6 +179,13 @@ function formatSeconds(seconds: number): string {
     return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds}s`;
 }
 
+interface OpenFileOptions {
+    viewColumn?: vscode.ViewColumn;
+    preserveFocus?: boolean;
+    /** Open from this machine even when connected to a cluster, as submit scripts are. */
+    onThisMachine?: boolean;
+}
+
 /**
  * Extension activation
  * Called when the extension is activated (e.g., when the SLURM view is opened)
@@ -188,12 +195,12 @@ function formatSeconds(seconds: number): string {
  */
 async function openLogFile(
     filePath: string,
-    options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean },
+    options?: OpenFileOptions,
 ): Promise<boolean> {
     // Connected to a cluster, the job's files are there, not on this machine
     const connection = activeClusterConnection;
     const state = connection?.getState();
-    if (connection && clusterFileSystem && state?.kind === 'connected' && !isMockModeEnabled()) {
+    if (connection && clusterFileSystem && state?.kind === 'connected' && !isMockModeEnabled() && !options?.onThisMachine) {
         return openClusterLogFile(connection, clusterFileSystem, state.host.alias, filePath, options);
     }
 
@@ -397,8 +404,14 @@ export function activate(context: vscode.ExtensionContext) {
             available ? 'available' : 'unavailable',
         );
         if (available) {
+            // Clicking a host focused the host list, which is about to go; without
+            // this nothing would have focus, so the editor would show no cursor
+            const returnFocus = connection.kind === 'connected' && slurmStatusView.visible;
             refreshViews?.();
             await setStatus();
+            if (returnFocus) {
+                await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+            }
         } else {
             await setStatus();
             refreshViews?.();
@@ -684,7 +697,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command to open output files
     const openFileCommand = vscode.commands.registerCommand(
         'slurmJobs.openFile',
-        async (filePath: string, options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean }) => {
+        async (filePath: string, options?: OpenFileOptions) => {
             await openLogFile(filePath, options);
         },
     );
