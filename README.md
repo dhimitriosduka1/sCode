@@ -37,10 +37,11 @@ SLURM Cluster Manager brings your cluster workflow into the editor. Follow runni
 - **Catch GPU mismatches early.** Get warnings when a requested GPU type is unavailable in the selected partitions.
 - **Understand your priority.** Inspect your fair share and the priority components of pending jobs.
 - **Manage jobs from the sidebar.** Cancel, hold, release, update dependencies, and adjust job array concurrency.
+- **Work from a computer without Slurm.** Connect to a cluster over SSH from the sidebar when your computer shares the cluster’s file systems.
 
 ## Getting started
 
-1. **Connect to your cluster.** Use [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh) in VS Code to connect to your cluster’s node, then open the folder containing your job scripts.
+1. **Connect to your cluster.** Use [Remote - SSH](https://code.visualstudio.com/docs/remote/ssh) in VS Code to connect to your cluster’s node, then open the folder containing your job scripts. If your computer mounts the cluster’s file systems at the same paths, you can instead install the extension there and connect from the sidebar; see [Connecting over SSH](#connecting-over-ssh).
 
 2. **Install the extension on the cluster.** In the connected VS Code window, open **Extensions**, search for **SLURM Cluster Manager**, and install it on the **SSH host**. You can also find it on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=DhimitriosDuka.slurm-cluster-manager) or [Open VSX](https://open-vsx.org/extension/DhimitriosDuka/slurm-cluster-manager).
 
@@ -49,6 +50,18 @@ SLURM Cluster Manager brings your cluster workflow into the editor. Follow runni
 4. **Submit a script.** Open a script containing `#SBATCH` directives, save your changes, and click **▶** in the editor title bar. To make the new job wait for another job, use the adjacent **link icon** to choose a dependency instead.
 
 5. **Follow your job.** Find it in **Active Jobs** and expand it to inspect its status and resources. Once it starts, click **stdout** or **stderr** to open its logs. Use the **refresh button** for an update, or the **watch icon** to enable automatic refresh. Finished jobs appear in **Job History**.
+
+## Connecting over SSH
+
+For clusters whose login nodes can’t host the VS Code server, run VS Code on a computer that mounts the cluster’s file systems at the same paths, such as a workstation sharing your cluster home and scratch, and let the extension run Slurm over SSH.
+
+When Slurm isn’t installed where VS Code runs, the sidebar shows **Slurm Not Available** with the hosts from your `~/.ssh/config`, grouped by site. Click a host to connect; every view then shows that cluster. The status bar shows the connected host; click it to disconnect.
+
+- **Same files on both sides.** Connecting writes a small file into your cluster home folder from this computer, checks that the cluster sees it, and removes it. If the cluster doesn’t see it, the extension doesn’t connect and says why. Scripts in your workspace submit as they would on a login node.
+- **Your SSH setup.** Signing in uses the system’s OpenSSH, so keys, the agent, `~/.ssh/config` and jump hosts work as in a terminal. When a password, 2FA code or new host key is needed, a terminal opens for it; what you type never passes through the extension. One connection per host is shared by every command.
+- **Logs from the cluster.** stdout and stderr open read-only over the same connection and update while the job writes to them. Logs over 10 MB show their last 10 MB.
+
+Connecting relies on OpenSSH connection sharing (`ControlMaster`), available on Linux and macOS but not Windows.
 
 ## Features
 
@@ -154,24 +167,24 @@ All settings below use the `slurmClusterManager.` prefix, for example `slurmClus
 
 ## How it uses your cluster
 
-The extension runs Slurm commands on the host where it is installed and shares cached data between views where possible.
+The extension runs Slurm commands on the host where it is installed, or over SSH on the cluster it is connected to, and shares cached data between views where possible.
 
 | Feature | When it queries Slurm |
 | --- | --- |
-| Active Jobs and Job History | When views need data, on refresh, and after relevant job actions. Optional auto-refresh defaults to every 30 seconds and is off initially. Expanding a historical job may also query its log paths. |
+| Active Jobs and Job History | When views need data, on refresh, and after relevant job actions. Optional auto-refresh defaults to every 30 seconds and is off initially. All active jobs’ details come from one `squeue` request. Expanding a historical job may also query its log paths. |
 | Partition data | At startup, on manual refresh, and every 5 minutes by default. Suggestions, hovers, and GPU warnings reuse the shared snapshot. |
 | Cluster Overview and Hall of Shame | On first opening or explicit refresh; no periodic polling. |
 | Fair share | A shared `sshare` result is cached for 5 minutes. Manually refreshing Active Jobs or Hall of Shame invalidates it. |
 | Pending-job priority | `sprio` is queried when pending jobs are loaded and `showFairShare` is enabled. |
 
-Scheduled job and partition refreshes pause while the VS Code window is unfocused. Increase the intervals or disable background refresh to reduce polling.
+Scheduled job and partition refreshes pause while the VS Code window is unfocused. Increase the intervals or disable background refresh to reduce polling. A refresh asked for while a view loads runs once that load finishes, however many were asked for, and the view’s refresh button is greyed out while it loads. When connected over SSH, open logs are checked for new output every 5 seconds (30 seconds for logs over 10 MB) while the window is focused, in one SSH call for all of them.
 
 Commands that change cluster state—such as `sbatch`, `scancel`, and `scontrol hold`, `release`, or `update`—run only when you choose the corresponding action.
 
 ## Requirements
 
 - **VS Code 1.85 or newer**, or a compatible editor that supports extensions from Open VSX.
-- **Slurm commands available to the extension host.** With Remote - SSH, install the extension on the remote host. The extension does not establish an SSH connection itself.
+- **Slurm commands available to the extension host**, or a cluster reachable over SSH from a Linux or macOS computer that shares its file systems at the same paths (see [Connecting over SSH](#connecting-over-ssh)). With Remote - SSH, install the extension on the remote host.
 
 | Commands | Used for |
 | --- | --- |
@@ -185,9 +198,13 @@ GPU Partition Usage requires GPUs to be configured as Slurm **GRES**, as reporte
 
 ## Troubleshooting
 
-**Active Jobs says “SLURM not available on this system.”**
+**The sidebar shows “Slurm Not Available.”**
 
-Check that `squeue` works on the host running the extension. With Remote - SSH, confirm that the Extensions view lists the extension under **SSH: your-host**. If Slurm was added to your environment after VS Code started, reload the remote window.
+`squeue` was not found on the host running the extension. Check that it works there. With Remote - SSH, confirm that the Extensions view lists the extension under **SSH: your-host**. If Slurm was added to your environment after VS Code started, reload the remote window. On a computer that shares the cluster’s file systems, connect to a host from the panel instead.
+
+**Connecting stops with “this computer does not share its file system.”**
+
+Connecting over SSH works only where your cluster home folder is mounted at the same path as on the cluster. The message says what failed, for example that the folder is missing here, can’t be written to, or that a file written to it doesn’t show up on the cluster.
 
 **No fair share or priority details appear.**
 
@@ -203,7 +220,7 @@ Press `Ctrl+Space`, especially inside `#SBATCH` comments. Check that the file is
 
 **A job has no stdout or stderr file.**
 
-Pending jobs normally have no output yet. For running or finished jobs, check that the log exists and is accessible from the extension host. Older jobs may lack log links if their paths were never cached and Slurm no longer retains their details.
+Pending jobs normally have no output yet. For running or finished jobs, check that the log exists and is accessible from the extension host, or from the cluster when connected over SSH. Older jobs may lack log links if their paths were never cached and Slurm no longer retains their details.
 
 ## Contributing
 

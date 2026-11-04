@@ -99,10 +99,11 @@ export class SubmitScriptCache {
      * @param originalScriptPath The path to the original submit script
      * @returns The path to the cached script, or undefined if caching failed
      */
-    async cacheScript(jobId: string, originalScriptPath: string): Promise<string | undefined> {
+    async cacheScript(jobId: string, originalScriptPath: string, cluster?: string): Promise<string | undefined> {
+        const key = SubmitScriptCache.key(jobId, cluster);
         // Skip if already cached
-        if (this.cache.has(jobId)) {
-            return this.cache.get(jobId)?.cachedPath;
+        if (this.cache.has(key)) {
+            return this.cache.get(key)?.cachedPath;
         }
 
         // Skip if original path is not available
@@ -120,7 +121,7 @@ export class SubmitScriptCache {
             // Create a unique filename using job ID and timestamp
             const timestamp = Date.now();
             const ext = path.extname(originalScriptPath) || '.sh';
-            const cachedFilename = `${jobId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}${ext}`;
+            const cachedFilename = `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}${ext}`;
             const cachedPath = path.join(this.cacheDir, cachedFilename);
 
             // Copy the file
@@ -133,7 +134,7 @@ export class SubmitScriptCache {
                 cachedAt: timestamp,
             };
 
-            this.cache.set(jobId, entry);
+            this.cache.set(key, entry);
             await this.saveCache();
 
             console.log(`Cached submit script for job ${jobId}: ${cachedPath}`);
@@ -145,31 +146,39 @@ export class SubmitScriptCache {
     }
 
     /**
+     * Entries are kept per cluster, since job IDs repeat across clusters; jobs
+     * on this machine keep the bare job ID they always had.
+     */
+    private static key(jobId: string, cluster?: string): string {
+        return cluster ? `${cluster}:${jobId}` : jobId;
+    }
+
+    /**
      * Get cached script info for a job
      */
-    get(jobId: string): CachedSubmitScript | undefined {
-        return this.cache.get(jobId);
+    get(jobId: string, cluster?: string): CachedSubmitScript | undefined {
+        return this.cache.get(SubmitScriptCache.key(jobId, cluster));
     }
 
     /**
      * Get the cached script path for a job
      */
-    getCachedScriptPath(jobId: string): string | undefined {
-        return this.cache.get(jobId)?.cachedPath;
+    getCachedScriptPath(jobId: string, cluster?: string): string | undefined {
+        return this.get(jobId, cluster)?.cachedPath;
     }
 
     /**
      * Get the original script path at submission time for a job
      */
-    getOriginalScriptPath(jobId: string): string | undefined {
-        return this.cache.get(jobId)?.originalPath;
+    getOriginalScriptPath(jobId: string, cluster?: string): string | undefined {
+        return this.get(jobId, cluster)?.originalPath;
     }
 
     /**
      * Check if a job has a cached script
      */
-    has(jobId: string): boolean {
-        return this.cache.has(jobId);
+    has(jobId: string, cluster?: string): boolean {
+        return this.cache.has(SubmitScriptCache.key(jobId, cluster));
     }
 
     /**
@@ -201,8 +210,8 @@ export class SubmitScriptCache {
     /**
      * Format the cache timestamp for display
      */
-    formatCacheTime(jobId: string): string {
-        const entry = this.cache.get(jobId);
+    formatCacheTime(jobId: string, cluster?: string): string {
+        const entry = this.get(jobId, cluster);
         if (!entry) {
             return 'N/A';
         }
