@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
+import { RefreshGate } from './refreshGate';
 import {
     formatHistoryJobDescription,
     formatHistorySummaryDescription,
@@ -172,10 +173,11 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private cachedSlurmAvailable: boolean | null = null;
     private lastRefreshedAt: Date | undefined;
     private hasFetchedJobs = false;
-    /** Bumped on every refresh so results from a superseded fetch are discarded */
-    private generation: number = 0;
-    /** In-flight root fetch, shared by concurrent getChildren() calls */
-    private pendingRootItems: { generation: number; promise: Promise<vscode.TreeItem[]> } | undefined;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmHistory.refreshing', refreshing),
+    );
     private historyDays: number = 7;
     private searchFilter: string = '';
     private currentPage: number = 0;
@@ -187,11 +189,14 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     }
 
     /**
-     * Refresh the history (forces re-fetch from sacct)
+     * Refresh the history (forces re-fetch from sacct), once the refresh in
+     * progress (if any) is done
      */
     refresh(): void {
-        this.generation++;
-        this.pendingRootItems = undefined;
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedJobs = [];
         this.cachedSlurmAvailable = null;
         this.lastRefreshedAt = undefined;
@@ -290,33 +295,16 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
      * Return the root items, sharing a single sacct fetch between concurrent callers.
      */
     private getRootItems(): Promise<vscode.TreeItem[]> {
-        if (this.pendingRootItems?.generation === this.generation) {
-            return this.pendingRootItems.promise;
-        }
-
-        const generation = this.generation;
-        const promise = this.loadRootItems(generation).finally(() => {
-            if (this.pendingRootItems?.generation === generation) {
-                this.pendingRootItems = undefined;
-            }
-        });
-
-        this.pendingRootItems = { generation, promise };
-        return promise;
+        return this.refreshGate.load(() => this.loadRootItems());
     }
 
-    private async loadRootItems(generation: number): Promise<vscode.TreeItem[]> {
+    private async loadRootItems(): Promise<vscode.TreeItem[]> {
         try {
             // Skip availability check if we already have cached jobs
             if (!this.hasFetchedJobs) {
                 // Check if SLURM is available (cache the result)
                 if (this.cachedSlurmAvailable === null) {
-                    const available = await this.slurmService.isAvailable();
-                    // A refresh landed meanwhile, possibly for another cluster
-                    if (generation !== this.generation) {
-                        return [];
-                    }
-                    this.cachedSlurmAvailable = available;
+                    this.cachedSlurmAvailable = await this.slurmService.isAvailable();
                 }
                 if (!this.cachedSlurmAvailable) {
                     return [new HistoryMessageItem('SLURM not available', 'warning')];
@@ -324,11 +312,6 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
                 // Fetch history
                 const jobs = await this.slurmService.getJobHistory(this.historyDays);
-
-                // A refresh landed while we were fetching - that newer fetch owns the cache
-                if (generation !== this.generation) {
-                    return [];
-                }
 
                 this.cachedJobs = jobs;
                 this.lastRefreshedAt = new Date();

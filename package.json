@@ -126,7 +126,8 @@
       {
         "command": "slurmPartitionUsage.refresh",
         "title": "Refresh GPU Partition Usage",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!slurmPartitionUsage.refreshing"
       },
       {
         "command": "slurmPartitionUsage.setRefreshInterval",
@@ -136,17 +137,20 @@
       {
         "command": "slurmClusterOverview.refresh",
         "title": "Refresh Cluster Overview",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!slurmClusterOverview.refreshing"
       },
       {
         "command": "slurmJobs.refresh",
         "title": "Refresh Jobs",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!slurmJobs.refreshing"
       },
       {
         "command": "slurmHistory.refresh",
         "title": "Refresh Job History",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!slurmHistory.refreshing"
       },
       {
         "command": "slurmHistory.setRange",
@@ -241,7 +245,8 @@
       {
         "command": "slurmLeaderboard.refresh",
         "title": "Refresh Hall of Shame",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!slurmLeaderboard.refreshing"
       },
       {
         "command": "slurmLeaderboard.setTopUserCount",

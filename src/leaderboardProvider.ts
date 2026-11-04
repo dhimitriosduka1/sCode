@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { RefreshGate } from './refreshGate';
 import {
     DEFAULT_LEADERBOARD_ENTRY_COUNT,
     formatLeaderboardEntryTrailingDescription,
@@ -76,8 +77,11 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
     private cachedEntries: LeaderboardEntry[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
-    /** Bumped by refresh(), so a fetch started before it cannot fill the cache with old data. */
-    private generation = 0;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmLeaderboard.refreshing', refreshing),
+    );
     private currentUsernameProvider: () => string | undefined;
 
     constructor(slurmService: SlurmService, currentUsernameProvider?: () => string | undefined) {
@@ -86,8 +90,12 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
         this.currentUsernameProvider = currentUsernameProvider ?? (() => slurmService.getUsername());
     }
 
+    /** Reloads the view, once the refresh in progress (if any) is done. */
     refresh(): void {
-        this.generation++;
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedEntries = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
@@ -110,24 +118,19 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
             return [];
         }
 
-        return this.getRootItems();
+        return this.refreshGate.load(() => this.getRootItems());
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             // Fetch data once until manual refresh, even when the result is empty.
             if (!this.hasFetchedEntries) {
-                const generation = this.generation;
                 const [entries, fairShare] = await Promise.all([
                     this.slurmService.getClusterLeaderboard(),
                     isFairShareEnabled()
                         ? this.slurmService.getFairShare()
                         : Promise.resolve({ entries: [], available: false }),
                 ]);
-                // A refresh landed while fetching; the render it triggered owns the cache
-                if (generation !== this.generation) {
-                    return [];
-                }
 
                 const fairShareLookup = buildFairShareLookup(fairShare.entries);
                 this.cachedEntries = entries.map(entry => ({

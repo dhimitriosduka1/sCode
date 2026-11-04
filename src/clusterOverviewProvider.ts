@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { RefreshGate } from './refreshGate';
 import { ClusterAccountOverviewEntry, MaintenanceWindow, SlurmService } from './slurmService';
 import {
     formatClusterAccountOverviewDescription,
@@ -69,13 +70,20 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
-    /** Bumped by refresh(), so a fetch started before it cannot fill the cache with old data. */
-    private generation = 0;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmClusterOverview.refreshing', refreshing),
+    );
 
     constructor(private readonly slurmService: SlurmService) {}
 
+    /** Reloads the view, once the refresh in progress (if any) is done. */
     refresh(): void {
-        this.generation++;
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedEntries = [];
         this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
@@ -92,21 +100,16 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
             return [];
         }
 
-        return this.getRootItems();
+        return this.refreshGate.load(() => this.getRootItems());
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                const generation = this.generation;
                 const [entries, maintenanceWindows] = await Promise.all([
                     this.slurmService.getClusterAccountOverview(),
                     this.slurmService.getMaintenanceWindows(),
                 ]);
-                // A refresh landed while fetching; the render it triggered owns the cache
-                if (generation !== this.generation) {
-                    return [];
-                }
                 this.cachedEntries = entries;
                 this.cachedMaintenanceWindows = maintenanceWindows;
                 this.lastRefreshedAt = new Date();

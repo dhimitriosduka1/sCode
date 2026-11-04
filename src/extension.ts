@@ -497,10 +497,23 @@ export function activate(context: vscode.ExtensionContext) {
         .get<number>('partitionRefreshInterval', DEFAULT_PARTITION_REFRESH_MINUTES);
     const partitionUsageProvider = new PartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
 
-    // Every refresh shows a progress bar on GPU Partition Usage, whoever started it
+    // Every refresh shows a progress bar on GPU Partition Usage, whoever started it,
+    // and disables its refresh button until done (package.json `enablement`)
+    let partitionRefreshes = 0;
     const refreshPartitionData = () => vscode.window.withProgress(
         { location: { viewId: 'slurmPartitionUsage' } },
-        () => partitionDataStore.refresh(),
+        async () => {
+            if (partitionRefreshes++ === 0) {
+                void vscode.commands.executeCommand('setContext', 'slurmPartitionUsage.refreshing', true);
+            }
+            try {
+                return await partitionDataStore.refresh();
+            } finally {
+                if (--partitionRefreshes === 0) {
+                    void vscode.commands.executeCommand('setContext', 'slurmPartitionUsage.refreshing', false);
+                }
+            }
+        },
     );
     // (Re)starts the schedule, so the next automatic refresh is a full interval away
     const schedulePartitionRefresh = () => partitionRefreshScheduler.start(
