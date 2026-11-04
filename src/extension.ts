@@ -20,9 +20,12 @@ import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
 import { formatSshHostTarget, readSshConfigHosts, SshConfigHost } from './sshConfigHosts';
 import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
+import { CLUSTER_FILE_SCHEME, clusterFileUri, ClusterFileSystemProvider } from './clusterFileSystem';
+import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
 
 import * as fs from 'fs';
+import * as path from 'path';
 
 // Auto-refresh only runs while the window is focused, so a backgrounded window
 // never queues up tree refreshes that all land at once when the user comes back.
@@ -32,6 +35,7 @@ const partitionRefreshScheduler = new AutoRefreshScheduler();
 const DEFAULT_PARTITION_REFRESH_MINUTES = 5;
 let statusBarItem: vscode.StatusBarItem;
 let activeClusterConnection: ClusterConnection | undefined;
+let clusterFileSystem: ClusterFileSystemProvider | undefined;
 
 /**
  * Get autorefresh configuration
@@ -186,6 +190,13 @@ async function openLogFile(
     filePath: string,
     options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean },
 ): Promise<boolean> {
+    // Connected to a cluster, the job's files are there, not on this machine
+    const connection = activeClusterConnection;
+    const state = connection?.getState();
+    if (connection && clusterFileSystem && state?.kind === 'connected' && !isMockModeEnabled()) {
+        return openClusterLogFile(connection, clusterFileSystem, state.host.alias, filePath, options);
+    }
+
     const normalizedFilePath = normalizeOpenableFilePath(
         filePath,
         vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
@@ -204,7 +215,15 @@ async function openLogFile(
     }
 
     try {
-        // Check if file exists
+        // On NFS a login node may still think a log a compute node just created is
+        // missing; reading its folder makes it look again
+        if (!fs.existsSync(normalizedFilePath)) {
+            try {
+                fs.readdirSync(path.dirname(normalizedFilePath));
+            } catch {
+                // No folder either: the existence check below reports it
+            }
+        }
         if (!fs.existsSync(normalizedFilePath)) {
             // For pending jobs, the file might not exist yet
             vscode.window.showWarningMessage(`File not found: ${normalizedFilePath}. The file may not exist yet if the job hasn't started.`);
@@ -235,6 +254,59 @@ async function openLogFile(
     }
 }
 
+/**
+ * Opens a job's file on the connected cluster, read-only, over the SSH
+ * connection. Checks it first so that a missing log (a job that has not
+ * started) or a folder gets the same message as on this machine.
+ */
+async function openClusterLogFile(
+    connection: ClusterConnection,
+    fileSystem: ClusterFileSystemProvider,
+    alias: string,
+    filePath: string,
+    options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean },
+): Promise<boolean> {
+    const remotePath = normalizeOpenableFilePath(filePath, undefined, connection.getAccount());
+    if (!remotePath) {
+        vscode.window.showWarningMessage('File path not available');
+        return false;
+    }
+    if (hasUnresolvedSlurmPathPlaceholders(remotePath) || remotePath.includes('PENDING_NODE')) {
+        vscode.window.showWarningMessage(
+            `Output path is not fully resolved yet: ${remotePath}. Refresh after the job starts or finishes.`
+        );
+        return false;
+    }
+
+    try {
+        const stat = await connection.statFile(alias, remotePath);
+        if (stat.type === 'directory') {
+            vscode.window.showWarningMessage(`Output path is a directory, not a file: ${remotePath}`);
+            return false;
+        }
+
+        const uri = clusterFileUri(alias, remotePath);
+        // An editor showing this log already re-reads it, so a running job's log is current
+        fileSystem.refresh(uri);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const preview = vscode.workspace.getConfiguration('slurmClusterManager').get<boolean>('openLogFileInPreview', true);
+        await vscode.window.showTextDocument(doc, {
+            preview,
+            viewColumn: options?.viewColumn,
+            preserveFocus: options?.preserveFocus,
+        });
+        return true;
+    } catch (error) {
+        if (error instanceof RemoteFileError && error.reason === 'missing') {
+            vscode.window.showWarningMessage(`File not found on ${alias}: ${remotePath}. The file may not exist yet if the job hasn't started.`);
+            return false;
+        }
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Failed to open ${remotePath} on ${alias}\n${errorMessage}`);
+        return false;
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('SLURM Cluster Manager is now active');
 
@@ -251,13 +323,24 @@ export function activate(context: vscode.ExtensionContext) {
     activeClusterConnection = clusterConnection;
     context.subscriptions.push(clusterConnection);
 
+    // Job logs on the cluster open read-only through this, over the same connection
+    clusterFileSystem = new ClusterFileSystemProvider(clusterConnection);
+    context.subscriptions.push(
+        clusterFileSystem,
+        vscode.workspace.registerFileSystemProvider(CLUSTER_FILE_SCHEME, clusterFileSystem, {
+            isCaseSensitive: true,
+            isReadonly: true,
+        }),
+        clusterFileSystem.watchOpenLogs(),
+    );
+
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(
         jobPathCache,
         submitScriptCache,
         clusterConnection.run,
         isMockModeEnabled,
-        () => clusterConnection.getUsername(),
+        () => clusterConnection.getAccount(),
     );
 
     // The job views show only once the probe finds Slurm. Until it answers, the

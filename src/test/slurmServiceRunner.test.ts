@@ -64,7 +64,7 @@ describe('SlurmService username', () => {
                 ? 'JobId=123 JobName=train\n   StdOut=/scratch/%u/%x-%j.out\n   StdErr=/scratch/%u/%x-%j.err\n   WorkDir=/scratch/kqr876\n   Command=/scratch/kqr876/train.sh\n'
                 : '',
             stderr: '',
-        }), () => false, () => 'kqr876');
+        }), () => false, () => ({ username: 'kqr876', homeDir: '/home/kqr876', cluster: 'galvani' }));
 
         const paths = await service.getHistoryJobPaths('123', { jobName: 'train', nodes: 'node01' });
 

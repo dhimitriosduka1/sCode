@@ -426,9 +426,9 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 jobName: job.name,
                 nodes: job.nodes,
             });
-            const username = this.slurmService.getUsername();
-            job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes, undefined, username);
-            job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes, undefined, username);
+            const account = this.slurmService.getAccount();
+            job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes, undefined, account);
+            job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes, undefined, account);
         }
 
         // Add stdout/stderr paths if available (clickable)

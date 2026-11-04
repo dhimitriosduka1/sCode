@@ -1,15 +1,19 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { SshConfigHost } from './sshConfigHosts';
-import { getCurrentUsername, localCommandRunner, SlurmCommandRunner } from './slurmService';
+import { getCurrentUsername, getLocalAccount, localCommandRunner, SlurmAccount, SlurmCommandRunner } from './slurmService';
 import {
     buildMasterArgs,
     createSshCommandRunner,
     ensurePrivateSocketDir,
     getSocketPath,
     isMasterRunning,
+    readRemoteFileTail,
+    RemoteFileStat,
     removeStaleSocket,
     resolveSshUser,
+    statRemoteFile,
+    statRemoteFiles,
     SSH_FAILURE_EXIT_CODE,
     SshTarget,
     startMasterInBackground,
@@ -40,6 +44,8 @@ export class ClusterConnection implements vscode.Disposable {
     private ownsMaster = false;
     /** The account ssh logs in to the connected host as. */
     private username?: string;
+    /** That account's home folder on the host, for `~` in paths. */
+    private homeDir?: string;
     /**
      * Bumped whenever a connection attempt is superseded (another host picked,
      * cancelled, disconnected, window closing), so the attempt can tell it should
@@ -61,6 +67,49 @@ export class ClusterConnection implements vscode.Disposable {
      */
     getUsername(): string | undefined {
         return this.state.kind === 'connected' && this.username ? this.username : getCurrentUsername();
+    }
+
+    /** Who the user is wherever commands run, with the host when that is a cluster. */
+    getAccount(): SlurmAccount {
+        if (this.state.kind !== 'connected') {
+            return getLocalAccount();
+        }
+        return { username: this.getUsername(), homeDir: this.homeDir, cluster: this.state.host.alias };
+    }
+
+    /** Stats a file on the connected host; throws when not connected to `alias`. */
+    statFile(alias: string, filePath: string): Promise<RemoteFileStat> {
+        return this.withConnection(alias, (target) => statRemoteFile(target, filePath));
+    }
+
+    /** Stats several files on the connected host in one round trip; unreadable ones come back undefined. */
+    statFiles(alias: string, filePaths: string[]): Promise<(RemoteFileStat | undefined)[]> {
+        return this.withConnection(alias, (target) => statRemoteFiles(target, filePaths));
+    }
+
+    /** Reads up to the last `maxBytes` of a file on the connected host. */
+    readFileTail(alias: string, filePath: string, maxBytes: number): Promise<Buffer> {
+        return this.withConnection(alias, (target) => readRemoteFileTail(target, filePath, maxBytes));
+    }
+
+    /** Runs `action` over the connection to `alias`, noticing if the connection has gone. */
+    private async withConnection<T>(alias: string, action: (target: SshTarget) => Promise<T>): Promise<T> {
+        const target = this.target;
+        if (!target || this.state.kind !== 'connected' || target.alias.toLowerCase() !== alias.toLowerCase()) {
+            throw new NotConnectedError(alias);
+        }
+        if (!fs.existsSync(target.socketPath)) {
+            this.checkForDrop(target);
+            throw new NotConnectedError(alias);
+        }
+        try {
+            return await action(target);
+        } catch (error) {
+            if ((error as { code?: unknown }).code === SSH_FAILURE_EXIT_CODE) {
+                this.checkForDrop(target);
+            }
+            throw error;
+        }
     }
 
     readonly run: SlurmCommandRunner = async (command, options) => {
@@ -144,8 +193,12 @@ export class ClusterConnection implements vscode.Disposable {
             }
         }
 
-        // Fair share and Hall of Shame look the user up by this name, so it is known before anything renders
-        const username = await resolveSshUser(target.alias) ?? host.user;
+        // Fair share and Hall of Shame look the user up by this name, and `~` in log
+        // paths is their home there, so both are known before anything renders
+        const [username, homeDir] = await Promise.all([
+            resolveSshUser(target.alias).then((user) => user ?? host.user),
+            readRemoteHome(target),
+        ]);
         if (superseded()) {
             if (ownsMaster) {
                 await this.stopAbandonedMaster(target);
@@ -155,6 +208,7 @@ export class ClusterConnection implements vscode.Disposable {
         this.target = target;
         this.ownsMaster = ownsMaster;
         this.username = username;
+        this.homeDir = homeDir;
         this.sshRunner = createSshCommandRunner(target);
         this.setState({ kind: 'connected', host });
     }
@@ -227,6 +281,7 @@ export class ClusterConnection implements vscode.Disposable {
         this.sshRunner = undefined;
         this.ownsMaster = false;
         this.username = undefined;
+        this.homeDir = undefined;
         this.signInTerminal?.dispose();
         this.signInTerminal = undefined;
     }
@@ -322,6 +377,23 @@ export class ClusterConnection implements vscode.Disposable {
                 }
             });
         });
+    }
+}
+
+/** A file was asked for on a host the sidebar is not connected to (any more). */
+export class NotConnectedError extends Error {
+    constructor(readonly alias: string) {
+        super(`Not connected to ${alias}`);
+    }
+}
+
+/** The home folder of the account on the host, or undefined if the shell does not say. */
+async function readRemoteHome(target: SshTarget): Promise<string | undefined> {
+    try {
+        const { stdout } = await createSshCommandRunner(target)('printf %s "$HOME"', { timeout: 15_000 });
+        return stdout.startsWith('/') ? stdout.trim() : undefined;
+    } catch {
+        return undefined;
     }
 }
 

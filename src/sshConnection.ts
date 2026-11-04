@@ -215,6 +215,138 @@ export async function stopMaster(target: SshTarget, run: ExecFileRunner = execFi
     }
 }
 
+/** What a path on the cluster is, as `stat` reports it. */
+export interface RemoteFileStat {
+    type: 'file' | 'directory' | 'other';
+    size: number;
+    mtimeMs: number;
+}
+
+/** Why a file on the cluster could not be read. */
+export class RemoteFileError extends Error {
+    constructor(message: string, readonly reason: 'missing' | 'denied' | 'failed') {
+        super(message);
+    }
+}
+
+/**
+ * GNU stat (as on Linux clusters), following symlinks: size, modification time,
+ * type. A miss is checked again after listing the folder: on NFS, a login node
+ * goes on believing a file is missing for up to a minute after a compute node
+ * creates it (a job's log, just after the job starts) if it looked before, and
+ * reading the folder makes it look again.
+ */
+export function buildStatCommand(filePath: string): string {
+    const stat = `stat -L -c '%s %Y %F' -- ${quoteForShell(filePath)}`;
+    return `${stat} 2>/dev/null || { ls -a -- ${quoteForShell(path.posix.dirname(filePath))} >/dev/null 2>&1; ${stat}; }`;
+}
+
+/** Parses `buildStatCommand`'s output, e.g. `1234 1730720000 regular file`. */
+export function parseRemoteStat(output: string): RemoteFileStat | undefined {
+    const match = output.trim().match(/^(\d+) (\d+) (.+)$/);
+    if (!match) {
+        return undefined;
+    }
+
+    const kind = match[3];
+    return {
+        type: kind === 'directory' ? 'directory' : /regular/.test(kind) ? 'file' : 'other',
+        size: Number(match[1]),
+        mtimeMs: Number(match[2]) * 1000,
+    };
+}
+
+/** The last `maxBytes` of a file, or all of a smaller one; `tail -c` seeks, so huge logs cost no more. */
+export function buildTailCommand(filePath: string, maxBytes: number): string {
+    return `tail -c ${Math.max(0, Math.floor(maxBytes))} -- ${quoteForShell(filePath)}`;
+}
+
+function toRemoteFileError(error: unknown, filePath: string): Error {
+    const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+    // ssh's own failure: leave it as is, so the caller can tell a dropped connection
+    if (code === SSH_FAILURE_EXIT_CODE) {
+        return error as Error;
+    }
+    const message = String(stderr ?? '').trim() || (error as Error).message;
+    if (/No such file or directory/i.test(message)) {
+        return new RemoteFileError(`${filePath} does not exist`, 'missing');
+    }
+    if (/Permission denied/i.test(message)) {
+        return new RemoteFileError(`No permission to read ${filePath}`, 'denied');
+    }
+    return new RemoteFileError(message, 'failed');
+}
+
+/** Stats a path on the cluster over the master. */
+export async function statRemoteFile(target: SshTarget, filePath: string, run: ExecFileRunner = execFileRunner): Promise<RemoteFileStat> {
+    let stdout: string;
+    try {
+        ({ stdout } = await run('ssh', buildRunArgs(target, buildStatCommand(filePath)), { timeout: 30_000 }));
+    } catch (error) {
+        throw toRemoteFileError(error, filePath);
+    }
+    const stat = parseRemoteStat(stdout);
+    if (!stat) {
+        throw new RemoteFileError(`Unexpected stat output for ${filePath}: ${stdout.trim()}`, 'failed');
+    }
+    return stat;
+}
+
+/**
+ * Stats several paths in one round trip: one line per path, in order, either
+ * what `buildStatCommand` prints or `-` when the path could not be stat'ed.
+ */
+export function buildStatManyCommand(filePaths: string[]): string {
+    return filePaths.map((filePath) => `{ ${buildStatCommand(filePath)}; } 2>/dev/null || echo -`).join('; ');
+}
+
+/** Stats several paths on the cluster at once; a path that can't be stat'ed comes back undefined. */
+export async function statRemoteFiles(
+    target: SshTarget,
+    filePaths: string[],
+    run: ExecFileRunner = execFileRunner,
+): Promise<(RemoteFileStat | undefined)[]> {
+    if (filePaths.length === 0) {
+        return [];
+    }
+    const { stdout } = await run('ssh', buildRunArgs(target, buildStatManyCommand(filePaths)), { timeout: 30_000 });
+    const lines = stdout.split('\n');
+    return filePaths.map((_filePath, index) => parseRemoteStat(lines[index] ?? ''));
+}
+
+export type ExecFileBufferRunner =(file: string, args: string[], options: ExecFileOptions) => Promise<Buffer>;
+
+const execFileBufferRunner: ExecFileBufferRunner = (file, args, options) => new Promise((resolve, reject) => {
+    execFile(file, args, { ...options, env: SSH_ENV, encoding: 'buffer' }, (error, stdout, stderr) => {
+        if (error) {
+            reject(Object.assign(error, { stdout, stderr: stderr.toString('utf8') }));
+        } else {
+            resolve(stdout);
+        }
+    });
+});
+
+/**
+ * Reads up to the last `maxBytes` of a file on the cluster, as raw bytes so
+ * that whatever encoding the log uses arrives intact.
+ */
+export async function readRemoteFileTail(
+    target: SshTarget,
+    filePath: string,
+    maxBytes: number,
+    run: ExecFileBufferRunner = execFileBufferRunner,
+): Promise<Buffer> {
+    try {
+        return await run('ssh', buildRunArgs(target, buildTailCommand(filePath, maxBytes)), {
+            // Room for the bytes asked for, with some to spare should the file grow meanwhile
+            maxBuffer: maxBytes + 1024 * 1024,
+            timeout: 120_000,
+        });
+    } catch (error) {
+        throw toRemoteFileError(error, filePath);
+    }
+}
+
 /** The `user` line of `ssh -G` output, which is the account ssh logs in as. */
 export function parseSshConfigUser(output: string): string | undefined {
     const match = output.match(/^user\s+(\S+)\s*$/m);

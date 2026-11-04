@@ -42,8 +42,23 @@ export const FAIR_SHARE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export type SlurmCommandRunner = (command: string, options?: ExecOptions) => Promise<{ stdout: string; stderr: string }>;
 export type SlurmMockModeProvider = () => boolean;
-/** Who Slurm knows the user as, wherever commands run. */
-export type SlurmUsernameProvider = () => string | undefined;
+/**
+ * Who the user is wherever commands run: the name Slurm knows them by, their
+ * home folder (for `~` in paths; undefined when unknown, so it is left as is)
+ * and, over SSH, the host, which keeps cached job data from different clusters
+ * apart.
+ */
+export interface SlurmAccount {
+    username?: string;
+    homeDir?: string;
+    cluster?: string;
+}
+export type SlurmAccountProvider = () => SlurmAccount;
+
+/** The account on this machine, where commands run without SSH. */
+export function getLocalAccount(): SlurmAccount {
+    return { username: getCurrentUsername(), homeDir: os.homedir() };
+}
 
 /** Runs commands on this machine, where VS Code runs. */
 export const localCommandRunner: SlurmCommandRunner = async (command: string, options?: ExecOptions) => {
@@ -513,7 +528,7 @@ export function expandPathPlaceholders(
     jobName: string,
     nodes: string,
     workDir?: string,
-    username: string | undefined = getCurrentUsername(),
+    account: SlurmAccount = getLocalAccount(),
 ): string {
     if (!pathValue) {
         return pathValue;
@@ -544,7 +559,7 @@ export function expandPathPlaceholders(
     expanded = expanded.replace(/%x/g, jobName);
 
     // The user the job runs as, on the cluster it runs on
-    expanded = expanded.replace(/%u/g, username || 'user');
+    expanded = expanded.replace(/%u/g, account.username || 'user');
 
     // Node name - use first node if available, otherwise use placeholder
     if (nodes && nodes !== 'N/A') {
@@ -570,8 +585,8 @@ export function expandPathPlaceholders(
     expanded = expanded.replace(/%t/g, '0'); // Task ID
     expanded = expanded.replace(new RegExp(percentSentinel, 'g'), '%'); // Escaped percent
 
-    expanded = normalizeOpenableFilePath(expanded) ?? 'N/A';
-    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '');
+    expanded = normalizeOpenableFilePath(expanded, undefined, account) ?? 'N/A';
+    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '', undefined, account);
     if (expanded !== 'N/A' && normalizedWorkDir && !path.isAbsolute(expanded)) {
         expanded = path.resolve(normalizedWorkDir, expanded);
     }
@@ -655,16 +670,26 @@ export function normalizeSlurmPathValue(value: string | undefined): string {
     return isUnavailableSlurmPath(normalized) ? 'N/A' : normalized;
 }
 
-export function normalizeOpenableFilePath(filePath: string, fallbackBaseDir?: string): string | undefined {
+/**
+ * A path from Slurm made ready to open: quotes and escapes undone, `~` expanded
+ * to the home folder of the account the job belongs to (left alone when that is
+ * unknown), and relative paths resolved against `fallbackBaseDir`.
+ */
+export function normalizeOpenableFilePath(
+    filePath: string,
+    fallbackBaseDir?: string,
+    account: SlurmAccount = getLocalAccount(),
+): string | undefined {
     const normalized = normalizeSlurmPathValue(filePath);
     if (normalized === 'N/A') {
         return undefined;
     }
 
-    const homeExpanded = normalized === '~'
-        ? os.homedir()
-        : normalized.startsWith('~/')
-            ? path.join(os.homedir(), normalized.slice(2))
+    const homeDir = account.homeDir;
+    const homeExpanded = homeDir && normalized === '~'
+        ? homeDir
+        : homeDir && normalized.startsWith('~/')
+            ? path.posix.join(homeDir, normalized.slice(2))
             : normalized;
 
     if (path.isAbsolute(homeExpanded) || !fallbackBaseDir) {
@@ -678,7 +703,7 @@ export function hasUnresolvedSlurmPathPlaceholders(filePath: string): boolean {
     return /(^|[^%])%[A-Za-z]/.test(filePath);
 }
 
-export function resolvePathWithoutPlaceholders(filePath: string, workDir: string): string {
+export function resolvePathWithoutPlaceholders(filePath: string, workDir: string, account: SlurmAccount = getLocalAccount()): string {
     if (!filePath || filePath === 'N/A') {
         return 'N/A';
     }
@@ -686,8 +711,8 @@ export function resolvePathWithoutPlaceholders(filePath: string, workDir: string
     if (resolved === 'N/A') {
         return 'N/A';
     }
-    resolved = normalizeOpenableFilePath(resolved) ?? 'N/A';
-    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '');
+    resolved = normalizeOpenableFilePath(resolved, undefined, account) ?? 'N/A';
+    const normalizedWorkDir = normalizeOpenableFilePath(workDir || '', undefined, account);
     if (resolved !== 'N/A' && normalizedWorkDir && !path.isAbsolute(resolved)) {
         resolved = path.resolve(normalizedWorkDir, resolved);
     }
@@ -1647,7 +1672,7 @@ export class SlurmService {
     private scriptCache?: SubmitScriptCache;
     private commandRunner: SlurmCommandRunner;
     private mockModeProvider: SlurmMockModeProvider;
-    private usernameProvider: SlurmUsernameProvider;
+    private accountProvider: SlurmAccountProvider;
     private mockJobs?: SlurmJob[];
     private availabilityProbe?: Promise<boolean>;
     private fairShareCache?: { fetchedAt: number; result: FairShareResult };
@@ -1659,22 +1684,33 @@ export class SlurmService {
         scriptCache?: SubmitScriptCache,
         commandRunner: SlurmCommandRunner = localCommandRunner,
         mockModeProvider: SlurmMockModeProvider = () => false,
-        usernameProvider: SlurmUsernameProvider = getCurrentUsername,
+        accountProvider: SlurmAccountProvider = getLocalAccount,
     ) {
         this.pathCache = pathCache;
         this.scriptCache = scriptCache;
         this.commandRunner = commandRunner;
         this.mockModeProvider = mockModeProvider;
-        this.usernameProvider = usernameProvider;
+        this.accountProvider = accountProvider;
+    }
+
+    /** Who the user is on the cluster commands run on. */
+    getAccount(): SlurmAccount {
+        try {
+            return this.accountProvider();
+        } catch {
+            return getLocalAccount();
+        }
     }
 
     /** Who Slurm knows the user as on the cluster commands run on. */
     getUsername(): string | undefined {
-        try {
-            return this.usernameProvider();
-        } catch {
-            return getCurrentUsername();
-        }
+        return this.getAccount().username;
+    }
+
+    /** Job IDs repeat across clusters, so cached paths are kept per cluster. */
+    private pathCacheKey(jobId: string): string {
+        const cluster = this.getAccount().cluster;
+        return cluster ? `${cluster}:${jobId}` : jobId;
     }
 
     private isMockMode(): boolean {
@@ -1753,9 +1789,9 @@ export class SlurmService {
             await Promise.all(jobs.map(async (job) => {
                 const details = await this.getJobDetails(job.jobId);
                 // Expand any remaining placeholders in paths
-                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir, this.getUsername());
-                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir, this.getUsername());
-                job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir, this.getUsername());
+                job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
+                job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
+                job.submitScript = expandPathPlaceholders(details.submitScript, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
                 job.workDir = details.workDir;
                 job.gpuCount = details.gpuCount;
                 job.gpuType = details.gpuType;
@@ -2470,18 +2506,18 @@ export class SlurmService {
             return;
         }
 
-        const rawStdout = resolvePathWithoutPlaceholders(stdoutPath, workDir);
-        const rawStderr = resolvePathWithoutPlaceholders(stderrPath, workDir);
+        const rawStdout = resolvePathWithoutPlaceholders(stdoutPath, workDir, this.getAccount());
+        const rawStderr = resolvePathWithoutPlaceholders(stderrPath, workDir, this.getAccount());
         const rawPaths = { stdoutPath: rawStdout, stderrPath: rawStderr };
 
         if (shouldUseCachedOutputPaths(rawPaths)) {
             const cacheablePaths = sanitizeOutputPathsForCache(rawPaths);
-            await this.pathCache.set(jobId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+            await this.pathCache.set(this.pathCacheKey(jobId), cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
 
             // Also cache under the base ID if different (e.g. array base ID)
             const cleanId = cleanJobIdForScontrol(jobId);
             if (cleanId !== jobId) {
-                await this.pathCache.set(cleanId, cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
+                await this.pathCache.set(this.pathCacheKey(cleanId), cacheablePaths.stdoutPath, cacheablePaths.stderrPath);
             }
         }
     }
@@ -2524,17 +2560,17 @@ export class SlurmService {
 
         // First, check the local cache
         if (this.pathCache) {
-            let cached = this.pathCache.get(jobId);
+            let cached = this.pathCache.get(this.pathCacheKey(jobId));
             if (!cached) {
                 const baseId = extractBaseJobId(jobId);
                 if (baseId !== jobId) {
-                    cached = this.pathCache.get(baseId);
+                    cached = this.pathCache.get(this.pathCacheKey(baseId));
                 }
             }
             if (cached && shouldUseCachedOutputPaths(cached)) {
                 return sanitizeOutputPathsForCache({
-                    stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes, undefined, this.getUsername()),
-                    stderrPath: expandPathPlaceholders(cached.stderrPath, jobId, jobName, nodes, undefined, this.getUsername()),
+                    stdoutPath: expandPathPlaceholders(cached.stdoutPath, jobId, jobName, nodes, undefined, this.getAccount()),
+                    stderrPath: expandPathPlaceholders(cached.stderrPath, jobId, jobName, nodes, undefined, this.getAccount()),
                 });
             }
         }
@@ -2548,8 +2584,8 @@ export class SlurmService {
             await this.cacheJobPaths(jobId, details.stdoutPath, details.stderrPath, details.workDir);
 
             return sanitizeOutputPathsForCache({
-                stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir, this.getUsername()),
-                stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir, this.getUsername()),
+                stdoutPath: expandPathPlaceholders(details.stdoutPath, jobId, jobName, nodes, details.workDir, this.getAccount()),
+                stderrPath: expandPathPlaceholders(details.stderrPath, jobId, jobName, nodes, details.workDir, this.getAccount()),
             });
         } catch {
             // scontrol failed, job may be too old
