@@ -8,12 +8,17 @@ import { formatSshHostTarget, globPaths, readSshConfigHosts } from '../sshConfig
 const HOME = '/home/ada';
 const CONFIG = '/home/ada/.ssh/config';
 
-function readHosts(files: Record<string, string>, globs: Record<string, string[]> = {}) {
+function readHostsWithFiles(files: Record<string, string>, globs: Record<string, string[]> = {}) {
     return readSshConfigHosts(CONFIG, {
         homeDir: HOME,
         readFile: (filePath) => files[filePath],
         glob: (pattern) => globs[pattern] ?? [pattern],
     });
+}
+
+/** The hosts without the file each came from, which only the Include tests look at. */
+function readHosts(files: Record<string, string>, globs: Record<string, string[]> = {}) {
+    return readHostsWithFiles(files, globs).map(({ configFile: _configFile, ...host }) => host);
 }
 
 describe('readSshConfigHosts', () => {
@@ -94,6 +99,23 @@ describe('readSshConfigHosts', () => {
         assert.deepEqual(hosts.map((host) => host.alias), ['first', 'from-a', 'from-b', 'orb', 'last']);
     });
 
+    it('records the file that declared each alias', () => {
+        const hosts = readHostsWithFiles(
+            { [CONFIG]: 'Host raven\nInclude clusters', '/home/ada/.ssh/clusters': 'Host galvani' },
+        );
+
+        assert.deepEqual(hosts.map((host) => [host.alias, host.configFile]), [
+            ['raven', CONFIG],
+            ['galvani', '/home/ada/.ssh/clusters'],
+        ]);
+    });
+
+    it('expands %h in HostName to the alias, as ssh does', () => {
+        const hosts = readHosts({ [CONFIG]: 'Host raven zeus\n  HostName %h.example.org' });
+
+        assert.deepEqual(hosts.map((host) => host.hostName), ['raven.example.org', 'zeus.example.org']);
+    });
+
     it('stops at Includes that loop back on themselves', () => {
         const hosts = readHosts({ [CONFIG]: 'Host raven\nInclude config' });
 
@@ -107,9 +129,9 @@ describe('readSshConfigHosts', () => {
 
 describe('formatSshHostTarget', () => {
     it('shows where an alias leads, leaving out what the config does not set', () => {
-        assert.equal(formatSshHostTarget({ alias: 'raven', hostName: 'raven.example.org', user: 'ada', port: '2222' }), 'ada@raven.example.org:2222');
-        assert.equal(formatSshHostTarget({ alias: 'raven', user: 'ada' }), 'ada@raven');
-        assert.equal(formatSshHostTarget({ alias: 'raven' }), 'raven');
+        assert.equal(formatSshHostTarget({ alias: 'raven', configFile: CONFIG, hostName: 'raven.example.org', user: 'ada', port: '2222' }), 'ada@raven.example.org:2222');
+        assert.equal(formatSshHostTarget({ alias: 'raven', configFile: CONFIG, user: 'ada' }), 'ada@raven');
+        assert.equal(formatSshHostTarget({ alias: 'raven', configFile: CONFIG }), 'raven');
     });
 });
 

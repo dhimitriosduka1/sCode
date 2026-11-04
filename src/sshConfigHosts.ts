@@ -6,6 +6,8 @@ import * as path from 'path';
 export interface SshConfigHost {
     /** The alias from the `Host` line, which is what `ssh <alias>` takes. */
     alias: string;
+    /** The file whose `Host` line declared the alias, which may be an Include. */
+    configFile: string;
     hostName?: string;
     user?: string;
     port?: string;
@@ -63,7 +65,7 @@ export function readSshConfigHosts(
                     if (isHostPattern(alias) || hosts.has(alias)) {
                         continue;
                     }
-                    const host: SshConfigHost = { alias };
+                    const host: SshConfigHost = { alias, configFile: filePath };
                     hosts.set(alias, host);
                     currentBlock.push(host);
                 }
@@ -144,7 +146,8 @@ function isHostPattern(alias: string): boolean {
 function applyHostSetting(host: SshConfigHost, keyword: string, value: string): void {
     // The first value for each setting wins, as in ssh
     if (keyword === 'hostname') {
-        host.hostName ??= value;
+        // ssh expands %h to the alias here, as in `HostName %h.example.org`
+        host.hostName ??= value.replace(/%(%|h)/g, (_, token: string) => token === 'h' ? host.alias : '%');
     } else if (keyword === 'user') {
         host.user ??= value;
     } else if (keyword === 'port') {

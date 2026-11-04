@@ -269,7 +269,7 @@ export function activate(context: vscode.ExtensionContext) {
         const hosts = available ? [] : readSshConfigHosts();
         sshHostsProvider.setHosts(hosts);
         slurmStatusView.message = hosts.length > 0
-            ? 'Slurm is not available on this machine. Choose a host from your SSH config to connect to:'
+            ? 'No Slurm on this machine. Connect to a cluster:'
             : undefined;
         if (!available) {
             slurmStatusView.title = 'Slurm Not Available';
