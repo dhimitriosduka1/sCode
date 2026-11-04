@@ -89,10 +89,6 @@ export interface SlurmJob {
     submitScript: string;
     /** Path to the cached copy of the submit script (at submission time) */
     cachedSubmitScript?: string;
-    /** GPU name (if available) */
-    gpuName?: string;
-    /** GPU memory (if available) */
-    gpuMemory?: string;
     /** Number of GPUs allocated to this job */
     gpuCount?: number;
     /** GPU type (e.g., H200, A100) */
@@ -833,6 +829,52 @@ export function parseJobDetailsOutput(stdout: string): JobDetails & {
         memory,
         dependency: dependency !== 'N/A' ? dependency : undefined,
     };
+}
+
+/**
+ * squeue fields that give what `scontrol show job` does about a job, with the
+ * scontrol key each one stands for. squeue reports them for all of a user's jobs
+ * in one request, where scontrol takes one request per job, and controllers
+ * that rate-limit requests (`rl_enable`) make a burst of those wait for seconds.
+ */
+const SQUEUE_JOB_DETAIL_FIELDS: [squeueField: string, scontrolKey: string][] = [
+    ['StdOut', 'StdOut'],
+    ['StdErr', 'StdErr'],
+    ['Command', 'Command'],
+    ['WorkDir', 'WorkDir'],
+    ['NumNodes', 'NumNodes'],
+    ['tres-alloc', 'AllocTRES'],
+    ['tres-per-node', 'TresPerNode'],
+    ['Gres', 'Gres'],
+    ['Dependency', 'Dependency'],
+];
+
+/**
+ * squeue command listing the user's jobs with SQUEUE_JOB_DETAIL_FIELDS, `|` after
+ * each field. The `:` with no size keeps fields whole: a size, or no `:` (20),
+ * cuts them to that width, which would cut long log paths.
+ */
+export const SQUEUE_JOB_DETAILS_COMMAND = `squeue -u $USER --noheader -O "${['JobArrayID', ...SQUEUE_JOB_DETAIL_FIELDS.map(([field]) => field)].map((field) => `${field}:|`).join(',')}"`;
+
+/**
+ * Reads SQUEUE_JOB_DETAILS_COMMAND's output into each job's details, keyed by
+ * the job ID squeue's `%i` prints. Each row is turned into the Key=Value
+ * record scontrol prints, so one parser reads both.
+ */
+export function parseSqueueJobDetails(stdout: string): Map<string, ReturnType<typeof parseJobDetailsOutput>> {
+    const details = new Map<string, ReturnType<typeof parseJobDetailsOutput>>();
+    for (const line of stdout.split('\n')) {
+        const values = line.split('|');
+        // The job ID, each field, and what follows the last `|`
+        if (values.length !== SQUEUE_JOB_DETAIL_FIELDS.length + 2 || !values[0].trim()) {
+            continue;
+        }
+        const record = SQUEUE_JOB_DETAIL_FIELDS
+            .map(([, scontrolKey], index) => `${scontrolKey}=${values[index + 1].trim()}`)
+            .join('\n');
+        details.set(values[0].trim(), parseJobDetailsOutput(record));
+    }
+    return details;
 }
 
 function cloneSlurmJob(job: SlurmJob): SlurmJob {
@@ -1785,9 +1827,16 @@ export class SlurmService {
                 }
             }
 
-            // Fetch detailed info (stdout, stderr, command) from scontrol for all jobs in parallel
+            // Nothing to ask about, so no request either: the controller may rate-limit them
+            if (jobs.length === 0) {
+                return jobs;
+            }
+
+            // Detailed info (stdout, stderr, command) for all jobs in one request; scontrol
+            // per job only for jobs squeue did not report it for (e.g. an older Slurm)
+            const detailsById = await this.getAllJobDetails();
             await Promise.all(jobs.map(async (job) => {
-                const details = await this.getJobDetails(job.jobId);
+                const details = detailsById.get(job.jobId) ?? await this.getJobDetails(job.jobId);
                 // Expand any remaining placeholders in paths
                 job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
                 job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
@@ -1807,24 +1856,22 @@ export class SlurmService {
                 }
             }));
 
-            // Fetch GPU info once (for running jobs on this node)
-            const gpuInfo = await this.getGpuInfo();
-            if (gpuInfo) {
-                // Apply GPU info to running jobs
-                for (const job of jobs) {
-                    if (job.state === 'R') {
-                        job.gpuName = gpuInfo.gpuName;
-                        job.gpuMemory = gpuInfo.gpuMemory;
-                    }
-                }
-            }
-
             return jobs;
         } catch (error) {
             // If squeue is not available or fails, return empty array
             // This allows the extension to work gracefully when not on a cluster
             console.error('Failed to fetch SLURM jobs:', error);
             return [];
+        }
+    }
+
+    /** Every job's details from one squeue request; empty if squeue can't report them. */
+    private async getAllJobDetails(): Promise<Map<string, ReturnType<typeof parseJobDetailsOutput>>> {
+        try {
+            const { stdout } = await this.commandRunner(SQUEUE_JOB_DETAILS_COMMAND, { maxBuffer: 32 * 1024 * 1024 });
+            return parseSqueueJobDetails(stdout);
+        } catch {
+            return new Map();
         }
     }
 
@@ -1872,28 +1919,6 @@ export class SlurmService {
         }
 
         return this.availabilityProbe;
-    }
-
-    /**
-     * Get GPU information using nvidia-smi
-     * @returns Object with GPU name and memory, or null if unavailable
-     */
-    async getGpuInfo(): Promise<{ gpuName: string; gpuMemory: string } | null> {
-        try {
-            // Run both nvidia-smi commands in parallel
-            const [nameResult, memoryResult] = await Promise.all([
-                this.commandRunner('nvidia-smi --query-gpu=name --format=csv,noheader'),
-                this.commandRunner('nvidia-smi --query-gpu=memory.total --format=csv,noheader'),
-            ]);
-
-            const gpuName = nameResult.stdout.trim().split('\n')[0] || 'Unknown';
-            const gpuMemory = memoryResult.stdout.trim().split('\n')[0] || 'Unknown';
-
-            return { gpuName, gpuMemory };
-        } catch {
-            // nvidia-smi not available or failed
-            return null;
-        }
     }
 
     /**

@@ -13,7 +13,6 @@ describe('SlurmService command runner', () => {
         ['getJobs', (service) => service.getJobs()],
         ['getJobDetails', (service) => service.getJobDetails('123')],
         ['isAvailable', (service) => service.isAvailable()],
-        ['getGpuInfo', (service) => service.getGpuInfo()],
         ['getClusterHogs', (service) => service.getClusterHogs()],
         ['getClusterLeaderboard', (service) => service.getClusterLeaderboard()],
         ['getClusterAccountOverview', (service) => service.getClusterAccountOverview()],
