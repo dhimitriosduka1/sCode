@@ -50,9 +50,9 @@ describe('readSshConfigHosts', () => {
         ]);
     });
 
-    it('leaves out patterns, which name no single host', () => {
+    it('leaves out patterns, and values ssh would read as options, which name no single host', () => {
         const hosts = readHosts({
-            [CONFIG]: 'Host *\n  User ada\nHost gpu-?? !bastion *.internal cluster\n  HostName c.example.org',
+            [CONFIG]: 'Host *\n  User ada\nHost gpu-?? !bastion *.internal -oProxyCommand=evil cluster\n  HostName c.example.org',
         });
 
         assert.deepEqual(hosts, [{ alias: 'cluster', hostName: 'c.example.org' }]);

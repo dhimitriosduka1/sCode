@@ -18,7 +18,8 @@ import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmSer
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
-import { readSshConfigHosts } from './sshConfigHosts';
+import { formatSshHostTarget, readSshConfigHosts, SshConfigHost } from './sshConfigHosts';
+import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
 import { SshHostsProvider } from './sshHostsProvider';
 
 import * as fs from 'fs';
@@ -30,6 +31,7 @@ const autoRefreshScheduler = new AutoRefreshScheduler();
 const partitionRefreshScheduler = new AutoRefreshScheduler();
 const DEFAULT_PARTITION_REFRESH_MINUTES = 5;
 let statusBarItem: vscode.StatusBarItem;
+let activeClusterConnection: ClusterConnection | undefined;
 
 /**
  * Get autorefresh configuration
@@ -244,12 +246,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 
+    // Where Slurm commands run: this machine, or a cluster signed in to over SSH
+    const clusterConnection = new ClusterConnection();
+    activeClusterConnection = clusterConnection;
+    context.subscriptions.push(clusterConnection);
+
     // Create shared SlurmService with caches
     const slurmService = new SlurmService(
         jobPathCache,
         submitScriptCache,
-        undefined,
-        isMockModeEnabled
+        clusterConnection.run,
+        isMockModeEnabled,
+        () => clusterConnection.getUsername(),
     );
 
     // The job views show only once the probe finds Slurm. Until it answers, the
@@ -263,28 +271,118 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: sshHostsProvider,
     });
     context.subscriptions.push(sshHostsProvider, slurmStatusView);
-    const updateSlurmAvailabilityContext = async () => {
+    // `refreshViews` re-renders the job views for wherever commands now run. It
+    // runs while they are hidden: before they show when Slurm is found, after
+    // they hide when it is not, so none re-renders on screen against the wrong
+    // place (e.g. a disconnected cluster's views filling with error rows).
+    const updateSlurmAvailabilityContext = async (refreshViews?: () => void) => {
+        const connection = clusterConnection.getState();
+        if (connection.kind === 'connecting') {
+            // The host list stays up, with its progress bar, while signing in
+            slurmStatusView.message = `Connecting to ${connection.host.alias}…`;
+            return;
+        }
+
         const available = await slurmService.isAvailable();
+        // The connection changed while the probe ran; the newer update owns the view
+        if (clusterConnection.getState() !== connection) {
+            return;
+        }
+        // Staying signed in to a host without Slurm would leave nothing to show.
+        // A probe that failed because the connection went is a lost connection
+        // instead, which confirmConnected() reports by ending it.
+        if (!available && connection.kind === 'connected') {
+            if (await clusterConnection.confirmConnected() && clusterConnection.getState() === connection) {
+                void clusterConnection.disconnect(`Slurm was not found on ${connection.host.alias}.`);
+            }
+            return;
+        }
+
         // The hosts go in before the status flips, so the no-hosts message never flashes
         const hosts = available ? [] : readSshConfigHosts();
         sshHostsProvider.setHosts(hosts);
+        const notice = connection.kind === 'local' ? connection.notice : undefined;
         slurmStatusView.message = hosts.length > 0
-            ? 'No Slurm on this machine. Connect to a cluster:'
-            : undefined;
+            ? `${notice ?? 'No Slurm on this machine.'} Connect to a cluster:`
+            : notice;
         if (!available) {
             slurmStatusView.title = 'Slurm Not Available';
         }
-        void vscode.commands.executeCommand(
+        const setStatus = () => vscode.commands.executeCommand(
             'setContext',
             'slurmClusterManager.slurmStatus',
             available ? 'available' : 'unavailable',
         );
+        if (available) {
+            refreshViews?.();
+            await setStatus();
+        } else {
+            await setStatus();
+            refreshViews?.();
+        }
     };
     void updateSlurmAvailabilityContext();
     // Re-reads the SSH config, for hosts added since the view filled in
     context.subscriptions.push(vscode.commands.registerCommand('slurmStatus.refresh', () => {
+        clusterConnection.clearNotice();
         void updateSlurmAvailabilityContext();
     }));
+
+    // Rows pass their host when clicked; the inline Connect button passes the row
+    context.subscriptions.push(vscode.commands.registerCommand('slurmStatus.connect', (target?: SshConfigHost | { host?: SshConfigHost }) => {
+        const host = target && 'alias' in target ? target : target?.host;
+        if (host) {
+            void vscode.window.withProgress(
+                { location: { viewId: 'slurmStatus' } },
+                () => clusterConnection.connect(host),
+            );
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('slurmCluster.disconnect', async () => {
+        const connection = clusterConnection.getState();
+        if (connection.kind === 'connecting') {
+            // Cancelling a sign-in loses nothing, so it needs no confirmation
+            await clusterConnection.disconnect();
+            return;
+        }
+        if (connection.kind !== 'connected') {
+            return;
+        }
+        const choice = await vscode.window.showQuickPick(
+            [{
+                label: `$(debug-disconnect) Disconnect from ${connection.host.alias}`,
+                detail: 'Signs out of the host, also for other VS Code windows using this connection.',
+            }],
+            { placeHolder: `Slurm commands run on ${connection.host.alias} over SSH` },
+        );
+        if (choice) {
+            await clusterConnection.disconnect();
+        }
+    }));
+
+    // Says which cluster the sidebar shows, and disconnects from it when clicked
+    const clusterStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
+    context.subscriptions.push(clusterStatusBarItem);
+    const updateClusterStatusBar = (connection: ClusterConnectionState) => {
+        void vscode.commands.executeCommand('setContext', 'slurmClusterManager.connection', connection.kind);
+        // Mock data comes from nowhere, so naming a cluster would mislead
+        if (connection.kind === 'local' || isMockModeEnabled()) {
+            clusterStatusBarItem.hide();
+            return;
+        }
+        const target = formatSshHostTarget(connection.host);
+        if (connection.kind === 'connecting') {
+            clusterStatusBarItem.text = `$(sync~spin) ${connection.host.alias}`;
+            clusterStatusBarItem.tooltip = `Connecting to ${target}… Click to cancel.`;
+            clusterStatusBarItem.command = 'slurmCluster.disconnect';
+        } else {
+            clusterStatusBarItem.text = `$(remote) ${connection.host.alias}`;
+            clusterStatusBarItem.tooltip = `Slurm commands run on ${target} over SSH. Click to disconnect.`;
+            clusterStatusBarItem.command = 'slurmCluster.disconnect';
+        }
+        clusterStatusBarItem.show();
+    };
 
     // Track checked (selected) jobs for batch cancellation
     const checkedJobIds = new Set<string>();
@@ -723,6 +821,32 @@ export function activate(context: vscode.ExtensionContext) {
             : 'GPU Partition Usage auto-refresh turned off');
     });
 
+    // Everything shown came from wherever commands ran before, so it all goes:
+    // cached answers, checked jobs, partition data and every view
+    function resetClusterData() {
+        slurmService.resetClusterSession();
+        checkedJobIds.clear();
+        vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
+        partitionDataStore.clear();
+        void updateSlurmAvailabilityContext(() => {
+            void refreshPartitionData();
+            partitionUsageProvider.refresh();
+            slurmJobProvider.refresh();
+            jobHistoryProvider.refresh();
+            clusterOverviewProvider.refresh();
+            leaderboardProvider.refresh();
+        });
+    }
+
+    context.subscriptions.push(clusterConnection.onDidChange((connection) => {
+        updateClusterStatusBar(connection);
+        if (connection.kind === 'connecting') {
+            void updateSlurmAvailabilityContext();
+        } else {
+            resetClusterData();
+        }
+    }));
+
     // Listen for configuration changes to update autorefresh
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('slurmClusterManager.autoRefreshEnabled') ||
@@ -731,16 +855,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (e.affectsConfiguration('slurmClusterManager.mockMode')) {
-            void updateSlurmAvailabilityContext();
-            checkedJobIds.clear();
-            partitionDataStore.clear();
-            void refreshPartitionData();
-            partitionUsageProvider.refresh();
-            vscode.commands.executeCommand('setContext', 'slurmJobs.hasCheckedJobs', false);
-            slurmJobProvider.refresh();
-            jobHistoryProvider.refresh();
-            clusterOverviewProvider.refresh();
-            leaderboardProvider.refresh();
+            updateClusterStatusBar(clusterConnection.getState());
+            resetClusterData();
         }
 
         if (e.affectsConfiguration('slurmClusterManager.partitionRefreshInterval')) {
@@ -1596,8 +1712,10 @@ export function activate(context: vscode.ExtensionContext) {
  * Extension deactivation
  * Called when the extension is deactivated
  */
-export function deactivate() {
+export async function deactivate(): Promise<void> {
     stopAutoRefresh();
+    // Sign out of a cluster this window signed in to, rather than leave the connection open
+    await activeClusterConnection?.shutdown();
     console.log('SLURM Cluster Manager deactivated');
 }
 

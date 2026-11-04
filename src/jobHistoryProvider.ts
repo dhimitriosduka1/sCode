@@ -311,7 +311,12 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             if (!this.hasFetchedJobs) {
                 // Check if SLURM is available (cache the result)
                 if (this.cachedSlurmAvailable === null) {
-                    this.cachedSlurmAvailable = await this.slurmService.isAvailable();
+                    const available = await this.slurmService.isAvailable();
+                    // A refresh landed meanwhile, possibly for another cluster
+                    if (generation !== this.generation) {
+                        return [];
+                    }
+                    this.cachedSlurmAvailable = available;
                 }
                 if (!this.cachedSlurmAvailable) {
                     return [new HistoryMessageItem('SLURM not available', 'warning')];
@@ -421,8 +426,9 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 jobName: job.name,
                 nodes: job.nodes,
             });
-            job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes);
-            job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes);
+            const username = this.slurmService.getUsername();
+            job.stdoutPath = expandPathPlaceholders(paths.stdoutPath, job.jobId, job.name, job.nodes, undefined, username);
+            job.stderrPath = expandPathPlaceholders(paths.stderrPath, job.jobId, job.name, job.nodes, undefined, username);
         }
 
         // Add stdout/stderr paths if available (clickable)

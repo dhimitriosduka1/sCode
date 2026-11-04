@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getCurrentUsername, SlurmService } from './slurmService';
+import { SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import {
@@ -76,14 +76,18 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
     private cachedEntries: LeaderboardEntry[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
+    /** Bumped by refresh(), so a fetch started before it cannot fill the cache with old data. */
+    private generation = 0;
     private currentUsernameProvider: () => string | undefined;
 
-    constructor(slurmService: SlurmService, currentUsernameProvider: () => string | undefined = getCurrentUsername) {
+    constructor(slurmService: SlurmService, currentUsernameProvider?: () => string | undefined) {
         this.slurmService = slurmService;
-        this.currentUsernameProvider = currentUsernameProvider;
+        // The service knows who the user is on the cluster commands run on
+        this.currentUsernameProvider = currentUsernameProvider ?? (() => slurmService.getUsername());
     }
 
     refresh(): void {
+        this.generation++;
         this.cachedEntries = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
@@ -113,12 +117,17 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
         try {
             // Fetch data once until manual refresh, even when the result is empty.
             if (!this.hasFetchedEntries) {
+                const generation = this.generation;
                 const [entries, fairShare] = await Promise.all([
                     this.slurmService.getClusterLeaderboard(),
                     isFairShareEnabled()
                         ? this.slurmService.getFairShare()
                         : Promise.resolve({ entries: [], available: false }),
                 ]);
+                // A refresh landed while fetching; the render it triggered owns the cache
+                if (generation !== this.generation) {
+                    return [];
+                }
 
                 const fairShareLookup = buildFairShareLookup(fairShare.entries);
                 this.cachedEntries = entries.map(entry => ({

@@ -139,8 +139,12 @@ function splitSshConfigArgs(value: string): string[] {
     return args;
 }
 
+/**
+ * Whether a Host value names no single host to list: a pattern (`*`, `?`,
+ * `!negated`), or something ssh would read as an option (`-oProxyCommand=…`).
+ */
 function isHostPattern(alias: string): boolean {
-    return alias.includes('*') || alias.includes('?') || alias.startsWith('!');
+    return alias.includes('*') || alias.includes('?') || alias.startsWith('!') || alias.startsWith('-');
 }
 
 function applyHostSetting(host: SshConfigHost, keyword: string, value: string): void {

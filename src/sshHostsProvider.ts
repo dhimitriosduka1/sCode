@@ -27,6 +27,7 @@ class SshHostItem extends vscode.TreeItem {
         this.tooltip = new vscode.MarkdownString(formatSshHostTooltipMarkdown(host));
         this.iconPath = new vscode.ThemeIcon('server');
         this.contextValue = 'sshHost';
+        this.command = { command: 'slurmStatus.connect', title: 'Connect', arguments: [host] };
     }
 }
 

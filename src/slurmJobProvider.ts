@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getCurrentUsername, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -403,12 +403,13 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         slurmService: SlurmService,
         scriptCache?: SubmitScriptCache,
         checkedJobIds?: Set<string>,
-        currentUsernameProvider: () => string | undefined = getCurrentUsername,
+        currentUsernameProvider?: () => string | undefined,
     ) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.checkedJobIds = checkedJobIds;
-        this.currentUsernameProvider = currentUsernameProvider;
+        // The service knows who the user is on the cluster commands run on
+        this.currentUsernameProvider = currentUsernameProvider ?? (() => slurmService.getUsername());
     }
 
     /**

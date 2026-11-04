@@ -69,10 +69,13 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
+    /** Bumped by refresh(), so a fetch started before it cannot fill the cache with old data. */
+    private generation = 0;
 
     constructor(private readonly slurmService: SlurmService) {}
 
     refresh(): void {
+        this.generation++;
         this.cachedEntries = [];
         this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
@@ -95,10 +98,17 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                [this.cachedEntries, this.cachedMaintenanceWindows] = await Promise.all([
+                const generation = this.generation;
+                const [entries, maintenanceWindows] = await Promise.all([
                     this.slurmService.getClusterAccountOverview(),
                     this.slurmService.getMaintenanceWindows(),
                 ]);
+                // A refresh landed while fetching; the render it triggered owns the cache
+                if (generation !== this.generation) {
+                    return [];
+                }
+                this.cachedEntries = entries;
+                this.cachedMaintenanceWindows = maintenanceWindows;
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }

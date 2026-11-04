@@ -26,6 +26,8 @@ export interface PartitionDataSource {
 export class PartitionDataStore {
     private current: PartitionSnapshot | undefined;
     private pending: Promise<PartitionSnapshot> | undefined;
+    /** Bumped by clear(), so a fetch started before it cannot bring old data back. */
+    private generation = 0;
     private readonly listeners = new Set<() => void>();
 
     constructor(private readonly source: PartitionDataSource) {}
@@ -37,9 +39,15 @@ export class PartitionDataStore {
 
     /** Re-queries Slurm and replaces the snapshot, joining a refresh already in flight. */
     refresh(): Promise<PartitionSnapshot> {
-        this.pending ??= this.fetch().finally(() => {
-            this.pending = undefined;
-        });
+        if (!this.pending) {
+            const pending = this.fetch(this.generation).finally(() => {
+                // A clear() may have replaced it with a newer fetch already
+                if (this.pending === pending) {
+                    this.pending = undefined;
+                }
+            });
+            this.pending = pending;
+        }
         return this.pending;
     }
 
@@ -48,9 +56,15 @@ export class PartitionDataStore {
         return this.current ? Promise.resolve(this.current) : this.refresh();
     }
 
-    /** Drops the snapshot, e.g. when mock mode switches the data source. */
+    /**
+     * Drops the snapshot, e.g. when commands start running on another cluster.
+     * A refresh still in flight is abandoned: its result belongs to where the
+     * commands ran before, so the next refresh starts afresh.
+     */
     clear(): void {
+        this.generation++;
         this.current = undefined;
+        this.pending = undefined;
     }
 
     /** Subscribes to snapshot replacements; returns an unsubscribe function. */
@@ -59,7 +73,7 @@ export class PartitionDataStore {
         return () => this.listeners.delete(listener);
     }
 
-    private async fetch(): Promise<PartitionSnapshot> {
+    private async fetch(generation: number): Promise<PartitionSnapshot> {
         const [usage, cpuUsage] = await this.source.isAvailable()
             ? await Promise.all([this.source.getPartitionUsage(), this.source.getCpuPartitionUsage()])
             : [{ entries: [], clusterAllocatedGpus: 0, clusterAvailableGpus: 0 }, []];
@@ -69,6 +83,11 @@ export class PartitionDataStore {
             loads: buildPartitionLoads(usage.entries, cpuUsage),
             fetchedAt: new Date(),
         };
+
+        // Cleared while fetching: whoever waited gets this answer, but it is not kept
+        if (generation !== this.generation) {
+            return snapshot;
+        }
 
         // A cluster always has partitions, so an empty answer means the queries
         // failed; keep showing the last good data rather than blanking everything
