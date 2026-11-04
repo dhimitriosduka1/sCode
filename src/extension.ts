@@ -250,6 +250,28 @@ export function activate(context: vscode.ExtensionContext) {
         isMockModeEnabled
     );
 
+    // The job views show only once the probe finds Slurm. Until it answers, the
+    // status view says it is checking, which keeps the sidebar's icon in place (VS
+    // Code hides a container with no visible views) without showing views that may
+    // turn out to have nothing to show. If Slurm is missing, the same view says so.
+    // Its messages are welcome content, so its provider has nothing to render.
+    const slurmStatusView = vscode.window.createTreeView<vscode.TreeItem>('slurmStatus', {
+        treeDataProvider: { getTreeItem: (item) => item, getChildren: () => [] },
+    });
+    context.subscriptions.push(slurmStatusView);
+    const updateSlurmAvailabilityContext = async () => {
+        const available = await slurmService.isAvailable();
+        if (!available) {
+            slurmStatusView.title = 'Slurm Not Available';
+        }
+        void vscode.commands.executeCommand(
+            'setContext',
+            'slurmClusterManager.slurmStatus',
+            available ? 'available' : 'unavailable',
+        );
+    };
+    void updateSlurmAvailabilityContext();
+
     // Track checked (selected) jobs for batch cancellation
     const checkedJobIds = new Set<string>();
 
@@ -695,6 +717,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (e.affectsConfiguration('slurmClusterManager.mockMode')) {
+            void updateSlurmAvailabilityContext();
             checkedJobIds.clear();
             partitionDataStore.clear();
             void refreshPartitionData();
