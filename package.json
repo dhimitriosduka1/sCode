@@ -102,11 +102,16 @@
       },
       {
         "view": "slurmStatus",
-        "contents": "Slurm is not available on this machine: the squeue command was not found.",
+        "contents": "Slurm is not available on this machine: the squeue command was not found. No hosts to connect to were found in ~/.ssh/config.",
         "when": "slurmClusterManager.slurmStatus == unavailable"
       }
     ],
     "commands": [
+      {
+        "command": "slurmStatus.refresh",
+        "title": "Refresh SSH Hosts",
+        "icon": "$(refresh)"
+      },
       {
         "command": "slurmPartitionUsage.refresh",
         "title": "Refresh GPU Partition Usage",
@@ -297,6 +302,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "slurmStatus.refresh",
+          "when": "view == slurmStatus && slurmClusterManager.slurmStatus == unavailable",
+          "group": "navigation@1"
+        },
         {
           "command": "slurmPartitionUsage.refresh",
           "when": "view == slurmPartitionUsage",

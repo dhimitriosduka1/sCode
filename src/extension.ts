@@ -18,6 +18,8 @@ import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmSer
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
+import { readSshConfigHosts } from './sshConfigHosts';
+import { SshHostsProvider } from './sshHostsProvider';
 
 import * as fs from 'fs';
 
@@ -253,14 +255,22 @@ export function activate(context: vscode.ExtensionContext) {
     // The job views show only once the probe finds Slurm. Until it answers, the
     // status view says it is checking, which keeps the sidebar's icon in place (VS
     // Code hides a container with no visible views) without showing views that may
-    // turn out to have nothing to show. If Slurm is missing, the same view says so.
-    // Its messages are welcome content, so its provider has nothing to render.
+    // turn out to have nothing to show. If Slurm is missing, the same view says so
+    // and lists the SSH config's hosts to connect to instead. The checking and
+    // no-hosts messages are welcome content, which shows while the list is empty.
+    const sshHostsProvider = new SshHostsProvider();
     const slurmStatusView = vscode.window.createTreeView<vscode.TreeItem>('slurmStatus', {
-        treeDataProvider: { getTreeItem: (item) => item, getChildren: () => [] },
+        treeDataProvider: sshHostsProvider,
     });
-    context.subscriptions.push(slurmStatusView);
+    context.subscriptions.push(sshHostsProvider, slurmStatusView);
     const updateSlurmAvailabilityContext = async () => {
         const available = await slurmService.isAvailable();
+        // The hosts go in before the status flips, so the no-hosts message never flashes
+        const hosts = available ? [] : readSshConfigHosts();
+        sshHostsProvider.setHosts(hosts);
+        slurmStatusView.message = hosts.length > 0
+            ? 'Slurm is not available on this machine. Choose a host from your SSH config to connect to:'
+            : undefined;
         if (!available) {
             slurmStatusView.title = 'Slurm Not Available';
         }
@@ -271,6 +281,10 @@ export function activate(context: vscode.ExtensionContext) {
         );
     };
     void updateSlurmAvailabilityContext();
+    // Re-reads the SSH config, for hosts added since the view filled in
+    context.subscriptions.push(vscode.commands.registerCommand('slurmStatus.refresh', () => {
+        void updateSlurmAvailabilityContext();
+    }));
 
     // Track checked (selected) jobs for batch cancellation
     const checkedJobIds = new Set<string>();
