@@ -247,10 +247,10 @@ describe('SlurmService mock mode', () => {
     it('can cancel all running jobs in mock mode', async () => {
         const service = createMockService();
 
-        // Check initial running jobs count (only 1 running job: 91001)
+        // Check initial running jobs count (91001 and 91006)
         let jobs = await service.getJobs();
         let running = jobs.filter(j => j.state === 'R');
-        assert.equal(running.length, 1);
+        assert.equal(running.length, 2);
 
         // Cancel all running
         const cancelResult = await service.cancelAllRunningJobs();

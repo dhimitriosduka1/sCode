@@ -471,7 +471,7 @@ export function calculateProgress(elapsed: string, limit: string): number {
 /**
  * Generate a visual progress bar string
  */
-export function generateProgressBar(progress: number, width: number = 10): string {
+export function generateProgressBar(progress: number, width: number = 10, trailingLabel?: string): string {
     if (progress < 0) {
         return '';
     }
@@ -484,7 +484,103 @@ export function generateProgressBar(progress: number, width: number = 10): strin
     const emptyChar = '○';   // Empty circle
     const progressBar = filledChar.repeat(filled) + emptyChar.repeat(empty);
 
-    return `${progressBar} ${progress}%`;
+    return `${progressBar} ${trailingLabel ?? `${progress}%`}`;
+}
+
+/**
+ * Progress point at which a running job's wall-clock limit stops being
+ * background information and becomes the thing worth acting on — checkpointing,
+ * requeueing, or chaining a continuation before Slurm kills the job.
+ */
+export const TIME_LIMIT_WARNING_PROGRESS = 90;
+
+/**
+ * Hard cap on how far ahead the warning appears.
+ *
+ * The progress gate alone scales with the limit, so a week-long job would turn
+ * orange with seventeen hours still to run and stay that way for most of a day.
+ * This binds only for limits over about twenty hours, where 10% of the limit is
+ * itself longer than this; shorter jobs are governed by the progress gate alone.
+ */
+export const TIME_LIMIT_WARNING_MAX_REMAINING_SECONDS = 2 * 60 * 60;
+
+/**
+ * Seconds left before a running job reaches its wall-clock limit, or -1 when
+ * that cannot be known (no limit, or times Slurm did not report).
+ *
+ * Clamped at 0: `squeue` can report an elapsed time a tick past the limit while
+ * the job is being killed, and "-4s left" is not worth rendering.
+ */
+export function calculateRemainingSeconds(elapsed: string, limit: string): number {
+    const elapsedSec = parseTimeToSeconds(elapsed);
+    const limitSec = parseTimeToSeconds(limit);
+
+    if (elapsedSec < 0 || limitSec <= 0) {
+        return -1;
+    }
+
+    return Math.max(0, limitSec - elapsedSec);
+}
+
+/**
+ * Compact remaining-time label, carrying the two largest non-zero units.
+ *
+ * Near the wall clock the useful unit is minutes, and under a minute seconds,
+ * so smaller units are dropped rather than padded out to `0d 0h 23m 5s`.
+ */
+export function formatRemainingTime(seconds: number): string {
+    if (seconds < 0) {
+        return '';
+    }
+
+    if (seconds < 60) {
+        return `${seconds}s left`;
+    }
+
+    const totalMinutes = Math.floor(seconds / 60);
+
+    if (totalMinutes < 60) {
+        return `${totalMinutes}m left`;
+    }
+
+    const totalHours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (totalHours < 24) {
+        return minutes > 0 ? `${totalHours}h ${minutes}m left` : `${totalHours}h left`;
+    }
+
+    const days = Math.floor(totalHours / 24);
+    const hours = totalHours % 24;
+
+    return hours > 0 ? `${days}d ${hours}h left` : `${days}d left`;
+}
+
+/**
+ * Whether a running job is close enough to its wall-clock limit that the row
+ * should say so.
+ *
+ * Both gates are needed, because each covers what the other gets wrong: the
+ * proportion alone would leave a week-long job warning for its last seventeen
+ * hours, while a flat remaining-time cap alone would warn for the whole of a
+ * twenty-minute job.
+ *
+ * False for anything that is not running and for jobs without a usable limit,
+ * so an UNLIMITED job never warns.
+ */
+export function isNearTimeLimit(job: SlurmJob): boolean {
+    if (job.state !== 'R') {
+        return false;
+    }
+
+    if (calculateProgress(job.time, job.timeLimit) < TIME_LIMIT_WARNING_PROGRESS) {
+        return false;
+    }
+
+    // Passing the progress gate already implies a parseable elapsed time and a
+    // real limit, so the remainder here is never the -1 "cannot tell" case.
+    const remaining = calculateRemainingSeconds(job.time, job.timeLimit);
+    return remaining <= TIME_LIMIT_WARNING_MAX_REMAINING_SECONDS;
 }
 
 /**

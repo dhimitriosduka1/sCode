@@ -2,6 +2,11 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Remaining Time On Jobs Near Their Wall Clock**: A running job that has used 90% or more of its time limit, and has at most two hours of it left, now says how long is left — `●●●●●●●● 3m left` in place of `●●●●●●●● 95%` — and its icon turns orange rather than the same green as a job with hours to go. The progress bar already carried the proportion, so the percentage gives up its slot instead of crowding in beside it: once a job is close to being killed, the number worth reading is the one you act on, to checkpoint, requeue, or chain a continuation. The label carries the two largest non-zero units (`3m left`, `1h 20m left`, `2d 4h left`), and a job whose elapsed time has passed its limit while Slurm kills it reads `0s left` rather than a negative remainder. Both conditions are needed, because each covers what the other gets wrong: the proportion alone would leave a week-long job orange for its last seventeen hours, while a flat remaining-time cap alone would warn for the whole of a twenty-minute job. The cap only binds for limits over about twenty hours, so ordinary job lengths are governed by the proportion as before. Jobs submitted without a wall clock (`UNLIMITED`) never warn, since they cannot approach one. The job's tooltip gains a matching Remaining row, shown only while the warning applies.
+
 ## [1.8.0] - 2026-11-04
 
 ### Added

@@ -4,19 +4,25 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
     calculateProgress,
+    calculateRemainingSeconds,
     expandPathPlaceholders,
+    formatRemainingTime,
     formatStartTime,
     generateProgressBar,
     getHistoryStateInfo,
+    isNearTimeLimit,
     getStateDescription,
     hasUnresolvedSlurmPathPlaceholders,
     normalizeOpenableFilePath,
     normalizeSlurmPathValue,
     parseJobDetailsOutput,
     parseTimeToSeconds,
+    TIME_LIMIT_WARNING_MAX_REMAINING_SECONDS,
+    TIME_LIMIT_WARNING_PROGRESS,
     cleanJobIdForScontrol,
     extractBaseJobId,
     resolvePathWithoutPlaceholders,
+    SlurmJob,
 } from '../slurmService';
 
 describe('Slurm service helper functions', () => {
@@ -280,5 +286,134 @@ describe('Slurm service helper functions', () => {
             resolvePathWithoutPlaceholders('/absolute/logs/%x-%j.out', '/work'),
             '/absolute/logs/%x-%j.out'
         );
+    });
+});
+
+describe('calculateRemainingSeconds', () => {
+    it('returns the seconds left before the wall-clock limit', () => {
+        assert.equal(calculateRemainingSeconds('00:57:00', '01:00:00'), 180);
+        assert.equal(calculateRemainingSeconds('6-12:00:00', '7-00:00:00'), 43200);
+    });
+
+    // squeue can report an elapsed time a tick past the limit while the job is
+    // being killed; a negative remainder is not worth rendering.
+    it('clamps a job already past its limit to zero', () => {
+        assert.equal(calculateRemainingSeconds('01:00:30', '01:00:00'), 0);
+    });
+
+    it('reports no remainder without a usable limit', () => {
+        assert.equal(calculateRemainingSeconds('00:57:00', 'UNLIMITED'), -1);
+        assert.equal(calculateRemainingSeconds('00:57:00', 'N/A'), -1);
+        assert.equal(calculateRemainingSeconds('N/A', '01:00:00'), -1);
+    });
+});
+
+describe('formatRemainingTime', () => {
+    it('counts seconds under a minute', () => {
+        assert.equal(formatRemainingTime(0), '0s left');
+        assert.equal(formatRemainingTime(59), '59s left');
+    });
+
+    it('counts whole minutes under an hour', () => {
+        assert.equal(formatRemainingTime(60), '1m left');
+        assert.equal(formatRemainingTime(3599), '59m left');
+    });
+
+    it('carries hours with minutes, dropping a zero remainder', () => {
+        assert.equal(formatRemainingTime(3600), '1h left');
+        assert.equal(formatRemainingTime(3660), '1h 1m left');
+        assert.equal(formatRemainingTime(86399), '23h 59m left');
+    });
+
+    it('carries days with hours for long wall clocks', () => {
+        assert.equal(formatRemainingTime(86400), '1d left');
+        assert.equal(formatRemainingTime(90000), '1d 1h left');
+        assert.equal(formatRemainingTime(7 * 86400), '7d left');
+    });
+
+    it('renders nothing for an unknown remainder', () => {
+        assert.equal(formatRemainingTime(-1), '');
+    });
+});
+
+describe('isNearTimeLimit', () => {
+    function runningJob(time: string, timeLimit: string, state: string = 'R'): SlurmJob {
+        return {
+            jobId: '91001',
+            name: 'train-transformer',
+            state,
+            time,
+            partition: 'gpu',
+            nodes: 'node-a',
+            stdoutPath: '/tmp/out',
+            stderrPath: '/tmp/err',
+            timeLimit,
+            startTime: 'N/A',
+            workDir: '/tmp',
+            submitScript: '/tmp/job.slurm',
+        };
+    }
+
+    it('warns from the threshold onwards', () => {
+        assert.equal(TIME_LIMIT_WARNING_PROGRESS, 90);
+        assert.equal(isNearTimeLimit(runningJob('00:54:00', '01:00:00')), true);
+        assert.equal(isNearTimeLimit(runningJob('00:59:00', '01:00:00')), true);
+    });
+
+    it('stays quiet below the threshold', () => {
+        assert.equal(isNearTimeLimit(runningJob('00:53:00', '01:00:00')), false);
+        assert.equal(isNearTimeLimit(runningJob('00:21:00', '01:00:00')), false);
+    });
+
+    // The progress gate scales with the limit, so without a cap a week-long job
+    // would warn with seventeen hours still to run.
+    it('stays quiet on a long job that is proportionally near its limit', () => {
+        assert.equal(TIME_LIMIT_WARNING_MAX_REMAINING_SECONDS, 7200);
+        // 93% of seven days, but half a day still to run.
+        assert.equal(isNearTimeLimit(runningJob('6-12:00:00', '7-00:00:00')), false);
+    });
+
+    it('warns on a long job once it is actually within the cap', () => {
+        // 7 days less 90 minutes.
+        assert.equal(isNearTimeLimit(runningJob('6-22:30:00', '7-00:00:00')), true);
+    });
+
+    it('treats the cap as inclusive', () => {
+        // Exactly two hours left, and past the progress gate on a 24h limit.
+        assert.equal(isNearTimeLimit(runningJob('22:00:00', '1-00:00:00')), true);
+        assert.equal(isNearTimeLimit(runningJob('21:59:00', '1-00:00:00')), false);
+    });
+
+    // Below roughly a twenty-hour limit, 10% of the limit is already under the
+    // cap, so the cap never binds and the progress gate decides alone.
+    it('leaves ordinary job lengths to the progress gate', () => {
+        assert.equal(isNearTimeLimit(runningJob('05:46:00', '06:00:00')), true);
+        assert.equal(isNearTimeLimit(runningJob('00:54:00', '01:00:00')), true);
+        assert.equal(isNearTimeLimit(runningJob('00:53:00', '01:00:00')), false);
+    });
+
+    // A job with no wall clock can never approach one.
+    it('never warns without a usable limit', () => {
+        assert.equal(isNearTimeLimit(runningJob('10-00:00:00', 'UNLIMITED')), false);
+        assert.equal(isNearTimeLimit(runningJob('00:59:00', 'N/A')), false);
+    });
+
+    it('only applies to running jobs', () => {
+        assert.equal(isNearTimeLimit(runningJob('00:59:00', '01:00:00', 'PD')), false);
+        assert.equal(isNearTimeLimit(runningJob('00:59:00', '01:00:00', 'CG')), false);
+    });
+});
+
+describe('generateProgressBar trailing label', () => {
+    it('shows the percentage by default', () => {
+        assert.equal(generateProgressBar(95, 8), '●●●●●●●● 95%');
+    });
+
+    it('replaces the percentage when given a label', () => {
+        assert.equal(generateProgressBar(95, 8, '3m left'), '●●●●●●●● 3m left');
+    });
+
+    it('still renders nothing for an uncomputable progress', () => {
+        assert.equal(generateProgressBar(-1, 8, '3m left'), '');
     });
 });
