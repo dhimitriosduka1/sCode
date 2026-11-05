@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -153,6 +153,13 @@ export class SlurmJobItem extends vscode.TreeItem {
             }
         }
 
+        if (isNearTimeLimit(this.job)) {
+            details.push({
+                label: 'Remaining',
+                value: formatRemainingTime(calculateRemainingSeconds(this.job.time, this.job.timeLimit)),
+            });
+        }
+
         if (this.job.state === 'R') {
             const progress = calculateProgress(this.job.time, this.job.timeLimit);
             if (progress >= 0) {
@@ -192,6 +199,12 @@ export class SlurmJobItem extends vscode.TreeItem {
         // Held pending jobs take priority — show lock icon
         if (this.job.state === 'PD' && isJobHeld(this.job.pendingReason)) {
             return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange'));
+        }
+
+        // A running job about to be killed by its wall clock reads as healthy
+        // green otherwise, which is the one case where that is misleading.
+        if (isNearTimeLimit(this.job)) {
+            return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.orange'));
         }
 
         switch (this.job.state) {

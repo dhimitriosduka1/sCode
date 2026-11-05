@@ -39,6 +39,27 @@ export function createMockJobs(): SlurmJob[] {
             memory: '128G',
         },
         {
+            // Past the wall-clock warning threshold (96% of its limit), so mock
+            // mode shows the remaining-time row and its orange icon next to the
+            // ordinary running job above.
+            jobId: '91006',
+            name: 'finetune-llm',
+            state: 'R',
+            time: '05:46:00',
+            account: 'atlas_lab',
+            partition: 'h200',
+            nodes: 'gpu-node[04]',
+            stdoutPath: '/work/vision_lab/runs/finetune-llm/logs/91006.out',
+            stderrPath: '/work/vision_lab/runs/finetune-llm/logs/91006.err',
+            timeLimit: '06:00:00',
+            startTime: '2026-04-28T03:14:00.000Z',
+            workDir: '/work/vision_lab/runs/finetune-llm',
+            submitScript: '/work/vision_lab/slurm/finetune-llm.sbatch',
+            gpuCount: 4,
+            gpuType: 'H200',
+            memory: '256G',
+        },
+        {
             jobId: '91002',
             name: 'large-sweep',
             state: 'PD',

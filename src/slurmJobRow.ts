@@ -1,9 +1,12 @@
 import {
     calculateProgress,
+    calculateRemainingSeconds,
+    formatRemainingTime,
     formatStartTime,
     generateProgressBar,
     getPendingReasonInfo,
     getStateDescription,
+    isNearTimeLimit,
     SlurmJob,
 } from './slurmService';
 
@@ -17,9 +20,17 @@ export function getSlurmJobRowParts(job: SlurmJob): SlurmJobRowParts {
         const progress = calculateProgress(job.time, job.timeLimit);
         if (progress >= 0) {
             const label = `${job.name}  ${job.jobId}`;
+            // Close to the wall clock the percentage stops being the number
+            // worth reading: what matters is how long is left to checkpoint or
+            // requeue. The bar still carries the proportion, so the percentage
+            // gives up its slot rather than crowding in beside it.
+            const remaining = isNearTimeLimit(job)
+                ? formatRemainingTime(calculateRemainingSeconds(job.time, job.timeLimit))
+                : undefined;
+
             return {
                 label,
-                description: generateProgressBar(progress, 8),
+                description: generateProgressBar(progress, 8, remaining),
             };
         }
 
