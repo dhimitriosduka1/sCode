@@ -12,6 +12,7 @@ import {
     rankJobAccounts,
 } from './fairShareRanking';
 import { getSlurmJobRowParts } from './slurmJobRow';
+import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -61,6 +62,8 @@ export class StatusCategoryItem extends vscode.TreeItem {
         public readonly category: StatusCategory,
         public readonly jobCount: number,
         public readonly jobs?: SlurmJob[],
+        /** The whole queue's dependencies as loaded with `jobs`, since a job's row names the jobs it waits for. */
+        public readonly dependencies?: QueueDependencies,
     ) {
         const info = CATEGORIES[category];
         super(
@@ -94,13 +97,14 @@ export class SlurmJobItem extends vscode.TreeItem {
         public readonly job: SlurmJob,
         isChecked: boolean = false,
         private readonly priorityFactors?: JobPriorityFactors,
+        dependency?: DependencyStatus,
     ) {
-        const rowParts = getSlurmJobRowParts(job);
+        const rowParts = getSlurmJobRowParts(job, dependency);
         super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
 
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
-        this.iconPath = this.getStateIcon();
+        this.iconPath = this.getStateIcon(dependency);
         // Use pending-specific context values so package.json can show the right inline actions
         const isMainJobArray = job.jobId.includes('[');
         const isHeld = isJobHeld(job.pendingReason);
@@ -195,7 +199,13 @@ export class SlurmJobItem extends vscode.TreeItem {
         }));
     }
 
-    private getStateIcon(): vscode.ThemeIcon {
+    private getStateIcon(dependency: DependencyStatus | undefined): vscode.ThemeIcon {
+        // A job that can never start is the one to act on, held or not: releasing
+        // it would not help, and left alone it waits in the queue forever
+        if (dependency?.kind === 'never') {
+            return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'));
+        }
+
         // Held pending jobs take priority — show lock icon
         if (this.job.state === 'PD' && isJobHeld(this.job.pendingReason)) {
             return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange'));
@@ -402,6 +412,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private scriptCache?: SubmitScriptCache;
     private checkedJobIds?: Set<string>;
     private cachedJobs: SlurmJob[] = [];
+    private cachedDependencies: QueueDependencies | undefined;
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private cachedHogs: ClusterHogSummary | undefined;
     private cachedFairShareSummary: FairShareSummary | undefined;
@@ -438,6 +449,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private reload(): void {
         this.cachedJobs = [];
+        this.cachedDependencies = undefined;
         this.cachedMaintenanceWindows = [];
         this.cachedHogs = undefined;
         this.cachedFairShareSummary = undefined;
@@ -467,6 +479,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      */
     getSearchFilter(): string {
         return this.searchFilter;
+    }
+
+    /**
+     * Dependencies among the jobs the view shows, for cancelling: undefined
+     * until they have loaded, or while a refresh reloads them.
+     */
+    getQueueDependencies(): QueueDependencies | undefined {
+        return this.cachedDependencies;
     }
 
     /**
@@ -532,6 +552,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 ]);
 
                 this.cachedJobs = jobs;
+                this.cachedDependencies = new QueueDependencies(jobs);
                 this.cachedMaintenanceWindows = maintenanceWindows;
 
                 // Clean up stale checked jobs (jobs that no longer exist)
@@ -646,7 +667,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 const jobCount = jobsInCat.length;
 
                 if (jobCount > 0) {
-                    categories.push(new StatusCategoryItem(categoryKey, jobCount, jobsInCat));
+                    categories.push(new StatusCategoryItem(categoryKey, jobCount, jobsInCat, this.cachedDependencies));
                 }
             }
 
@@ -668,7 +689,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return jobs.map(job => new SlurmJobItem(
             job,
             this.checkedJobIds?.has(job.jobId) ?? false,
-            findJobPriorityFactors(this.cachedPriorityFactors, job.jobId)
+            findJobPriorityFactors(this.cachedPriorityFactors, job.jobId),
+            category.dependencies?.describe(job),
         ));
     }
 

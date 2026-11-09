@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
 import { getSlurmJobRowParts } from '../slurmJobRow';
+import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
     return {
@@ -79,5 +80,43 @@ describe('Slurm job row formatting', () => {
             label: 'train-transformer',
             description: '91001 • Waiting on priority • Starts: ~TBD • 🔗',
         });
+    });
+});
+
+describe('Slurm job row dependencies', () => {
+    const pending = (overrides: Partial<SlurmJob> = {}) => job({
+        jobId: '1005',
+        name: 'eval',
+        state: 'PD',
+        pendingReason: 'Dependency',
+        ...overrides,
+    });
+    const describeRow = (overrides: Partial<SlurmJob>, dependency: DependencyStatus) =>
+        getSlurmJobRowParts(pending(overrides), dependency).description;
+
+    // The jobs' names say more than "Waiting on dependency", and Slurm has no
+    // start estimate for a job held back by another
+    it('names the jobs a pending job waits for in place of the reason and start', () => {
+        assert.equal(describeRow({}, { kind: 'waiting', jobs: ['train-a'], anyOf: false }), '1005 • after train-a');
+        assert.equal(describeRow({}, { kind: 'waiting', jobs: ['train-a', 'train-b'], anyOf: false }), '1005 • after train-a + train-b');
+        assert.equal(describeRow({}, { kind: 'waiting', jobs: ['train-a', 'train-b'], anyOf: true }), '1005 • after train-a or train-b');
+    });
+
+    it('counts three or more jobs rather than naming them', () => {
+        assert.equal(describeRow({}, { kind: 'waiting', jobs: ['a', 'b', 'c'], anyOf: false }), '1005 • after 3 jobs');
+        assert.equal(describeRow({}, { kind: 'waiting', jobs: ['a', 'b', 'c'], anyOf: true }), '1005 • after any of 3 jobs');
+    });
+
+    it('keeps a hold, which applies on top of the dependency', () => {
+        assert.equal(
+            describeRow({ pendingReason: 'JobHeldUser' }, { kind: 'waiting', jobs: ['train-a'], anyOf: false }),
+            '1005 • Held by user • after train-a',
+        );
+    });
+
+    it('says why a job never runs', () => {
+        assert.equal(describeRow({}, { kind: 'never', failed: ['998'], waitsOn: [] }), '1005 • never runs: 998 failed');
+        assert.equal(describeRow({}, { kind: 'never', failed: [], waitsOn: ['plot'] }), '1005 • never runs: waits on plot');
+        assert.equal(describeRow({}, { kind: 'never', failed: [], waitsOn: [] }), '1005 • never runs: dependency failed');
     });
 });
