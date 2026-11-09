@@ -241,7 +241,6 @@
         "title": "Submit Job",
         "icon": "$(play)"
       },
-
       {
         "command": "slurmLeaderboard.refresh",
         "title": "Refresh Hall of Shame",
@@ -279,6 +278,11 @@
         "icon": "$(symbol-number)"
       },
       {
+        "command": "slurmJobs.updateJobPartition",
+        "title": "Update Partition...",
+        "icon": "$(server)"
+      },
+      {
         "command": "slurmJobs.updateJobDependency",
         "title": "Update Dependency...",
         "icon": "$(link)"
@@ -313,6 +317,10 @@
         {
           "command": "slurmCluster.disconnect",
           "when": "slurmClusterManager.connection == connected"
+        },
+        {
+          "command": "slurmJobs.updateJobPartition",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -544,6 +552,16 @@
           "command": "slurmJobs.updateArrayThrottle",
           "when": "view == slurmJobs && (viewItem == slurmJobArray || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingArrayHeld)",
           "group": "inline@6"
+        },
+        {
+          "command": "slurmJobs.updateJobPartition",
+          "when": "view == slurmJobs && (viewItem == slurmJobPending || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingHeld || viewItem == slurmJobPendingArrayHeld)",
+          "group": "inline@7"
+        },
+        {
+          "command": "slurmJobs.updateJobPartition",
+          "when": "view == slurmJobs && (viewItem == slurmJobPending || viewItem == slurmJobPendingArray || viewItem == slurmJobPendingHeld || viewItem == slurmJobPendingArrayHeld)",
+          "group": "actions@4"
         },
         {
           "command": "slurmJobs.holdAllPendingJobs",
