@@ -36,6 +36,8 @@ const DEFAULT_PARTITION_REFRESH_MINUTES = 5;
 let statusBarItem: vscode.StatusBarItem;
 let activeClusterConnection: ClusterConnection | undefined;
 let clusterFileSystem: ClusterFileSystemProvider | undefined;
+/** Caches that write to globalState in deferred batches; deactivate() flushes them */
+let deferredCaches: { flush(): Promise<void> }[] = [];
 
 /**
  * Get autorefresh configuration
@@ -322,6 +324,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Create the submit script cache (persistent storage)
     const submitScriptCache = new SubmitScriptCache(context);
+    deferredCaches = [jobPathCache, submitScriptCache];
 
 
 
@@ -1825,6 +1828,8 @@ export async function deactivate(): Promise<void> {
     stopAutoRefresh();
     // Sign out of a cluster this window signed in to, rather than leave the connection open
     await activeClusterConnection?.shutdown();
+    // Write cache changes made in the last moments before shutdown
+    await Promise.all(deferredCaches.map(cache => cache.flush().catch(error => console.error('Failed to save cache:', error))));
     console.log('SLURM Cluster Manager deactivated');
 }
 
