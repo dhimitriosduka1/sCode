@@ -12,12 +12,11 @@ import {
 describe('parseClusterLeaderboardOutput', () => {
     it('tracks only GPU jobs and excludes CPU-only users', () => {
         const entries = parseClusterLeaderboardOutput([
-            'alice|mswk_inst|gpu:2',
-            'alice|cpu_inst|(null)',
-            'alice|cpu_inst|N/A',
-            'bob|mcs_inst|gpu:a100:4',
-            'bob|mcs_inst|gpu:h200:1',
-            'carol|cpu_inst|(null)',
+            'alice|mswk_inst|gres/gpu:2|cpu=16,mem=128G,node=1,billing=16,gres/gpu=2|',
+            'alice|cpu_inst|N/A|cpu=4,mem=16G,node=1,billing=4|',
+            'bob|mcs_inst|gres/gpu:a100:4|cpu=32,mem=256G,node=1,billing=32,gres/gpu=4,gres/gpu:a100=4|',
+            'bob|mcs_inst|gres/gpu:h200:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1,gres/gpu:h200=1|',
+            'carol|cpu_inst|N/A|cpu=1,mem=4G,node=1,billing=1|',
         ].join('\n'));
 
         entries.sort((a, b) => a.username.localeCompare(b.username));
@@ -45,11 +44,11 @@ describe('parseClusterLeaderboardOutput', () => {
 
     it('collects distinct Slurm accounts and GPU types for GPU jobs by user', () => {
         const entries = parseClusterLeaderboardOutput([
-            'mixed|z_inst|gpu:1',
-            'mixed|a_inst|gpu:2',
-            'mixed|a_inst|gpu:1',
-            'mixed|a_inst|gpu:a100:4,gpu:h200:1',
-            'mixed|cpu_inst|(null)',
+            'mixed|z_inst|gres/gpu:1|cpu=8,node=1,gres/gpu=1|',
+            'mixed|a_inst|gres/gpu:2|cpu=16,node=1,gres/gpu=2|',
+            'mixed|a_inst|gres/gpu:1|cpu=8,node=1,gres/gpu=1|',
+            'mixed|a_inst|gres/gpu:a100:4,gres/gpu:h200:1|cpu=40,node=1,gres/gpu=5,gres/gpu:a100=4,gres/gpu:h200=1|',
+            'mixed|cpu_inst|N/A|cpu=4,node=1|',
         ].join('\n'));
 
         assert.deepEqual(entries, [
@@ -67,30 +66,55 @@ describe('parseClusterLeaderboardOutput', () => {
         ]);
     });
 
-    it('parses Slurm-style gpu type counts from gres paths', () => {
-        assert.deepEqual(parseClusterLeaderboardOutput('user|account|gres/gpu:h100=2'), [
-            {
-                username: 'user',
-                accounts: ['account'],
-                gpuCount: 2,
-                gpuJobCount: 1,
-                gpuTypes: [{ type: 'h100', count: 2 }],
-            },
-        ]);
-    });
-
-    it('multiplies per-node GPU requests by allocated node count', () => {
+    it('counts the GPUs Slurm allocated, not the per-node request times the node count', () => {
+        // The last two jobs were submitted with both --gpus-per-node=4 and
+        // --gres=gpu:4, which lists the request twice; Slurm still allocates
+        // 4 GPUs per node.
         assert.deepEqual(parseClusterLeaderboardOutput([
-            'dduka|mpi_gpu|4|gpu:a100:4',
-            'dduka|mpi_gpu|4|gpu:a100:4',
-            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|gres/gpu:4|cpu=4096,mem=61696G,node=128,billing=4096,gres/gpu=512|',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,mem=5434000M,node=11,billing=352,gres/gpu=44|',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=2048,mem=30875G,node=64,billing=2048,gres/gpu=256|',
         ].join('\n')), [
             {
                 username: 'dduka',
                 accounts: ['mpi_gpu'],
-                gpuCount: 48,
+                gpuCount: 812,
                 gpuJobCount: 3,
-                gpuTypes: [{ type: 'a100', count: 48 }],
+                gpuTypes: [{ type: 'generic', count: 812 }],
+            },
+        ]);
+    });
+
+    it('counts GPUs requested per job or per task, which the per-node request leaves out', () => {
+        assert.deepEqual(parseClusterLeaderboardOutput(
+            'alice|vision_lab|N/A|cpu=64,mem=512G,node=2,billing=64,gres/gpu=16|',
+        ), [
+            {
+                username: 'alice',
+                accounts: ['vision_lab'],
+                gpuCount: 16,
+                gpuJobCount: 1,
+                gpuTypes: [{ type: 'generic', count: 16 }],
+            },
+        ]);
+    });
+
+    it('names GPU types from the allocation, or from the request when the allocation has none', () => {
+        assert.deepEqual(parseClusterLeaderboardOutput([
+            'alice|vision_lab|gres/gpu:4|cpu=32,node=1,gres/gpu=4,gres/gpu:l40s=4|',
+            'alice|vision_lab|gres/gpu:h100:4|cpu=64,node=2,gres/gpu=8|',
+            'alice|vision_lab|gres/gpu:a100:1,gres/gpu:h100:1|cpu=16,node=1,gres/gpu=2|',
+        ].join('\n')), [
+            {
+                username: 'alice',
+                accounts: ['vision_lab'],
+                gpuCount: 14,
+                gpuJobCount: 3,
+                gpuTypes: [
+                    { type: 'h100', count: 8 },
+                    { type: 'l40s', count: 4 },
+                    { type: 'generic', count: 2 },
+                ],
             },
         ]);
     });
@@ -104,10 +128,10 @@ describe('parseClusterLeaderboardOutput', () => {
 describe('parseClusterAccountOverviewOutput', () => {
     it('aggregates running GPU jobs by Slurm account', () => {
         const entries = parseClusterAccountOverviewOutput([
-            'alice|vision_lab|gpu:a100:2',
-            'alice|local_inst|gpu:h200:1',
-            'bob|vision_lab|gpu:a100:4',
-            'carol|cpu_inst|(null)',
+            'alice|vision_lab|gres/gpu:a100:2|cpu=16,node=1,gres/gpu=2|',
+            'alice|local_inst|gres/gpu:h200:1|cpu=8,node=1,gres/gpu=1|',
+            'bob|vision_lab|gres/gpu:a100:4|cpu=32,node=1,gres/gpu=4|',
+            'carol|cpu_inst|N/A|cpu=4,node=1|',
         ].join('\n'));
 
         assert.deepEqual(entries, [
@@ -132,7 +156,7 @@ describe('parseClusterAccountOverviewOutput', () => {
     });
 
     it('groups GPU jobs without a Slurm account as unknown', () => {
-        assert.deepEqual(parseClusterAccountOverviewOutput('alice|(null)|gpu:2'), [
+        assert.deepEqual(parseClusterAccountOverviewOutput('alice|(null)|gres/gpu:2|cpu=16,node=1,gres/gpu=2|'), [
             {
                 account: 'unknown',
                 gpuCount: 2,
@@ -143,33 +167,35 @@ describe('parseClusterAccountOverviewOutput', () => {
         ]);
     });
 
-    it('multiplies account GPU usage by allocated node count', () => {
+    it('counts the GPUs Slurm allocated, not the per-node request times the node count', () => {
         assert.deepEqual(parseClusterAccountOverviewOutput([
-            'dduka|mpi_gpu|4|gpu:a100:4',
-            'dduka|mpi_gpu|4|gpu:a100:4',
-            'dduka|mpi_gpu|4|gpu:a100:4',
+            'dduka|mpi_gpu|gres/gpu:4|cpu=4096,mem=61696G,node=128,billing=4096,gres/gpu=512|',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,mem=5434000M,node=11,billing=352,gres/gpu=44|',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=2048,mem=30875G,node=64,billing=2048,gres/gpu=256|',
         ].join('\n')), [
             {
                 account: 'mpi_gpu',
-                gpuCount: 48,
+                gpuCount: 812,
                 gpuJobCount: 3,
-                gpuTypes: [{ type: 'a100', count: 48 }],
-                users: [{ username: 'dduka', gpuCount: 48, gpuJobCount: 3 }],
+                gpuTypes: [{ type: 'generic', count: 812 }],
+                users: [{ username: 'dduka', gpuCount: 812, gpuJobCount: 3 }],
             },
         ]);
     });
 });
 
 describe('parseClusterHogsOutput', () => {
-    it('uses node counts when ranking top GPU hogs', () => {
+    it('ranks top GPU hogs by the GPUs Slurm allocated', () => {
+        // Doubling dduka's per-node request would put them ahead (176 GPUs);
+        // Slurm allocated them 88.
         assert.deepEqual(parseClusterHogsOutput([
-            'dduka|4|gpu:a100:4',
-            'dduka|4|gpu:a100:4',
-            'dduka|4|gpu:a100:4',
-            'alice|1|gpu:h100:8',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,node=11,gres/gpu=44|',
+            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,node=11,gres/gpu=44|',
+            'dduka|mpi_gpu|N/A|cpu=4,node=1|',
+            'alice|vision_lab|gres/gpu:8|cpu=384,node=12,gres/gpu=96|',
         ].join('\n')), {
             topJobHog: { username: 'dduka', jobCount: 3 },
-            topGpuHog: { username: 'dduka', gpuCount: 48 },
+            topGpuHog: { username: 'alice', gpuCount: 96 },
         });
     });
 });
