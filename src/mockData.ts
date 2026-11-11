@@ -273,25 +273,25 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
     ];
 }
 
-// sacct-style rows for the cluster account overview.
+// squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|"
 export const MOCK_ACCOUNT_OVERVIEW_ROWS = [
-    'nova42|atlas_lab|gpu:a100:8',
-    'nova42|atlas_lab|gpu:a100:8',
-    'nova42|atlas_lab|gpu:h200:8',
-    'pixelwave|vision_lab|gpu:h200:8',
-    'pixelwave|vision_lab|gpu:a100:8',
-    'pixelwave|vision_lab|gpu:h200:2',
-    'quartz|nebula_lab|gpu:a100:8',
-    'quartz|nebula_lab|gpu:a100:8',
-    'zephyr|robotics_lab|gpu:l40s:4',
-    'zephyr|robotics_lab|gpu:l40s:4',
-    'solis|climate_lab|gpu:h200:8',
-    'rune|data_lab|gpu:rtx6000:1',
-    'rune|data_lab|gpu:rtx6000:1',
-    'rune|data_lab|gpu:rtx6000:1',
-    'rune|data_lab|gpu:rtx6000:1',
-    'rune|data_lab|gpu:rtx6000:1',
-    'rune|data_lab|gpu:rtx6000:1',
+    'nova42|atlas_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'nova42|atlas_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'nova42|atlas_lab|gres/gpu:h200:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'pixelwave|vision_lab|gres/gpu:h200:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'pixelwave|vision_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'pixelwave|vision_lab|gres/gpu:h200:2|cpu=16,mem=128G,node=1,billing=16,gres/gpu=2|',
+    'quartz|nebula_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'quartz|nebula_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'zephyr|robotics_lab|gres/gpu:l40s:4|cpu=32,mem=256G,node=1,billing=32,gres/gpu=4|',
+    'zephyr|robotics_lab|gres/gpu:l40s:4|cpu=32,mem=256G,node=1,billing=32,gres/gpu=4|',
+    'solis|climate_lab|gres/gpu:h200:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
+    'rune|data_lab|gres/gpu:rtx6000:1|cpu=8,mem=64G,node=1,billing=8,gres/gpu=1|',
 ];
 
 // sinfo -N --noheader --format="%N|%P|%T|%G"
