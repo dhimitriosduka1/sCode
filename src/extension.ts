@@ -1826,10 +1826,11 @@ export function activate(context: vscode.ExtensionContext) {
  */
 export async function deactivate(): Promise<void> {
     stopAutoRefresh();
+    // Write cache changes made in the last moments before shutdown. First, since
+    // the write is local and quick, while signing out waits on the cluster
+    await Promise.all(deferredCaches.map(cache => cache.flush().catch(error => console.error('Failed to save cache:', error))));
     // Sign out of a cluster this window signed in to, rather than leave the connection open
     await activeClusterConnection?.shutdown();
-    // Write cache changes made in the last moments before shutdown
-    await Promise.all(deferredCaches.map(cache => cache.flush().catch(error => console.error('Failed to save cache:', error))));
     console.log('SLURM Cluster Manager deactivated');
 }
 
