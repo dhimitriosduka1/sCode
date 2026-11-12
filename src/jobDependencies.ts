@@ -90,27 +90,15 @@ export type CancelTarget =
 /** The cancel target for an ID as passed to scancel. */
 export function readCancelTarget(jobId: string): CancelTarget {
     const base = extractBaseJobId(jobId);
-    const tasks = arrayTasks(jobId);
-    return tasks === undefined ? { base, whole: true } : { base, whole: false, tasks };
+    const rest = jobId.slice(base.length).replace(/^_/, '');
+    return rest ? { base, whole: false, tasks: rest.replace(/^\[(.*)\]$/, '$1') } : { base, whole: true };
 }
 
-/** The task list in an array job ID (`1-3` for `123_[1-3]`), undefined for a whole job or array. */
-function arrayTasks(jobId: string): string | undefined {
-    const rest = jobId.slice(extractBaseJobId(jobId).length).replace(/^_/, '');
-    return rest ? rest.replace(/^\[(.*)\]$/, '$1') : undefined;
-}
-
-/** Whether `task` is in `tasks`, a task list as squeue and scancel write it (`1-3,7`, `0-10:2`, `3-9%2`). */
+/** Whether `task` is in `tasks`, a task list as the cancel command writes it (`1-3,7`). */
 function taskListIncludes(tasks: string, task: number): boolean {
-    return tasks.replace(/%\d+/g, '').split(',').some((part) => {
-        const match = part.match(/^(\d+)(?:-(\d+)(?::(\d+))?)?$/);
-        if (!match) {
-            return false;
-        }
-        const start = Number(match[1]);
-        const end = match[2] === undefined ? start : Number(match[2]);
-        const step = match[3] === undefined ? 1 : Number(match[3]);
-        return task >= start && task <= end && (task - start) % step === 0;
+    return tasks.split(',').some((part) => {
+        const [start, end = start] = part.split('-').map(Number);
+        return task >= start && task <= end;
     });
 }
 
@@ -191,10 +179,7 @@ export class QueueDependencies {
      * one of them to end (`afterany`) is not among them: the cancel lets it run.
      */
     strandedByCancel(target: CancelTarget): SlurmJob[] {
-        // An array's pending tasks are the ones pending as of this snapshot
-        const targets: CancelTarget[] = [!target.whole && target.tasks === undefined
-            ? { ...target, tasks: this.pendingTasksOf(target.base) }
-            : target];
+        const targets: CancelTarget[] = [target];
         const result: SlurmJob[] = [];
         let changed = true;
         while (changed) {
@@ -265,8 +250,12 @@ export class QueueDependencies {
         if (condition.failed) {
             return 'broken';
         }
-        if (condition.jobId && targets.some((target) => breaksOnCancel(condition, target))) {
-            return 'brokenByCancel';
+        if (condition.jobId) {
+            // The queue's row for exactly the job or task the condition names, if it has one
+            const row = this.jobsFor(job, condition).find((parent) => parent.jobId === condition.jobId);
+            if (targets.some((target) => breaksOnCancel(condition, target, row))) {
+                return 'brokenByCancel';
+            }
         }
         // A cancel ends the job, which is all that after, afterany, afternotok and
         // singleton wait for (afternotok counts a cancel as a failure). aftercorr
@@ -307,25 +296,20 @@ export class QueueDependencies {
         const named = this.byBase.get(base)?.[0];
         return [named ? `${named.name} (${id})` : id];
     }
-
-    /** The tasks of array `base` still pending, as a task list (`3-9,12`). */
-    private pendingTasksOf(base: string): string {
-        return this.pending
-            .filter((job) => extractBaseJobId(job.jobId) === base)
-            .flatMap((job) => arrayTasks(job.jobId) ?? [])
-            .join(',');
-    }
 }
 
 /**
  * Whether cancelling `target` means `condition` can never be met. Only
  * `afterok` needs the job to succeed, and cancelling part of an array fails it
- * on the whole array or on a cancelled task. `aftercorr` needs success too,
- * task by task, but is left out: a dependent task whose partner already
- * succeeded still runs, and the queue no longer shows which did, so offering
- * its pending tasks could cancel ones that would have run.
+ * on the whole array or on a cancelled task with a `row` of its own in the
+ * queue. A task cancelled while still inside its array's pending row
+ * (`123_[4-9]`) has no job record, so Slurm drops a dependency on it rather
+ * than failing it, and the job runs. `aftercorr` needs success too, task by
+ * task, but is left out: a dependent task whose partner already succeeded
+ * still runs, and the queue no longer shows which did, so offering its pending
+ * tasks could cancel ones that would have run.
  */
-function breaksOnCancel(condition: DependencyCondition, target: CancelTarget): boolean {
+function breaksOnCancel(condition: DependencyCondition, target: CancelTarget, row: SlurmJob | undefined): boolean {
     if (condition.type !== 'afterok') {
         return false;
     }
@@ -336,7 +320,10 @@ function breaksOnCancel(condition: DependencyCondition, target: CancelTarget): b
     if (target.whole || !task || task === '*') {
         return true;
     }
-    return taskListIncludes(target.tasks ?? '', Number(task));
+    if (!row) {
+        return false;
+    }
+    return target.tasks === undefined ? row.state === 'PD' : taskListIncludes(target.tasks, Number(task));
 }
 
 /** Whether conditions with these outcomes can no longer all (or, with `?`, any) be met. */

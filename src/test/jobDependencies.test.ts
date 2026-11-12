@@ -245,29 +245,36 @@ describe('QueueDependencies.strandedByCancel', () => {
             assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_2'))), ['301', '303']);
         });
 
-        it('strands what needs the whole array or a task in the cancelled range', () => {
-            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[4-6]'))), ['301', '304']);
+        // A task still inside the array's pending row (200_[3-9]) has no job
+        // record of its own, so Slurm drops a dependency on it when it is
+        // cancelled, rather than failing it: 304 runs
+        it('leaves a job waiting on a task cancelled from inside the pending row', () => {
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_5'))), ['301']);
+        });
+
+        it('strands what needs the whole array or a task of the cancelled range with a row of its own', () => {
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[1-3]'))), ['301', '303']);
             assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[1,3]'))), ['301']);
-            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[0-10:5]'))), ['301', '304']);
-            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[4-6%2]'))), ['301', '304']);
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[4-6]'))), ['301']);
         });
 
-        it('strands what needs the whole array or a pending task when its pending tasks are cancelled', () => {
+        it('strands only what needs the whole array when its pending tasks are cancelled', () => {
             // 200_2 is running, so the cancel leaves it to finish for 303
-            assert.deepEqual(ids(queue.strandedByCancel({ base: '200', whole: false })), ['301', '304']);
+            assert.deepEqual(ids(queue.strandedByCancel({ base: '200', whole: false })), ['301']);
         });
 
-        // squeue gives a throttled array's pending tasks as `400_[3-10%2]`, and
-        // tasks split off from it as rows of their own
-        it('reads the pending tasks of a throttled array across its rows', () => {
-            const throttled = new QueueDependencies([
+        // A pending task can get a row of its own (`400_1`), split off from the
+        // pending row, e.g. by a hold; cancelling it fails what waits on it
+        it('strands what needs a pending task with a row of its own', () => {
+            const split = new QueueDependencies([
                 job('400_[3-10%2]', 'sweep', { pendingReason: 'JobArrayTaskLimit' }),
-                job('400_1', 'sweep', { pendingReason: 'Priority' }),
+                job('400_1', 'sweep', { pendingReason: 'JobHeldUser' }),
                 job('501', 'task-nine', { dependency: 'afterok:400_9(unfulfilled)' }),
                 job('502', 'task-one', { dependency: 'afterok:400_1(unfulfilled)' }),
-                job('503', 'task-two', { dependency: 'afterok:400_2(unfulfilled)' }),
             ]);
-            assert.deepEqual(ids(throttled.strandedByCancel({ base: '400', whole: false })), ['501', '502']);
+            assert.deepEqual(ids(split.strandedByCancel({ base: '400', whole: false })), ['502']);
+            assert.deepEqual(ids(split.strandedByCancel(readCancelTarget('400_[1-9]'))), ['502']);
+            assert.deepEqual(ids(split.strandedByCancel(readCancelTarget('400'))), ['501', '502']);
         });
     });
 });
