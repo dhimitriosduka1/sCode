@@ -38,6 +38,38 @@ describe('DeferredSave', () => {
         assert.equal(saves, 1);
         assert.equal(deferred.pending, false);
     });
+
+    // deactivate() flushes, and must not return while the timer's write is still landing
+    it('waits for a write already under way', async () => {
+        let finished = false;
+        const deferred = new DeferredSave(
+            () => new Promise<void>((resolve) => setTimeout(() => { finished = true; resolve(); }, 50)),
+            1,
+        );
+        deferred.schedule();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await deferred.flush();
+        assert.equal(finished, true);
+    });
+
+    it('does not report an earlier failed write again', async () => {
+        let fail = true;
+        const deferred = new DeferredSave(async () => {
+            if (fail) {
+                throw new Error('disk full');
+            }
+        }, 1);
+        const originalConsoleError = console.error;
+        console.error = () => undefined;
+        try {
+            deferred.schedule();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        } finally {
+            console.error = originalConsoleError;
+        }
+        fail = false;
+        await deferred.flush();
+    });
 });
 
 describe('JobPathCache writes', () => {

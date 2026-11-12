@@ -8,6 +8,8 @@
  */
 export class DeferredSave {
     private timer: ReturnType<typeof setTimeout> | undefined;
+    /** The last write started; each one waits for the one before. */
+    private saving: Promise<void> = Promise.resolve();
 
     constructor(
         private readonly save: () => Promise<void>,
@@ -21,20 +23,27 @@ export class DeferredSave {
         }
         this.timer = setTimeout(() => {
             this.timer = undefined;
-            this.save().catch(error => console.error('Failed to save cache:', error));
+            this.startSave().catch(error => console.error('Failed to save cache:', error));
         }, this.delayMs);
         // A pending write must not keep a test process (or the host) alive
         this.timer.unref?.();
     }
 
-    /** Writes now if a write is pending. */
+    /** Writes now if a write is pending, and waits for a write already under way. */
     async flush(): Promise<void> {
-        if (!this.timer) {
+        if (this.timer) {
+            clearTimeout(this.timer);
+            this.timer = undefined;
+            await this.startSave();
             return;
         }
-        clearTimeout(this.timer);
-        this.timer = undefined;
-        await this.save();
+        // A failure of that write was reported when it happened
+        await this.saving.catch(() => undefined);
+    }
+
+    private startSave(): Promise<void> {
+        this.saving = this.saving.catch(() => undefined).then(() => this.save());
+        return this.saving;
     }
 
     get pending(): boolean {
