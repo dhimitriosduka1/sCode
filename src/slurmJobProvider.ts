@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, formatDuration, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -728,6 +728,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
         // Add job details
         children.push(new JobDetailItem('Partition', job.partition, 'server'));
+
+        // Pending: how long so far; started: how long it waited
+        if (job.queuedSeconds !== undefined) {
+            children.push(new JobDetailItem('Queued', formatDuration(job.queuedSeconds), 'history'));
+        }
 
         if (!isPending) {
             children.push(new JobDetailItem('Nodes', job.nodes, 'vm'));

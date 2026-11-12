@@ -6,6 +6,7 @@ import {
     calculateProgress,
     calculateRemainingSeconds,
     expandPathPlaceholders,
+    formatDuration,
     formatRemainingTime,
     formatStartTime,
     generateProgressBar,
@@ -305,6 +306,19 @@ describe('calculateRemainingSeconds', () => {
         assert.equal(calculateRemainingSeconds('00:57:00', 'UNLIMITED'), -1);
         assert.equal(calculateRemainingSeconds('00:57:00', 'N/A'), -1);
         assert.equal(calculateRemainingSeconds('N/A', '01:00:00'), -1);
+    });
+});
+
+describe('formatDuration', () => {
+    it('keeps the two largest units, dropping zeros', () => {
+        assert.equal(formatDuration(0), '0s');
+        assert.equal(formatDuration(59), '59s');
+        assert.equal(formatDuration(60), '1m');
+        assert.equal(formatDuration(3275), '54m');
+        assert.equal(formatDuration(3600), '1h');
+        assert.equal(formatDuration(3900), '1h 5m');
+        assert.equal(formatDuration(86400), '1d');
+        assert.equal(formatDuration(2 * 86400 + 4 * 3600 + 59), '2d 4h');
     });
 });
 

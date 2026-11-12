@@ -1,6 +1,7 @@
 import {
     calculateProgress,
     calculateRemainingSeconds,
+    formatDuration,
     formatRemainingTime,
     formatStartTime,
     generateProgressBar,
@@ -59,6 +60,11 @@ export function describeNeverRunCount(count: number): string | undefined {
 
 function createStandardJobDescription(job: SlurmJob, dependency: DependencyStatus | undefined): string {
     const parts: string[] = [job.jobId];
+
+    // First, so it lines up across the pending rows
+    if (job.state === 'PD' && job.queuedSeconds !== undefined) {
+        parts.push(`queued ${formatDuration(job.queuedSeconds)}`);
+    }
 
     // Waiting on other jobs, the useful fact is which: Slurm gives no start
     // estimate for such a job, and "Waiting on dependency" says less than the
