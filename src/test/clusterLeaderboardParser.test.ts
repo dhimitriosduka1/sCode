@@ -8,6 +8,7 @@ import {
     parseScontrolNodeOutput,
     getNodeIdleGpusByType,
 } from '../slurmService';
+import { formatPartitionUsageMemoryBreakdown } from '../partitionUsageRanking';
 
 describe('parseClusterLeaderboardOutput', () => {
     it('tracks only GPU jobs and excludes CPU-only users', () => {
@@ -470,6 +471,37 @@ describe('parsePartitionUsageOutput', () => {
 
     it('returns no partition usage for empty inputs', () => {
         assert.deepEqual(parsePartitionUsageOutput('', '', '').entries, []);
+    });
+
+    it('keeps CPU-only partitions apart and sums memory of schedulable nodes', () => {
+        const sinfoNode = [
+            'g01|gpu|idle|gpu:a100:4',
+            'c01|cpu*|mixed|(null)',
+            'c02|cpu*|idle|(null)',
+            'c03|cpu*|drain|(null)',
+        ].join('\n');
+        const scontrol = [
+            'NodeName=g01 RealMemory=512000 AllocMem=0',
+            'NodeName=c01 RealMemory=1024 AllocMem=614',
+            'NodeName=c02 RealMemory=1024 AllocMem=0',
+            'NodeName=c03 RealMemory=1024 AllocMem=0',
+        ].join('\n');
+        const squeue = ['cpu|R', 'cpu|PD', 'cpu|PD'].join('\n');
+
+        const { entries, cpuOnlyEntries } = parsePartitionUsageOutput(sinfoNode, scontrol, squeue);
+
+        assert.deepEqual(entries.map(entry => entry.partition), ['gpu']);
+        assert.equal(cpuOnlyEntries?.length, 1);
+        const cpu = cpuOnlyEntries![0];
+        assert.equal(cpu.partition, 'cpu');
+        assert.deepEqual(
+            [cpu.allocatedNodes, cpu.idleNodes, cpu.otherNodes, cpu.runningJobs, cpu.pendingJobs],
+            [1, 1, 1, 1, 2],
+        );
+        // The drained node's memory can't be scheduled, so it is left out
+        assert.equal(cpu.usableMemoryMb, 2048);
+        assert.equal(cpu.allocatedMemoryMb, 614);
+        assert.equal(formatPartitionUsageMemoryBreakdown(cpu), '0.6/2.0 GB allocated, 1.4 GB free');
     });
 });
 

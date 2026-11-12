@@ -65,6 +65,13 @@
           "when": "slurmClusterManager.slurmStatus == available"
         },
         {
+          "id": "slurmCpuPartitionUsage",
+          "name": "CPU Partition Usage",
+          "icon": "$(server)",
+          "contextualTitle": "SLURM CPU Partition Usage",
+          "when": "slurmClusterManager.slurmStatus == available"
+        },
+        {
           "id": "slurmClusterOverview",
           "name": "Cluster Overview",
           "icon": "$(dashboard)",
@@ -125,13 +132,13 @@
       },
       {
         "command": "slurmPartitionUsage.refresh",
-        "title": "Refresh GPU Partition Usage",
+        "title": "Refresh Partition Usage",
         "icon": "$(refresh)",
         "enablement": "!slurmPartitionUsage.refreshing"
       },
       {
         "command": "slurmPartitionUsage.setRefreshInterval",
-        "title": "Set GPU Partition Usage Refresh Interval",
+        "title": "Set Partition Usage Refresh Interval",
         "icon": "$(watch)"
       },
       {
@@ -344,12 +351,12 @@
         },
         {
           "command": "slurmPartitionUsage.refresh",
-          "when": "view == slurmPartitionUsage",
+          "when": "view == slurmPartitionUsage || view == slurmCpuPartitionUsage",
           "group": "navigation@1"
         },
         {
           "command": "slurmPartitionUsage.setRefreshInterval",
-          "when": "view == slurmPartitionUsage",
+          "when": "view == slurmPartitionUsage || view == slurmCpuPartitionUsage",
           "group": "navigation@2"
         },
         {

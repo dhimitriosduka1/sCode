@@ -122,6 +122,8 @@ The **GPU Partition Usage** view ranks partitions by allocated GPU share, with q
 
 Expand a partition for allocated, idle, available, and total GPU counts, GPU types, node states, and running and pending jobs. Load is measured against **usable capacity**, so down or draining nodes do not make a partition appear less busy.
 
+The **CPU Partition Usage** view lists the CPU-only partitions that GPU Partition Usage leaves out, least busy first, with allocated share, idle CPUs and running/pending jobs. Expand a partition for CPU, memory, node and job counts; memory is what Slurm has allocated (`AllocMem`) out of the schedulable nodes' `RealMemory`. It reads the same background snapshot, so it adds no Slurm queries.
+
 Partition data refreshes at startup and every **5 minutes** by default. Use the refresh button for an immediate update, or the watch icon to change or disable the interval. Script suggestions, hovers, and warnings share this data.
 
 Use these figures to compare current availability; actual start times also depend on job requirements and cluster scheduling policies.

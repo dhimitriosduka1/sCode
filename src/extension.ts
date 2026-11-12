@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SlurmJobProvider, SlurmJobItem, StatusCategoryItem, neverRunsDecorationProvider } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { PartitionUsageProvider } from './partitionUsageProvider';
+import { CpuPartitionUsageProvider } from './cpuPartitionUsageProvider';
 import { ClusterOverviewProvider } from './clusterOverviewProvider';
 import { LeaderboardProvider } from './leaderboardProvider';
 import {
@@ -500,6 +501,7 @@ export function activate(context: vscode.ExtensionContext) {
         .getConfiguration('slurmClusterManager')
         .get<number>('partitionRefreshInterval', DEFAULT_PARTITION_REFRESH_MINUTES);
     const partitionUsageProvider = new PartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
+    const cpuPartitionUsageProvider = new CpuPartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
 
     // Every refresh shows a progress bar on GPU Partition Usage, whoever started it,
     // and disables its refresh button until done (package.json `enablement`)
@@ -564,6 +566,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the Partition Usage TreeView
     const partitionUsageTreeView = vscode.window.createTreeView('slurmPartitionUsage', {
         treeDataProvider: partitionUsageProvider,
+        showCollapseAll: false,
+    });
+
+    // Register the CPU Partition Usage TreeView
+    const cpuPartitionUsageTreeView = vscode.window.createTreeView('slurmCpuPartitionUsage', {
+        treeDataProvider: cpuPartitionUsageProvider,
         showCollapseAll: false,
     });
 
@@ -670,6 +678,7 @@ export function activate(context: vscode.ExtensionContext) {
         schedulePartitionRefresh();
         void refreshPartitionData();
         partitionUsageProvider.refresh();
+        cpuPartitionUsageProvider.refresh();
     });
 
     // Register the refresh cluster overview command
@@ -914,7 +923,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const setPartitionRefreshIntervalCommand = vscode.commands.registerCommand('slurmPartitionUsage.setRefreshInterval', async () => {
         const minutes = await pickRefreshInterval({
-            title: 'Set GPU Partition Usage Refresh Interval',
+            title: 'Set Partition Usage Refresh Interval',
             current: getPartitionRefreshMinutes(),
             defaultValue: DEFAULT_PARTITION_REFRESH_MINUTES,
             presets: [1, 2, 5, 10, 15, 30],
@@ -945,6 +954,7 @@ export function activate(context: vscode.ExtensionContext) {
         void updateSlurmAvailabilityContext(() => {
             void refreshPartitionData();
             partitionUsageProvider.refresh();
+            cpuPartitionUsageProvider.refresh();
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
             clusterOverviewProvider.refresh();
@@ -976,6 +986,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('slurmClusterManager.partitionRefreshInterval')) {
             schedulePartitionRefresh();
             partitionUsageProvider.rerender();
+            cpuPartitionUsageProvider.rerender();
         }
 
         if (e.affectsConfiguration('slurmClusterManager.leaderboardTopUserCount')) {
@@ -1795,6 +1806,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(treeView);
     context.subscriptions.push(historyTreeView);
     context.subscriptions.push(partitionUsageTreeView);
+    context.subscriptions.push(cpuPartitionUsageTreeView);
     context.subscriptions.push(clusterOverviewTreeView);
     context.subscriptions.push(leaderboardTreeView);
     context.subscriptions.push(refreshCommand);
@@ -1831,7 +1843,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(docChangeListener);
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(slurmScriptCompletionRegistration, slurmScriptDiagnostics);
-    context.subscriptions.push(partitionUsageProvider, { dispose: () => partitionRefreshScheduler.stop() });
+    context.subscriptions.push(partitionUsageProvider, cpuPartitionUsageProvider, { dispose: () => partitionRefreshScheduler.stop() });
     context.subscriptions.push(decorationProvider);
     context.subscriptions.push(decorEditorListener);
     context.subscriptions.push(decorDocListener);

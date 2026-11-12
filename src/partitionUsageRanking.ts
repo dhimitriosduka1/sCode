@@ -34,6 +34,17 @@ export function formatPartitionUsageNodeBreakdown(entry: PartitionUsageEntry): s
     return `${entry.allocatedNodes} allocated, ${entry.idleNodes} idle, ${entry.otherNodes} other, ${entry.totalNodes} total`;
 }
 
+/** Memory Slurm has allocated on schedulable nodes, in GB or TB; undefined when scontrol reported none. */
+export function formatPartitionUsageMemoryBreakdown(entry: PartitionUsageEntry): string | undefined {
+    if (entry.usableMemoryMb === undefined || entry.allocatedMemoryMb === undefined) {
+        return undefined;
+    }
+    const [divisor, unit] = entry.usableMemoryMb >= 1024 ** 2 ? [1024 ** 2, 'TB'] : [1024, 'GB'];
+    const show = (mb: number) => (mb / divisor).toFixed(1);
+    const free = Math.max(0, entry.usableMemoryMb - entry.allocatedMemoryMb);
+    return `${show(entry.allocatedMemoryMb)}/${show(entry.usableMemoryMb)} ${unit} allocated, ${show(free)} ${unit} free`;
+}
+
 /**
  * @param options.showDefault Whether to include the default-partition row; partition
  *   autocomplete leaves it out
