@@ -71,28 +71,47 @@ export type DependencyStatus =
     /** Waits for these jobs: name and ID, or only the ID for jobs not in the queue. `anyOf` when one of them is enough. */
     | { kind: 'waiting'; jobs: string[]; anyOf: boolean }
     /**
-     * Can never start as things stand: jobs it needed `failed`, or it `waitsOn`
-     * jobs that themselves never start. Both empty when only Slurm's pending
-     * reason says so.
+     * Can never start as things stand: jobs it needed to succeed `failed`,
+     * jobs it needed to fail (`afternotok`) `succeeded`, or it `waitsOn` jobs
+     * that themselves never start. All empty when only Slurm's pending reason
+     * says so.
      */
-    | { kind: 'never'; failed: string[]; waitsOn: string[] };
+    | { kind: 'never'; failed: string[]; succeeded: string[]; waitsOn: string[] };
 
 /**
- * What is being cancelled: a whole job or array (`123`), or part of an array,
- * one task (`123_4`) or several (`123_[1-3]`, or only its pending tasks).
+ * What is being cancelled: a whole job or array (`123`), or some of an array's
+ * tasks, as a task list (`4` for `123_4`, `1-3,7` for `123_[1-3,7]`), absent
+ * for the tasks still pending.
  */
 export type CancelTarget =
     | { base: string; whole: true }
-    | { base: string; whole: false; task?: string };
+    | { base: string; whole: false; tasks?: string };
 
 /** The cancel target for an ID as passed to scancel. */
 export function readCancelTarget(jobId: string): CancelTarget {
     const base = extractBaseJobId(jobId);
-    const rest = jobId.slice(base.length).replace(/^_/, '');
-    if (!rest) {
-        return { base, whole: true };
-    }
-    return { base, whole: false, task: /^\d+$/.test(rest) ? rest : undefined };
+    const tasks = arrayTasks(jobId);
+    return tasks === undefined ? { base, whole: true } : { base, whole: false, tasks };
+}
+
+/** The task list in an array job ID (`1-3` for `123_[1-3]`), undefined for a whole job or array. */
+function arrayTasks(jobId: string): string | undefined {
+    const rest = jobId.slice(extractBaseJobId(jobId).length).replace(/^_/, '');
+    return rest ? rest.replace(/^\[(.*)\]$/, '$1') : undefined;
+}
+
+/** Whether `task` is in `tasks`, a task list as squeue and scancel write it (`1-3,7`, `0-10:2`, `3-9%2`). */
+function taskListIncludes(tasks: string, task: number): boolean {
+    return tasks.replace(/%\d+/g, '').split(',').some((part) => {
+        const match = part.match(/^(\d+)(?:-(\d+)(?::(\d+))?)?$/);
+        if (!match) {
+            return false;
+        }
+        const start = Number(match[1]);
+        const end = match[2] === undefined ? start : Number(match[2]);
+        const step = match[3] === undefined ? 1 : Number(match[3]);
+        return task >= start && task <= end && (task - start) % step === 0;
+    });
 }
 
 /** How many stranded jobs the cancel dialog names before counting the rest. */
@@ -126,7 +145,7 @@ export class QueueDependencies {
     private readonly pending: SlurmJob[];
     private readonly byBase = new Map<string, SlurmJob[]>();
     /** Pending jobs that can never start as things stand, by row job ID. */
-    private readonly stranded = new Map<string, { failed: string[]; waitsOn: string[] }>();
+    private readonly stranded = new Map<string, { failed: string[]; succeeded: string[]; waitsOn: string[] }>();
 
     constructor(private readonly jobs: readonly SlurmJob[]) {
         for (const job of jobs) {
@@ -166,14 +185,16 @@ export class QueueDependencies {
 
     /**
      * The pending jobs that cancelling `target` leaves unable to start, in job
-     * ID order: those that need it to finish successfully (`afterok`, or
-     * `aftercorr` when all of it is cancelled), and in turn those that need
-     * them. They are worked out as if they were cancelled too, which is the
-     * choice offered for them, so a job that only waits for one of them to end
-     * (`afterany`) is not among them: the cancel lets it run.
+     * ID order: those that need it to finish successfully (`afterok`), and in
+     * turn those that need them. They are worked out as if they were cancelled
+     * too, which is the choice offered for them, so a job that only waits for
+     * one of them to end (`afterany`) is not among them: the cancel lets it run.
      */
     strandedByCancel(target: CancelTarget): SlurmJob[] {
-        const targets: CancelTarget[] = [target];
+        // An array's pending tasks are the ones pending as of this snapshot
+        const targets: CancelTarget[] = [!target.whole && target.tasks === undefined
+            ? { ...target, tasks: this.pendingTasksOf(target.base) }
+            : target];
         const result: SlurmJob[] = [];
         let changed = true;
         while (changed) {
@@ -224,8 +245,10 @@ export class QueueDependencies {
                 const labels = (keep: (condition: DependencyCondition, index: number) => boolean) => unique(
                     (parsed?.conditions ?? []).filter(keep).flatMap((condition) => this.labelsFor(job, condition)),
                 );
+                // Slurm fails afternotok when the job it waits on succeeds
                 this.stranded.set(job.jobId, {
-                    failed: labels((condition) => condition.failed),
+                    failed: labels((condition) => condition.failed && condition.type !== 'afternotok'),
+                    succeeded: labels((condition) => condition.failed && condition.type === 'afternotok'),
                     waitsOn: labels((condition, index) => !condition.failed && outcomes[index] === 'broken'),
                 });
                 changed = true;
@@ -246,7 +269,8 @@ export class QueueDependencies {
             return 'brokenByCancel';
         }
         // A cancel ends the job, which is all that after, afterany, afternotok and
-        // singleton wait for (afternotok counts a cancel as a failure)
+        // singleton wait for (afternotok counts a cancel as a failure). aftercorr
+        // is let through too, as breaksOnCancel explains
         const cancelled = (parent: SlurmJob) => targets.some((target) => target.base === extractBaseJobId(parent.jobId));
         const parents = this.jobsFor(job, condition).filter((parent) => !cancelled(parent));
         return parents.some((parent) => this.stranded.has(parent.jobId)) ? 'broken' : 'open';
@@ -283,27 +307,36 @@ export class QueueDependencies {
         const named = this.byBase.get(base)?.[0];
         return [named ? `${named.name} (${id})` : id];
     }
+
+    /** The tasks of array `base` still pending, as a task list (`3-9,12`). */
+    private pendingTasksOf(base: string): string {
+        return this.pending
+            .filter((job) => extractBaseJobId(job.jobId) === base)
+            .flatMap((job) => arrayTasks(job.jobId) ?? [])
+            .join(',');
+    }
 }
 
 /**
  * Whether cancelling `target` means `condition` can never be met. Only
- * `afterok` and `aftercorr` need the job to succeed. Cancelling part of an
- * array fails `afterok` on the whole array or on a cancelled task, but only
- * some tasks of an `aftercorr` dependent, so that one is not counted.
+ * `afterok` needs the job to succeed, and cancelling part of an array fails it
+ * on the whole array or on a cancelled task. `aftercorr` needs success too,
+ * task by task, but is left out: a dependent task whose partner already
+ * succeeded still runs, and the queue no longer shows which did, so offering
+ * its pending tasks could cancel ones that would have run.
  */
 function breaksOnCancel(condition: DependencyCondition, target: CancelTarget): boolean {
-    if (condition.type !== 'afterok' && condition.type !== 'aftercorr') {
+    if (condition.type !== 'afterok') {
         return false;
     }
     const [base, task] = (condition.jobId ?? '').split('_');
     if (base !== target.base) {
         return false;
     }
-    if (target.whole) {
+    if (target.whole || !task || task === '*') {
         return true;
     }
-    const wholeArray = !task || task === '*';
-    return condition.type === 'afterok' && (wholeArray || task === target.task);
+    return taskListIncludes(target.tasks ?? '', Number(task));
 }
 
 /** Whether conditions with these outcomes can no longer all (or, with `?`, any) be met. */

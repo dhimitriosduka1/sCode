@@ -59,6 +59,17 @@ describe('SlurmService mock mode', () => {
         assert.equal(await service.getJobArrayInfo('91004'), null);
     });
 
+    it('cancels only the pending jobs among those given in mock mode', async () => {
+        const service = createMockService();
+
+        await service.cancelPendingJobs(['91001', '91004']);
+        const jobs = await service.getJobs();
+
+        // 91001 is running
+        assert.equal(jobs.some(job => job.jobId === '91001'), true);
+        assert.equal(jobs.some(job => job.jobId.startsWith('91004')), false);
+    });
+
     it('can submit a mock job without sbatch', async () => {
         const service = createMockService();
 

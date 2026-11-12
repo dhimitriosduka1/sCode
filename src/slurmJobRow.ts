@@ -89,8 +89,12 @@ function createStandardJobDescription(job: SlurmJob, dependency: DependencyStatu
 }
 
 function describeNeverRuns(dependency: Extract<DependencyStatus, { kind: 'never' }>): string {
-    if (dependency.failed.length > 0) {
-        return `${listJobs(dependency.failed, '+', '')} failed`;
+    const ended = [
+        ...(dependency.failed.length > 0 ? [`${listJobs(dependency.failed, '+', '')} failed`] : []),
+        ...(dependency.succeeded.length > 0 ? [`${listJobs(dependency.succeeded, '+', '')} succeeded`] : []),
+    ];
+    if (ended.length > 0) {
+        return ended.join(', ');
     }
     if (dependency.waitsOn.length > 0) {
         return `waits on ${listJobs(dependency.waitsOn, '+', '')}`;

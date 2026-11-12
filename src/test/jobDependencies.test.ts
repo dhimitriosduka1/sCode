@@ -71,9 +71,9 @@ describe('parseDependency', () => {
 describe('readCancelTarget', () => {
     it('tells a whole job or array from part of an array', () => {
         assert.deepEqual(readCancelTarget('1002'), { base: '1002', whole: true });
-        assert.deepEqual(readCancelTarget('200_2'), { base: '200', whole: false, task: '2' });
-        assert.deepEqual(readCancelTarget('200_[1-3]'), { base: '200', whole: false, task: undefined });
-        assert.deepEqual(readCancelTarget('91004_[3-10%2]'), { base: '91004', whole: false, task: undefined });
+        assert.deepEqual(readCancelTarget('200_2'), { base: '200', whole: false, tasks: '2' });
+        assert.deepEqual(readCancelTarget('200_[1-3]'), { base: '200', whole: false, tasks: '1-3' });
+        assert.deepEqual(readCancelTarget('91004_[3-10%2]'), { base: '91004', whole: false, tasks: '3-10%2' });
     });
 });
 
@@ -124,7 +124,13 @@ describe('QueueDependencies.describe', () => {
 
     it('says a job whose dependency failed never runs, and which job failed', () => {
         const plot = job('1007', 'plot', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
-        assert.deepEqual(new QueueDependencies([plot]).describe(plot), { kind: 'never', failed: ['998'], waitsOn: [] });
+        assert.deepEqual(new QueueDependencies([plot]).describe(plot), { kind: 'never', failed: ['998'], succeeded: [], waitsOn: [] });
+    });
+
+    // Slurm fails afternotok when the job it waits on succeeds
+    it('says which job succeeded when an afternotok job never runs', () => {
+        const fallback = job('1005', 'fallback', { dependency: 'afternotok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
+        assert.deepEqual(new QueueDependencies([fallback]).describe(fallback), { kind: 'never', failed: [], succeeded: ['998'], waitsOn: [] });
     });
 
     it('carries "never runs" down the chain, whatever the condition type', () => {
@@ -133,13 +139,13 @@ describe('QueueDependencies.describe', () => {
         const publish = job('1008', 'publish', { dependency: 'afterok:1007(unfulfilled)' });
         const cleanup = job('1009', 'cleanup', { dependency: 'afterany:1008(unfulfilled)' });
         const queue = new QueueDependencies([plot, publish, cleanup]);
-        assert.deepEqual(queue.describe(publish), { kind: 'never', failed: [], waitsOn: ['plot (1007)'] });
-        assert.deepEqual(queue.describe(cleanup), { kind: 'never', failed: [], waitsOn: ['publish (1008)'] });
+        assert.deepEqual(queue.describe(publish), { kind: 'never', failed: [], succeeded: [], waitsOn: ['plot (1007)'] });
+        assert.deepEqual(queue.describe(cleanup), { kind: 'never', failed: [], succeeded: [], waitsOn: ['publish (1008)'] });
     });
 
     it('takes Slurm\'s word that a dependency can never be met', () => {
         const stuck = job('1007', 'stuck', { pendingReason: 'DependencyNeverSatisfied' });
-        assert.deepEqual(new QueueDependencies([stuck]).describe(stuck), { kind: 'never', failed: [], waitsOn: [] });
+        assert.deepEqual(new QueueDependencies([stuck]).describe(stuck), { kind: 'never', failed: [], succeeded: [], waitsOn: [] });
     });
 
     it('has nothing to say about running jobs or jobs without a dependency', () => {
@@ -229,17 +235,39 @@ describe('QueueDependencies.strandedByCancel', () => {
             job('304', 'task-five', { dependency: 'afterok:200_5(unfulfilled)' }),
         ]);
 
-        it('strands everything that needs the array when all of it is cancelled', () => {
-            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200'))), ['301', '302', '303', '304']);
+        // aftercorr pairs task with task: a dependent task whose partner already
+        // succeeded still runs, and the queue no longer shows which did
+        it('strands what needs the array when all of it is cancelled, but not an aftercorr dependent', () => {
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200'))), ['301', '303', '304']);
         });
 
-        // aftercorr pairs task with task, so only the cancelled task's partner is lost
         it('strands what needs the whole array or the cancelled task when one task is cancelled', () => {
             assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_2'))), ['301', '303']);
         });
 
-        it('strands only what needs the whole array when its pending tasks are cancelled', () => {
-            assert.deepEqual(ids(queue.strandedByCancel({ base: '200', whole: false })), ['301']);
+        it('strands what needs the whole array or a task in the cancelled range', () => {
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[4-6]'))), ['301', '304']);
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[1,3]'))), ['301']);
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[0-10:5]'))), ['301', '304']);
+            assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_[4-6%2]'))), ['301', '304']);
+        });
+
+        it('strands what needs the whole array or a pending task when its pending tasks are cancelled', () => {
+            // 200_2 is running, so the cancel leaves it to finish for 303
+            assert.deepEqual(ids(queue.strandedByCancel({ base: '200', whole: false })), ['301', '304']);
+        });
+
+        // squeue gives a throttled array's pending tasks as `400_[3-10%2]`, and
+        // tasks split off from it as rows of their own
+        it('reads the pending tasks of a throttled array across its rows', () => {
+            const throttled = new QueueDependencies([
+                job('400_[3-10%2]', 'sweep', { pendingReason: 'JobArrayTaskLimit' }),
+                job('400_1', 'sweep', { pendingReason: 'Priority' }),
+                job('501', 'task-nine', { dependency: 'afterok:400_9(unfulfilled)' }),
+                job('502', 'task-one', { dependency: 'afterok:400_1(unfulfilled)' }),
+                job('503', 'task-two', { dependency: 'afterok:400_2(unfulfilled)' }),
+            ]);
+            assert.deepEqual(ids(throttled.strandedByCancel({ base: '400', whole: false })), ['501', '502']);
         });
     });
 });

@@ -115,8 +115,10 @@ describe('Slurm job row dependencies', () => {
     });
 
     it('says why a job never runs', () => {
-        assert.equal(describeRow({}, { kind: 'never', failed: ['998'], waitsOn: [] }), '1005 • never runs: 998 failed');
-        assert.equal(describeRow({}, { kind: 'never', failed: [], waitsOn: ['plot'] }), '1005 • never runs: waits on plot');
-        assert.equal(describeRow({}, { kind: 'never', failed: [], waitsOn: [] }), '1005 • never runs: dependency failed');
+        assert.equal(describeRow({}, { kind: 'never', failed: ['998'], succeeded: [], waitsOn: [] }), '1005 • never runs: 998 failed');
+        assert.equal(describeRow({}, { kind: 'never', failed: [], succeeded: ['998'], waitsOn: [] }), '1005 • never runs: 998 succeeded');
+        assert.equal(describeRow({}, { kind: 'never', failed: ['997'], succeeded: ['998'], waitsOn: [] }), '1005 • never runs: 997 failed, 998 succeeded');
+        assert.equal(describeRow({}, { kind: 'never', failed: [], succeeded: [], waitsOn: ['plot'] }), '1005 • never runs: waits on plot');
+        assert.equal(describeRow({}, { kind: 'never', failed: [], succeeded: [], waitsOn: [] }), '1005 • never runs: dependency failed');
     });
 });

@@ -449,7 +449,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     private reload(): void {
         this.cachedJobs = [];
-        this.cachedDependencies = undefined;
         this.cachedMaintenanceWindows = [];
         this.cachedHogs = undefined;
         this.cachedFairShareSummary = undefined;
@@ -483,7 +482,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     /**
      * Dependencies among the jobs the view shows, for cancelling: undefined
-     * until they have loaded, or while a refresh reloads them.
+     * until they have first loaded. A refresh keeps the last ones until it has
+     * new ones, so a cancel meanwhile still asks about the job's dependents.
      */
     getQueueDependencies(): QueueDependencies | undefined {
         return this.cachedDependencies;

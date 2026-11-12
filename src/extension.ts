@@ -1874,16 +1874,17 @@ async function cancelDependentsAndReport(slurmService: SlurmService, message: st
         return;
     }
 
-    // A pending array goes whole: its dependency holds back every one of its tasks
-    const results = await Promise.all(dependents.map((job) => slurmService.cancelJob(extractBaseJobId(job.jobId))));
-    const failures = results.filter((result) => !result.success);
-    const jobs = (n: number) => `${n} dependent job${n === 1 ? '' : 's'}`;
-    if (failures.length === 0) {
-        vscode.window.showInformationMessage(`${message}, along with ${jobs(dependents.length)}.`);
+    // A pending array goes whole, as its dependency holds back every pending
+    // task, but only its pending tasks: the ones already running stay
+    const result = await slurmService.cancelPendingJobs([...new Set(dependents.map((job) => extractBaseJobId(job.jobId)))]);
+    const count = dependents.length;
+    if (result.success) {
+        vscode.window.showInformationMessage(`${message}, along with ${count} dependent job${count === 1 ? '' : 's'}.`);
     } else {
-        vscode.window.showWarningMessage(
-            `${message}, but ${failures.length} of ${jobs(dependents.length)} could not be cancelled: ${failures[0].message}`,
-        );
+        const notCancelled = count === 1
+            ? 'its dependent job may not have been cancelled'
+            : `its ${count} dependent jobs may not all have been cancelled`;
+        vscode.window.showWarningMessage(`${message}, but ${notCancelled}: ${result.message}`);
     }
 }
 
