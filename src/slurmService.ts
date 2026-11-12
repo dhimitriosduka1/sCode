@@ -1166,6 +1166,58 @@ function addGpuTypes(target: Map<string, number> | undefined, allocations: Clust
     }
 }
 
+/**
+ * squeue command listing every running job's user, account, per-node GPU
+ * request and allocation, `|` after each field. A job's GPUs are counted from
+ * its allocation (tres-alloc), which is what Slurm gave it. The per-node
+ * request (tres-per-node, `%b`) times the node count is no substitute: a job
+ * submitted with both `--gpus-per-node` and `--gres=gpu` lists its GPUs twice
+ * there (`gres/gpu:4,gres/gpu:4`) though Slurm allocates them once, and GPUs
+ * requested with `--gpus` or `--gpus-per-task` are not in it at all. The
+ * request is read only for the GPU type, which the allocation leaves out on
+ * clusters whose accounting does not track GPU types.
+ */
+const SQUEUE_RUNNING_GPU_JOBS_COMMAND = 'squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|"';
+
+interface RunningGpuJobRow {
+    user: string;
+    account: string | undefined;
+    gpuAllocations: ClusterLeaderboardGpuType[];
+}
+
+/** Reads one row of SQUEUE_RUNNING_GPU_JOBS_COMMAND's output; undefined for a row without a user. */
+function parseRunningGpuJobRow(line: string): RunningGpuJobRow | undefined {
+    const [user = '', account = '', tresPerNode = '', tresAlloc = ''] = line.split('|').map(field => field.trim());
+    if (!user) {
+        return undefined;
+    }
+
+    return {
+        user,
+        account: normalizeSlurmAccount(account),
+        gpuAllocations: readAllocatedGpus(tresAlloc, tresPerNode),
+    };
+}
+
+/**
+ * The GPUs allocated to a job, by type. An allocation without GPU types takes
+ * its type from the request when the request names exactly one.
+ */
+function readAllocatedGpus(tresAlloc: string, tresPerNode: string): ClusterLeaderboardGpuType[] {
+    const allocated = parseGpuAllocations(tresAlloc);
+    if (allocated.length === 0 || allocated.some(allocation => allocation.type !== 'generic')) {
+        return allocated;
+    }
+
+    const requestedTypes = new Set(parseGpuAllocations(tresPerNode).map(request => request.type));
+    const [requestedType] = requestedTypes;
+    if (requestedTypes.size !== 1 || requestedType === 'generic') {
+        return allocated;
+    }
+
+    return [{ type: requestedType, count: sumGpuAllocations(allocated) }];
+}
+
 export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboardEntry[] {
     const lines = stdout.trim().split('\n').filter(line => line.trim());
 
@@ -1179,17 +1231,11 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
     const gpuTypesByUser = new Map<string, Map<string, number>>();
 
     for (const line of lines) {
-        const parts = line.split('|');
-        const user = parts[0].trim();
-        if (!user) {
+        const row = parseRunningGpuJobRow(line);
+        if (!row) {
             continue;
         }
-        const hasNodeColumn = parts.length >= 4;
-        const hasAccountColumn = parts.length >= 3;
-        const account = hasAccountColumn ? normalizeSlurmAccount(parts[1] || '') : undefined;
-        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
-        const gres = (hasNodeColumn ? parts[3] : hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
-        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+        const { user, account, gpuAllocations } = row;
 
         if (gpuAllocations.length > 0) {
             const jobGpuCount = sumGpuAllocations(gpuAllocations);
@@ -1232,18 +1278,12 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
     const usersByAccount = new Map<string, Map<string, ClusterAccountOverviewUser>>();
 
     for (const line of lines) {
-        const parts = line.split('|');
-        const user = parts[0].trim();
-        if (!user) {
+        const row = parseRunningGpuJobRow(line);
+        if (!row) {
             continue;
         }
-
-        const hasNodeColumn = parts.length >= 4;
-        const hasAccountColumn = parts.length >= 3;
-        const account = (hasAccountColumn ? normalizeSlurmAccount(parts[1] || '') : undefined) ?? 'unknown';
-        const nodeCount = hasNodeColumn ? parseNodeCount(parts[2]) : 1;
-        const gres = (hasNodeColumn ? parts[3] : hasAccountColumn ? parts[2] : parts[1])?.trim() || '';
-        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+        const { user, gpuAllocations } = row;
+        const account = row.account ?? 'unknown';
 
         if (gpuAllocations.length === 0) {
             continue;
@@ -1291,16 +1331,11 @@ export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
     const gpuCounts = new Map<string, number>();
 
     for (const line of lines) {
-        const parts = line.split('|');
-        const user = parts[0].trim();
-        if (!user) {
+        const row = parseRunningGpuJobRow(line);
+        if (!row) {
             continue;
         }
-
-        const hasNodeColumn = parts.length >= 3;
-        const nodeCount = hasNodeColumn ? parseNodeCount(parts[1]) : 1;
-        const gres = (hasNodeColumn ? parts[2] : parts[1])?.trim() || '';
-        const gpuAllocations = scaleGpuAllocationsByNodeCount(parseGpuAllocations(gres), nodeCount);
+        const { user, gpuAllocations } = row;
 
         jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
         if (gpuAllocations.length > 0) {
@@ -2026,9 +2061,9 @@ export class SlurmService {
         }
 
         try {
-            // %D = node count. %b is a per-node GPU request on common Slurm setups.
             const { stdout } = await this.commandRunner(
-                'squeue --noheader --state=R --format="%u|%D|%b"'
+                SQUEUE_RUNNING_GPU_JOBS_COMMAND,
+                { maxBuffer: 32 * 1024 * 1024 }
             );
 
             return parseClusterHogsOutput(stdout);
@@ -2155,7 +2190,8 @@ export class SlurmService {
 
         try {
             const { stdout } = await this.commandRunner(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"'
+                SQUEUE_RUNNING_GPU_JOBS_COMMAND,
+                { maxBuffer: 32 * 1024 * 1024 }
             );
 
             return parseClusterLeaderboardOutput(stdout);
@@ -2176,7 +2212,7 @@ export class SlurmService {
 
         try {
             const { stdout } = await this.commandRunner(
-                'squeue --noheader --state=R --format="%u|%a|%D|%b"',
+                SQUEUE_RUNNING_GPU_JOBS_COMMAND,
                 { maxBuffer: 32 * 1024 * 1024 }
             );
 
