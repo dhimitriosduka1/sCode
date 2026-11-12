@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { getSlurmJobRowParts } from '../slurmJobRow';
+import { describeNeverRunCount, getSlurmJobRowParts } from '../slurmJobRow';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -120,5 +120,16 @@ describe('Slurm job row dependencies', () => {
         assert.equal(describeRow({}, { kind: 'never', failed: ['997'], succeeded: ['998'], waitsOn: [] }), '1005 • never runs: 997 failed, 998 succeeded');
         assert.equal(describeRow({}, { kind: 'never', failed: [], succeeded: [], waitsOn: ['plot'] }), '1005 • never runs: waits on plot');
         assert.equal(describeRow({}, { kind: 'never', failed: [], succeeded: [], waitsOn: [] }), '1005 • never runs: dependency failed');
+    });
+});
+
+describe('Pending group summary', () => {
+    it('counts the pending jobs that never run', () => {
+        assert.equal(describeNeverRunCount(3), '3 never run');
+        assert.equal(describeNeverRunCount(1), '1 never runs');
+    });
+
+    it('says nothing when every pending job can still run', () => {
+        assert.equal(describeNeverRunCount(0), undefined);
     });
 });

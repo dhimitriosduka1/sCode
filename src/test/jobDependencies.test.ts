@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { describeStrandedJobs, parseDependency, QueueDependencies, readCancelTarget } from '../jobDependencies';
+import { describeStrandedJobs, listJobsForDialog, parseDependency, pendingRowCancelIds, QueueDependencies, readCancelTarget } from '../jobDependencies';
 
 function job(jobId: string, name: string, overrides: Partial<SlurmJob> = {}): SlurmJob {
     const pending = overrides.dependency !== undefined || overrides.pendingReason !== undefined;
@@ -316,5 +316,23 @@ describe('describeStrandedJobs', () => {
         assert.equal(lines[0], 'These 12 pending jobs would never run without "prep" finishing successfully:');
         assert.equal(lines.length, 2 + 10 + 1);
         assert.equal(lines[lines.length - 1], '…and 2 more');
+    });
+});
+
+describe('listJobsForDialog', () => {
+    it('gives each job a line with its name and ID', () => {
+        assert.equal(listJobsForDialog([job('91007', 'plot-results'), job('300_1', 'eval')]), '• plot-results (91007)\n• eval (300_1)');
+    });
+});
+
+describe('pendingRowCancelIds', () => {
+    // Task 1 of eval never runs, but its other pending tasks may: cancelling array 300 would take them too
+    it('cancels a job or a task by its own ID, so the other tasks of an array stay', () => {
+        assert.deepEqual(pendingRowCancelIds([job('1007', 'plot'), job('300_1', 'eval')]), ['1007', '300_1']);
+    });
+
+    // scancel cancels a range one task at a time; the array ID takes the pending row in one go
+    it('cancels an array\'s pending row by the array ID', () => {
+        assert.deepEqual(pendingRowCancelIds([job('500_[0-3%2]', 'sweep'), job('1007', 'plot')]), ['500', '1007']);
     });
 });

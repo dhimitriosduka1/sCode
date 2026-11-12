@@ -1,4 +1,4 @@
-import { extractBaseJobId, SlurmJob } from './slurmService';
+import { cleanJobIdForScontrol, extractBaseJobId, SlurmJob } from './slurmService';
 
 /**
  * Dependencies between the user's queued jobs, read from the `Dependency`
@@ -102,8 +102,26 @@ function taskListIncludes(tasks: string, task: number): boolean {
     });
 }
 
-/** How many stranded jobs the cancel dialog names before counting the rest. */
-const MAX_LISTED_STRANDED_JOBS = 10;
+/** How many jobs a cancel dialog names before counting the rest. */
+const MAX_LISTED_JOBS = 10;
+
+/** A cancel dialog's list of jobs, one line each with name and ID. */
+export function listJobsForDialog(jobs: readonly SlurmJob[]): string {
+    const listed = jobs.slice(0, MAX_LISTED_JOBS).map((job) => `• ${job.name} (${job.jobId})`);
+    if (jobs.length > MAX_LISTED_JOBS) {
+        listed.push(`…and ${jobs.length - MAX_LISTED_JOBS} more`);
+    }
+    return listed.join('\n');
+}
+
+/**
+ * The IDs that cancel exactly these pending rows: a job's or task's own ID, so
+ * the other tasks of its array stay, and the array's ID for its pending row
+ * (`123_[4-9]`), which scancel would otherwise cancel one task at a time.
+ */
+export function pendingRowCancelIds(rows: readonly SlurmJob[]): string[] {
+    return unique(rows.map((row) => cleanJobIdForScontrol(row.jobId)));
+}
 
 /**
  * The cancel dialog's explanation of what cancelling `cancelledName` strands.
@@ -116,11 +134,7 @@ export function describeStrandedJobs(cancelledName: string, stranded: readonly S
     if (stranded.length === 1) {
         return `"${stranded[0].name}" (${stranded[0].jobId}) ${condition}.`;
     }
-    const listed = stranded.slice(0, MAX_LISTED_STRANDED_JOBS).map((job) => `• ${job.name} (${job.jobId})`);
-    if (stranded.length > MAX_LISTED_STRANDED_JOBS) {
-        listed.push(`…and ${stranded.length - MAX_LISTED_STRANDED_JOBS} more`);
-    }
-    return `These ${stranded.length} pending jobs ${condition}:\n\n${listed.join('\n')}`;
+    return `These ${stranded.length} pending jobs ${condition}:\n\n${listJobsForDialog(stranded)}`;
 }
 
 type Outcome = 'open' | 'broken' | 'brokenByCancel';

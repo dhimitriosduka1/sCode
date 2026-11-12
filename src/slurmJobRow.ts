@@ -49,6 +49,14 @@ export function getSlurmJobRowParts(job: SlurmJob, dependency?: DependencyStatus
     };
 }
 
+/** What the Pending group's header says about `count` of its jobs never running, in the rows' own words. */
+export function describeNeverRunCount(count: number): string | undefined {
+    if (count === 0) {
+        return undefined;
+    }
+    return count === 1 ? '1 never runs' : `${count} never run`;
+}
+
 function createStandardJobDescription(job: SlurmJob, dependency: DependencyStatus | undefined): string {
     const parts: string[] = [job.jobId];
 

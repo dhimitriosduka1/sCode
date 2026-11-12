@@ -212,6 +212,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "slurmJobs.cancelNeverRunJobs",
+        "title": "Cancel Jobs That Will Never Run",
+        "icon": "$(circle-slash)"
+      },
+      {
         "command": "slurmJobs.cancelAllRunningJobs",
         "title": "Cancel All Running Jobs",
         "icon": "$(trash)"
@@ -308,6 +313,10 @@
       "commandPalette": [
         {
           "command": "slurmStatus.connect",
+          "when": "false"
+        },
+        {
+          "command": "slurmJobs.cancelNeverRunJobs",
           "when": "false"
         },
         {
@@ -564,6 +573,16 @@
           "command": "slurmJobs.releaseAllPendingJobs",
           "when": "view == slurmJobs && (viewItem == statusCategoryPendingHasHeld || viewItem == statusCategoryPendingHasNonHeldHasHeld)",
           "group": "actions@3"
+        },
+        {
+          "command": "slurmJobs.cancelNeverRunJobs",
+          "when": "view == slurmJobs && viewItem =~ /^statusCategoryPending/ && slurmJobs.hasNeverRunJobs",
+          "group": "inline@4"
+        },
+        {
+          "command": "slurmJobs.cancelNeverRunJobs",
+          "when": "view == slurmJobs && viewItem =~ /^statusCategoryPending/ && slurmJobs.hasNeverRunJobs",
+          "group": "actions@4"
         }
       ]
     },

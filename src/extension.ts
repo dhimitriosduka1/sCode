@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
+import { SlurmJobProvider, SlurmJobItem, StatusCategoryItem, neverRunsDecorationProvider } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { PartitionUsageProvider } from './partitionUsageProvider';
 import { ClusterOverviewProvider } from './clusterOverviewProvider';
@@ -23,7 +23,7 @@ import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
 import { CLUSTER_FILE_SCHEME, clusterFileUri, ClusterFileSystemProvider } from './clusterFileSystem';
 import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
-import { describeStrandedJobs, readCancelTarget } from './jobDependencies';
+import { describeStrandedJobs, listJobsForDialog, pendingRowCancelIds, readCancelTarget } from './jobDependencies';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -537,6 +537,7 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
         manageCheckboxStateManually: true,
     });
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(neverRunsDecorationProvider));
 
     treeView.onDidChangeCheckboxState((e) => {
         for (const [item, state] of e.items) {
@@ -1317,6 +1318,38 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Cancels the pending jobs the Pending header counts as never running: nothing
+    // else clears them, since they would wait in the queue indefinitely
+    const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
+        const jobs = item?.neverRunJobs ?? [];
+        if (jobs.length === 0) {
+            return;
+        }
+
+        const count = jobs.length;
+        const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
+        const confirmation = await vscode.window.showWarningMessage(
+            count === 1 ? 'Cancel the pending job that will never run?' : `Cancel the ${count} pending jobs that will never run?`,
+            { modal: true, detail: listJobsForDialog(jobs) },
+            confirmLabel
+        );
+
+        if (confirmation !== confirmLabel) {
+            return;
+        }
+
+        const result = await slurmService.cancelPendingJobs(pendingRowCancelIds(jobs));
+        // After a failure too: scancel still cancels the rest when one of the jobs is already gone
+        slurmJobProvider.refresh();
+        jobHistoryProvider.refresh();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(`Cancelled ${count} job${count === 1 ? '' : 's'} that would never run.`);
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register cancel all running jobs command
     const cancelAllRunningJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllRunningJobs', async () => {
         const confirmation = await vscode.window.showWarningMessage(
@@ -1784,6 +1817,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
+    context.subscriptions.push(cancelNeverRunJobsCommand);
     context.subscriptions.push(cancelAllRunningJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(submitJobWithDependencyCommand);

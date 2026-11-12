@@ -11,7 +11,7 @@ import {
     getFairShareSummary,
     rankJobAccounts,
 } from './fairShareRanking';
-import { getSlurmJobRowParts } from './slurmJobRow';
+import { describeNeverRunCount, getSlurmJobRowParts } from './slurmJobRow';
 import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
@@ -54,10 +54,28 @@ const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
     },
 };
 
+const NEVER_RUNS_SCHEME = 'slurm-job-never-runs';
+
+/**
+ * Turns the name of a job that can never start red, like its icon. A file
+ * decoration is the one way to colour a row's label, so such a row goes by a
+ * URI of its own.
+ */
+export const neverRunsDecorationProvider: vscode.FileDecorationProvider = {
+    provideFileDecoration(uri) {
+        return uri.scheme === NEVER_RUNS_SCHEME
+            ? { color: new vscode.ThemeColor('list.errorForeground') }
+            : undefined;
+    },
+};
+
 /**
  * Category item representing a group of jobs by status
  */
 export class StatusCategoryItem extends vscode.TreeItem {
+    /** The group's jobs that can never start, which its header counts and offers to cancel. */
+    public readonly neverRunJobs: SlurmJob[];
+
     constructor(
         public readonly category: StatusCategory,
         public readonly jobCount: number,
@@ -72,6 +90,8 @@ export class StatusCategoryItem extends vscode.TreeItem {
         );
 
         this.iconPath = info.icon;
+        this.neverRunJobs = (jobs ?? []).filter((job) => dependencies?.describe(job)?.kind === 'never');
+        this.description = describeNeverRunCount(this.neverRunJobs.length);
         if (category === 'pending' && jobCount > 0) {
             let context = 'statusCategoryPending';
             if (jobs) {
@@ -105,6 +125,9 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon(dependency);
+        if (dependency?.kind === 'never') {
+            this.resourceUri = vscode.Uri.from({ scheme: NEVER_RUNS_SCHEME, path: `/${job.jobId}` });
+        }
         // Use pending-specific context values so package.json can show the right inline actions
         const isMainJobArray = job.jobId.includes('[');
         const isHeld = isJobHeld(job.pendingReason);
@@ -667,7 +690,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 const jobCount = jobsInCat.length;
 
                 if (jobCount > 0) {
-                    categories.push(new StatusCategoryItem(categoryKey, jobCount, jobsInCat, this.cachedDependencies));
+                    const item = new StatusCategoryItem(categoryKey, jobCount, jobsInCat, this.cachedDependencies);
+                    if (categoryKey === 'pending') {
+                        // Shows the header's action that cancels them (package.json `when`)
+                        void vscode.commands.executeCommand('setContext', 'slurmJobs.hasNeverRunJobs', item.neverRunJobs.length > 0);
+                    }
+                    categories.push(item);
                 }
             }
 
