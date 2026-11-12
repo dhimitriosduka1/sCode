@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { RefreshGate } from './refreshGate';
 import { ClusterAccountOverviewEntry, MaintenanceWindow, SlurmService } from './slurmService';
 import {
     formatClusterAccountOverviewDescription,
@@ -69,10 +70,20 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmClusterOverview.refreshing', refreshing),
+    );
 
     constructor(private readonly slurmService: SlurmService) {}
 
+    /** Reloads the view, once the refresh in progress (if any) is done. */
     refresh(): void {
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedEntries = [];
         this.cachedMaintenanceWindows = [];
         this.lastRefreshedAt = undefined;
@@ -89,16 +100,18 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
             return [];
         }
 
-        return this.getRootItems();
+        return this.refreshGate.load(() => this.getRootItems());
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
         try {
             if (!this.hasFetchedEntries) {
-                [this.cachedEntries, this.cachedMaintenanceWindows] = await Promise.all([
+                const [entries, maintenanceWindows] = await Promise.all([
                     this.slurmService.getClusterAccountOverview(),
                     this.slurmService.getMaintenanceWindows(),
                 ]);
+                this.cachedEntries = entries;
+                this.cachedMaintenanceWindows = maintenanceWindows;
                 this.lastRefreshedAt = new Date();
                 this.hasFetchedEntries = true;
             }

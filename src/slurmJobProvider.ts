@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, getCurrentUsername, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, generateProgressBar, formatStartTime, isJobHeld } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -11,8 +11,10 @@ import {
     getFairShareSummary,
     rankJobAccounts,
 } from './fairShareRanking';
-import { getSlurmJobRowParts } from './slurmJobRow';
+import { describeNeverRunCount, getSlurmJobRowParts } from './slurmJobRow';
+import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
+import { RefreshGate } from './refreshGate';
 import { SubmitScriptCache } from './submitScriptCache';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
@@ -52,14 +54,34 @@ const CATEGORIES: Record<StatusCategory, CategoryInfo> = {
     },
 };
 
+const NEVER_RUNS_SCHEME = 'slurm-job-never-runs';
+
+/**
+ * Turns the name of a job that can never start red, like its icon. A file
+ * decoration is the one way to colour a row's label, so such a row goes by a
+ * URI of its own.
+ */
+export const neverRunsDecorationProvider: vscode.FileDecorationProvider = {
+    provideFileDecoration(uri) {
+        return uri.scheme === NEVER_RUNS_SCHEME
+            ? { color: new vscode.ThemeColor('list.errorForeground') }
+            : undefined;
+    },
+};
+
 /**
  * Category item representing a group of jobs by status
  */
 export class StatusCategoryItem extends vscode.TreeItem {
+    /** The group's jobs that can never start, which its header counts and offers to cancel. */
+    public readonly neverRunJobs: SlurmJob[];
+
     constructor(
         public readonly category: StatusCategory,
         public readonly jobCount: number,
         public readonly jobs?: SlurmJob[],
+        /** The whole queue's dependencies as loaded with `jobs`, since a job's row names the jobs it waits for. */
+        public readonly dependencies?: QueueDependencies,
     ) {
         const info = CATEGORIES[category];
         super(
@@ -68,6 +90,8 @@ export class StatusCategoryItem extends vscode.TreeItem {
         );
 
         this.iconPath = info.icon;
+        this.neverRunJobs = (jobs ?? []).filter((job) => dependencies?.describe(job)?.kind === 'never');
+        this.description = describeNeverRunCount(this.neverRunJobs.length);
         if (category === 'pending' && jobCount > 0) {
             let context = 'statusCategoryPending';
             if (jobs) {
@@ -93,13 +117,17 @@ export class SlurmJobItem extends vscode.TreeItem {
         public readonly job: SlurmJob,
         isChecked: boolean = false,
         private readonly priorityFactors?: JobPriorityFactors,
+        dependency?: DependencyStatus,
     ) {
-        const rowParts = getSlurmJobRowParts(job);
+        const rowParts = getSlurmJobRowParts(job, dependency);
         super(rowParts.label, vscode.TreeItemCollapsibleState.Collapsed);
 
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
-        this.iconPath = this.getStateIcon();
+        this.iconPath = this.getStateIcon(dependency);
+        if (dependency?.kind === 'never') {
+            this.resourceUri = vscode.Uri.from({ scheme: NEVER_RUNS_SCHEME, path: `/${job.jobId}` });
+        }
         // Use pending-specific context values so package.json can show the right inline actions
         const isMainJobArray = job.jobId.includes('[');
         const isHeld = isJobHeld(job.pendingReason);
@@ -152,6 +180,13 @@ export class SlurmJobItem extends vscode.TreeItem {
             }
         }
 
+        if (isNearTimeLimit(this.job)) {
+            details.push({
+                label: 'Remaining',
+                value: formatRemainingTime(calculateRemainingSeconds(this.job.time, this.job.timeLimit)),
+            });
+        }
+
         if (this.job.state === 'R') {
             const progress = calculateProgress(this.job.time, this.job.timeLimit);
             if (progress >= 0) {
@@ -187,10 +222,22 @@ export class SlurmJobItem extends vscode.TreeItem {
         }));
     }
 
-    private getStateIcon(): vscode.ThemeIcon {
+    private getStateIcon(dependency: DependencyStatus | undefined): vscode.ThemeIcon {
+        // A job that can never start is the one to act on, held or not: releasing
+        // it would not help, and left alone it waits in the queue forever
+        if (dependency?.kind === 'never') {
+            return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'));
+        }
+
         // Held pending jobs take priority — show lock icon
         if (this.job.state === 'PD' && isJobHeld(this.job.pendingReason)) {
             return new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange'));
+        }
+
+        // A running job about to be killed by its wall clock reads as healthy
+        // green otherwise, which is the one case where that is misleading.
+        if (isNearTimeLimit(this.job)) {
+            return new vscode.ThemeIcon('play-circle', new vscode.ThemeColor('charts.orange'));
         }
 
         switch (this.job.state) {
@@ -299,11 +346,13 @@ class SubmitScriptItem extends vscode.TreeItem {
         this.contextValue = 'submitScript';
         this.description = isCached ? '(cached at submission)' : filePath;
 
-        // Make the item clickable to open the file
+        // Make the item clickable to open the file. Scripts open from this machine,
+        // editable, also when connected to a cluster: the file system is shared,
+        // and the cached copy is kept here
         this.command = {
             command: 'slurmJobs.openFile',
             title: 'Open File',
-            arguments: [filePath],
+            arguments: [filePath, { onThisMachine: true }],
         };
     }
 }
@@ -386,16 +435,18 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private scriptCache?: SubmitScriptCache;
     private checkedJobIds?: Set<string>;
     private cachedJobs: SlurmJob[] = [];
+    private cachedDependencies: QueueDependencies | undefined;
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private cachedHogs: ClusterHogSummary | undefined;
     private cachedFairShareSummary: FairShareSummary | undefined;
     private cachedPriorityFactors: Map<string, JobPriorityFactors> | undefined;
     private hasFetchedFairShare = false;
     private searchFilter: string = '';
-    /** Bumped on every refresh so results from a superseded fetch are discarded */
-    private generation: number = 0;
-    /** In-flight root fetch, shared by concurrent getChildren() calls */
-    private pendingRootItems: { generation: number; promise: Promise<vscode.TreeItem[]> } | undefined;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmJobs.refreshing', refreshing),
+    );
 
     private currentUsernameProvider: () => string | undefined;
 
@@ -403,20 +454,23 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         slurmService: SlurmService,
         scriptCache?: SubmitScriptCache,
         checkedJobIds?: Set<string>,
-        currentUsernameProvider: () => string | undefined = getCurrentUsername,
+        currentUsernameProvider?: () => string | undefined,
     ) {
         this.slurmService = slurmService;
         this.scriptCache = scriptCache;
         this.checkedJobIds = checkedJobIds;
-        this.currentUsernameProvider = currentUsernameProvider;
+        // The service knows who the user is on the cluster commands run on
+        this.currentUsernameProvider = currentUsernameProvider ?? (() => slurmService.getUsername());
     }
 
     /**
-     * Refresh the job list
+     * Refresh the job list, once the refresh in progress (if any) is done
      */
     refresh(): void {
-        this.generation++;
-        this.pendingRootItems = undefined;
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedJobs = [];
         this.cachedMaintenanceWindows = [];
         this.cachedHogs = undefined;
@@ -450,6 +504,15 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     /**
+     * Dependencies among the jobs the view shows, for cancelling: undefined
+     * until they have first loaded. A refresh keeps the last ones until it has
+     * new ones, so a cancel meanwhile still asks about the job's dependents.
+     */
+    getQueueDependencies(): QueueDependencies | undefined {
+        return this.cachedDependencies;
+    }
+
+    /**
      * Get filtered jobs based on search
      */
     private getFilteredJobs(): SlurmJob[] {
@@ -478,7 +541,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
         // Handle category children (jobs in that category)
         if (element instanceof StatusCategoryItem) {
-            return this.getCategoryChildren(element.category);
+            return this.getCategoryChildren(element);
         }
 
         // Root level: show categories
@@ -493,22 +556,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      * those calls would kick off its own squeue/scontrol fan-out.
      */
     private getRootItems(): Promise<vscode.TreeItem[]> {
-        if (this.pendingRootItems?.generation === this.generation) {
-            return this.pendingRootItems.promise;
-        }
-
-        const generation = this.generation;
-        const promise = this.loadRootItems(generation).finally(() => {
-            if (this.pendingRootItems?.generation === generation) {
-                this.pendingRootItems = undefined;
-            }
-        });
-
-        this.pendingRootItems = { generation, promise };
-        return promise;
+        return this.refreshGate.load(() => this.loadRootItems());
     }
 
-    private async loadRootItems(generation: number): Promise<vscode.TreeItem[]> {
+    private async loadRootItems(): Promise<vscode.TreeItem[]> {
         try {
             // Check if SLURM is available
             const isAvailable = await this.slurmService.isAvailable();
@@ -523,12 +574,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     this.slurmService.getMaintenanceWindows(),
                 ]);
 
-                // A refresh landed while we were fetching - that newer fetch owns the cache
-                if (generation !== this.generation) {
-                    return [];
-                }
-
                 this.cachedJobs = jobs;
+                this.cachedDependencies = new QueueDependencies(jobs);
                 this.cachedMaintenanceWindows = maintenanceWindows;
 
                 // Clean up stale checked jobs (jobs that no longer exist)
@@ -554,11 +601,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 try {
                     // Cached alongside the jobs so re-rendering the tree does not re-query the cluster
                     if (!this.cachedHogs) {
-                        const hogs = await this.slurmService.getClusterHogs();
-                        if (generation !== this.generation) {
-                            return [];
-                        }
-                        this.cachedHogs = hogs;
+                        this.cachedHogs = await this.slurmService.getClusterHogs();
                     }
                     const { topJobHog, topGpuHog } = this.cachedHogs;
                     jobHogItem = topJobHog && topJobHog.jobCount > 1
@@ -589,10 +632,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                                 ? this.slurmService.getJobPriorityFactors()
                                 : Promise.resolve(new Map<string, JobPriorityFactors>()),
                         ]);
-
-                        if (generation !== this.generation) {
-                            return [];
-                        }
 
                         const lookup = buildFairShareLookup(fairShare.entries);
                         // The standing that applies is the account the jobs run under, not the user's best one
@@ -651,7 +690,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 const jobCount = jobsInCat.length;
 
                 if (jobCount > 0) {
-                    categories.push(new StatusCategoryItem(categoryKey, jobCount, jobsInCat));
+                    const item = new StatusCategoryItem(categoryKey, jobCount, jobsInCat, this.cachedDependencies);
+                    if (categoryKey === 'pending') {
+                        // Shows the header's action that cancels them (package.json `when`)
+                        void vscode.commands.executeCommand('setContext', 'slurmJobs.hasNeverRunJobs', item.neverRunJobs.length > 0);
+                    }
+                    categories.push(item);
                 }
             }
 
@@ -662,11 +706,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
     }
 
-    private getCategoryChildren(category: StatusCategory): vscode.TreeItem[] {
-        const filteredJobs = this.getFilteredJobs();
-
-        const info = CATEGORIES[category];
-        const jobs = filteredJobs.filter(job => info.states.includes(job.state));
+    private getCategoryChildren(category: StatusCategoryItem): vscode.TreeItem[] {
+        // The category's own jobs, not the cache: a refresh asked for while it loaded
+        // may have dropped the cache by the time VS Code asks for its children
+        const jobs = [...(category.jobs ?? [])];
 
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
@@ -674,7 +717,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return jobs.map(job => new SlurmJobItem(
             job,
             this.checkedJobIds?.has(job.jobId) ?? false,
-            findJobPriorityFactors(this.cachedPriorityFactors, job.jobId)
+            findJobPriorityFactors(this.cachedPriorityFactors, job.jobId),
+            category.dependencies?.describe(job),
         ));
     }
 
@@ -739,9 +783,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             ));
 
             // Cached version (if available)
-            if (this.scriptCache && this.scriptCache.has(job.jobId)) {
-                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId);
-                const cachedAt = this.scriptCache.formatCacheTime(job.jobId);
+            const cluster = this.slurmService.getAccount().cluster;
+            if (this.scriptCache && this.scriptCache.has(job.jobId, cluster)) {
+                const cachedPath = this.scriptCache.getCachedScriptPath(job.jobId, cluster);
+                const cachedAt = this.scriptCache.formatCacheTime(job.jobId, cluster);
                 if (cachedPath) {
                     children.push(new SubmitScriptItem(
                         'Submit Script (cached)',

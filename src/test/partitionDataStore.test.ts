@@ -113,4 +113,20 @@ describe('PartitionDataStore', () => {
 
         assert.deepEqual(store.snapshot?.loads, []);
     });
+
+    it('does not keep a fetch that was running when it was cleared, e.g. on switching clusters', async () => {
+        const source = fakeSource({ cpu: [cpu('old-cluster', 10)] });
+        const store = new PartitionDataStore(source);
+
+        const before = store.refresh();
+        // Let that fetch read the old cluster's answers before the switch
+        await new Promise(resolve => setImmediate(resolve));
+        store.clear();
+        source.answers.cpu = [cpu('new-cluster', 10)];
+        const after = store.refresh();
+        await Promise.all([before, after]);
+
+        assert.equal(source.queries, 2, 'the refresh after clear() starts its own queries');
+        assert.deepEqual(store.snapshot?.loads.map(load => load.partition), ['new-cluster']);
+    });
 });

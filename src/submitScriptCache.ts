@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DeferredSave } from './deferredSave';
 
 /**
  * Cached submit script information
@@ -23,6 +24,7 @@ export class SubmitScriptCache {
     private context: vscode.ExtensionContext;
     private cache: Map<string, CachedSubmitScript>;
     private cacheDir: string;
+    private readonly deferredSave = new DeferredSave(() => this.saveCache());
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -99,10 +101,11 @@ export class SubmitScriptCache {
      * @param originalScriptPath The path to the original submit script
      * @returns The path to the cached script, or undefined if caching failed
      */
-    async cacheScript(jobId: string, originalScriptPath: string): Promise<string | undefined> {
+    async cacheScript(jobId: string, originalScriptPath: string, cluster?: string): Promise<string | undefined> {
+        const key = SubmitScriptCache.key(jobId, cluster);
         // Skip if already cached
-        if (this.cache.has(jobId)) {
-            return this.cache.get(jobId)?.cachedPath;
+        if (this.cache.has(key)) {
+            return this.cache.get(key)?.cachedPath;
         }
 
         // Skip if original path is not available
@@ -120,7 +123,7 @@ export class SubmitScriptCache {
             // Create a unique filename using job ID and timestamp
             const timestamp = Date.now();
             const ext = path.extname(originalScriptPath) || '.sh';
-            const cachedFilename = `${jobId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}${ext}`;
+            const cachedFilename = `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}${ext}`;
             const cachedPath = path.join(this.cacheDir, cachedFilename);
 
             // Copy the file
@@ -133,8 +136,8 @@ export class SubmitScriptCache {
                 cachedAt: timestamp,
             };
 
-            this.cache.set(jobId, entry);
-            await this.saveCache();
+            this.cache.set(key, entry);
+            this.deferredSave.schedule();
 
             console.log(`Cached submit script for job ${jobId}: ${cachedPath}`);
             return cachedPath;
@@ -145,31 +148,51 @@ export class SubmitScriptCache {
     }
 
     /**
+     * Entries are kept per cluster, since job IDs repeat across clusters; jobs
+     * on this machine keep the bare job ID they always had. Every task of an
+     * array (123_4, 123_[5-9%2]) was submitted with one script, so they share
+     * the base job ID's entry instead of each copying the file.
+     */
+    private static key(jobId: string, cluster?: string): string {
+        const baseJobId = /^(\d+)/.exec(jobId)?.[1] ?? jobId;
+        return cluster ? `${cluster}:${baseJobId}` : baseJobId;
+    }
+
+    /** Writes any pending change now. */
+    flush(): Promise<void> {
+        return this.deferredSave.flush();
+    }
+
+    dispose(): void {
+        this.flush().catch(error => console.error('Failed to save cache:', error));
+    }
+
+    /**
      * Get cached script info for a job
      */
-    get(jobId: string): CachedSubmitScript | undefined {
-        return this.cache.get(jobId);
+    get(jobId: string, cluster?: string): CachedSubmitScript | undefined {
+        return this.cache.get(SubmitScriptCache.key(jobId, cluster));
     }
 
     /**
      * Get the cached script path for a job
      */
-    getCachedScriptPath(jobId: string): string | undefined {
-        return this.cache.get(jobId)?.cachedPath;
+    getCachedScriptPath(jobId: string, cluster?: string): string | undefined {
+        return this.get(jobId, cluster)?.cachedPath;
     }
 
     /**
      * Get the original script path at submission time for a job
      */
-    getOriginalScriptPath(jobId: string): string | undefined {
-        return this.cache.get(jobId)?.originalPath;
+    getOriginalScriptPath(jobId: string, cluster?: string): string | undefined {
+        return this.get(jobId, cluster)?.originalPath;
     }
 
     /**
      * Check if a job has a cached script
      */
-    has(jobId: string): boolean {
-        return this.cache.has(jobId);
+    has(jobId: string, cluster?: string): boolean {
+        return this.cache.has(SubmitScriptCache.key(jobId, cluster));
     }
 
     /**
@@ -195,14 +218,15 @@ export class SubmitScriptCache {
         });
 
         this.cache.clear();
-        await this.saveCache();
+        this.deferredSave.schedule();
+        await this.deferredSave.flush();
     }
 
     /**
      * Format the cache timestamp for display
      */
-    formatCacheTime(jobId: string): string {
-        const entry = this.cache.get(jobId);
+    formatCacheTime(jobId: string, cluster?: string): string {
+        const entry = this.get(jobId, cluster);
         if (!entry) {
             return 'N/A';
         }

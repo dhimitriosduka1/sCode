@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import { getCurrentUsername, SlurmService } from './slurmService';
+import { SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
 import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { RefreshGate } from './refreshGate';
 import {
     DEFAULT_LEADERBOARD_ENTRY_COUNT,
     formatLeaderboardEntryTrailingDescription,
@@ -76,14 +77,25 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
     private cachedEntries: LeaderboardEntry[] = [];
     private lastRefreshedAt: Date | undefined;
     private hasFetchedEntries = false;
+    // Disables the view's refresh button while it loads (package.json `enablement`)
+    private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
+        () => this.reload(),
+        (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmLeaderboard.refreshing', refreshing),
+    );
     private currentUsernameProvider: () => string | undefined;
 
-    constructor(slurmService: SlurmService, currentUsernameProvider: () => string | undefined = getCurrentUsername) {
+    constructor(slurmService: SlurmService, currentUsernameProvider?: () => string | undefined) {
         this.slurmService = slurmService;
-        this.currentUsernameProvider = currentUsernameProvider;
+        // The service knows who the user is on the cluster commands run on
+        this.currentUsernameProvider = currentUsernameProvider ?? (() => slurmService.getUsername());
     }
 
+    /** Reloads the view, once the refresh in progress (if any) is done. */
     refresh(): void {
+        this.refreshGate.refresh();
+    }
+
+    private reload(): void {
         this.cachedEntries = [];
         this.lastRefreshedAt = undefined;
         this.hasFetchedEntries = false;
@@ -106,7 +118,7 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
             return [];
         }
 
-        return this.getRootItems();
+        return this.refreshGate.load(() => this.getRootItems());
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
