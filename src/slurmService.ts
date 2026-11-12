@@ -2373,6 +2373,30 @@ export class SlurmService {
     }
 
     /**
+     * Cancel what is still pending of several jobs or arrays, in one scancel:
+     * a running task of one of the arrays, or a job that has started since,
+     * keeps running.
+     * @param jobIds Job or array IDs, as scancel takes them (`123`)
+     */
+    async cancelPendingJobs(jobIds: readonly string[]): Promise<{ success: boolean; message: string }> {
+        const listed = jobIds.join(', ');
+        if (this.isMockMode()) {
+            this.mockJobs = this.getMutableMockJobs().filter(job => !(job.state === 'PD'
+                && jobIds.some(jobId => job.jobId === jobId || job.jobId.startsWith(`${jobId}_`))));
+            return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
+        }
+
+        try {
+            await this.commandRunner(`scancel --state=PENDING ${jobIds.map(jobId => `'${jobId}'`).join(' ')}`);
+            return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to cancel pending jobs in ${listed}:`, error);
+            return { success: false, message: `Failed to cancel pending jobs in ${listed}: ${errorMessage}` };
+        }
+    }
+
+    /**
      * Cancel all SLURM jobs for the current user
      * @returns Object with success status and message
      */

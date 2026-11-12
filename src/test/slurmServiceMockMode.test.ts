@@ -59,6 +59,17 @@ describe('SlurmService mock mode', () => {
         assert.equal(await service.getJobArrayInfo('91004'), null);
     });
 
+    it('cancels only the pending jobs among those given in mock mode', async () => {
+        const service = createMockService();
+
+        await service.cancelPendingJobs(['91001', '91004']);
+        const jobs = await service.getJobs();
+
+        // 91001 is running
+        assert.equal(jobs.some(job => job.jobId === '91001'), true);
+        assert.equal(jobs.some(job => job.jobId.startsWith('91004')), false);
+    });
+
     it('can submit a mock job without sbatch', async () => {
         const service = createMockService();
 
@@ -217,10 +228,10 @@ describe('SlurmService mock mode', () => {
     it('can bulk hold and release pending jobs in mock mode', async () => {
         const service = createMockService();
 
-        // Initially we have four pending jobs in mock mode
+        // Initially we have seven pending jobs in mock mode
         let jobs = await service.getJobs();
         let pending = jobs.filter(j => j.state === 'PD');
-        assert.equal(pending.length, 4);
+        assert.equal(pending.length, 7);
         assert.equal(pending.every(j => !isJobHeld(j.pendingReason)), true);
 
         // Bulk hold
@@ -230,7 +241,7 @@ describe('SlurmService mock mode', () => {
 
         jobs = await service.getJobs();
         pending = jobs.filter(j => j.state === 'PD');
-        assert.equal(pending.length, 4);
+        assert.equal(pending.length, 7);
         assert.equal(pending.every(j => isJobHeld(j.pendingReason)), true);
 
         // Bulk release
@@ -240,7 +251,7 @@ describe('SlurmService mock mode', () => {
 
         jobs = await service.getJobs();
         pending = jobs.filter(j => j.state === 'PD');
-        assert.equal(pending.length, 4);
+        assert.equal(pending.length, 7);
         assert.equal(pending.every(j => !isJobHeld(j.pendingReason)), true);
     });
 
@@ -266,7 +277,7 @@ describe('SlurmService mock mode', () => {
 
         // Verify pending jobs are still intact
         let pending = jobs.filter(j => j.state === 'PD');
-        assert.equal(pending.length, 4);
+        assert.equal(pending.length, 7);
     });
 });
 

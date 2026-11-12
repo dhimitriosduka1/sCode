@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJobProvider, SlurmJobItem } from './slurmJobProvider';
+import { SlurmJobProvider, SlurmJobItem, StatusCategoryItem, neverRunsDecorationProvider } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { PartitionUsageProvider } from './partitionUsageProvider';
 import { ClusterOverviewProvider } from './clusterOverviewProvider';
@@ -23,6 +23,7 @@ import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
 import { CLUSTER_FILE_SCHEME, clusterFileUri, ClusterFileSystemProvider } from './clusterFileSystem';
 import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
+import { describeStrandedJobs, pendingRowCancelIds, readCancelTarget } from './jobDependencies';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -539,6 +540,7 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
         manageCheckboxStateManually: true,
     });
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(neverRunsDecorationProvider));
 
     treeView.onDidChangeCheckboxState((e) => {
         for (const [item, state] of e.items) {
@@ -1044,22 +1046,21 @@ export function activate(context: vscode.ExtensionContext) {
                 jobIdToCancel = baseJobId;
             } else if (cancelOption.value === 'pending') {
                 // Cancel only pending jobs in the array
-                if (confirmCancel) {
-                    const confirmation = await vscode.window.showWarningMessage(
-                        `Are you sure you want to cancel all PENDING jobs in array "${jobName}" (${baseJobId})? Running jobs will not be affected.`,
-                        { modal: true },
-                        'Cancel Pending'
-                    );
-
-                    if (confirmation !== 'Cancel Pending') {
-                        return;
-                    }
+                const dependents = await confirmJobCancel(
+                    `Are you sure you want to cancel all PENDING jobs in array "${jobName}" (${baseJobId})? Running jobs will not be affected.`,
+                    'Cancel Pending',
+                    jobName,
+                    slurmJobProvider.getQueueDependencies()?.strandedByCancel({ base: baseJobId, whole: false }) ?? [],
+                    confirmCancel,
+                );
+                if (!dependents) {
+                    return;
                 }
 
                 const result = await slurmService.cancelJobByState(baseJobId, 'PENDING');
 
                 if (result.success) {
-                    vscode.window.showInformationMessage(result.message);
+                    await cancelDependentsAndReport(slurmService, result.message, dependents);
                     slurmJobProvider.refresh();
                 } else {
                     vscode.window.showErrorMessage(result.message);
@@ -1208,33 +1209,30 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        // Show confirmation dialog if enabled
-        if (confirmCancel) {
-            let confirmMessage: string;
-            if (isJobArray && jobIdToCancel === jobId.split('_')[0]) {
-                confirmMessage = `Are you sure you want to cancel the ENTIRE job array "${jobName}" (${jobIdToCancel})?`;
-            } else if (isJobArray && jobIdToCancel.includes('[')) {
-                confirmMessage = `Are you sure you want to cancel jobs "${jobName}" in range ${jobIdToCancel}?`;
-            } else {
-                confirmMessage = `Are you sure you want to cancel job "${jobName}" (${jobIdToCancel})?`;
-            }
-
-            const confirmation = await vscode.window.showWarningMessage(
-                confirmMessage,
-                { modal: true },
-                'Cancel Job'
-            );
-
-            if (confirmation !== 'Cancel Job') {
-                return; // User cancelled the dialog
-            }
+        let confirmMessage: string;
+        if (isJobArray && jobIdToCancel === jobId.split('_')[0]) {
+            confirmMessage = `Are you sure you want to cancel the ENTIRE job array "${jobName}" (${jobIdToCancel})?`;
+        } else if (isJobArray && jobIdToCancel.includes('[')) {
+            confirmMessage = `Are you sure you want to cancel jobs "${jobName}" in range ${jobIdToCancel}?`;
+        } else {
+            confirmMessage = `Are you sure you want to cancel job "${jobName}" (${jobIdToCancel})?`;
+        }
+        const dependents = await confirmJobCancel(
+            confirmMessage,
+            'Cancel Job',
+            jobName,
+            slurmJobProvider.getQueueDependencies()?.strandedByCancel(readCancelTarget(jobIdToCancel)) ?? [],
+            confirmCancel,
+        );
+        if (!dependents) {
+            return; // User cancelled the dialog
         }
 
         // Cancel the job
         const result = await slurmService.cancelJob(jobIdToCancel);
 
         if (result.success) {
-            vscode.window.showInformationMessage(result.message);
+            await cancelDependentsAndReport(slurmService, result.message, dependents);
             // Refresh the job list to reflect the change
             slurmJobProvider.refresh();
         } else {
@@ -1318,6 +1316,39 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(result.message);
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
+    // Cancels the pending jobs the Pending header counts as never running: nothing
+    // else clears them, since they would wait in the queue indefinitely
+    const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
+        if (!item || item.neverRunJobs.length === 0) {
+            return;
+        }
+
+        const count = item.neverRunJobs.length;
+        const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
+        const confirmation = await vscode.window.showWarningMessage(
+            count === 1
+                ? 'Are you sure you want to cancel the pending job that will never run?'
+                : `Are you sure you want to cancel the ${count} pending jobs that will never run?`,
+            { modal: true },
+            confirmLabel
+        );
+
+        if (confirmation !== confirmLabel) {
+            return;
+        }
+
+        const result = await slurmService.cancelPendingJobs(pendingRowCancelIds(item.neverRunJobs));
+        // After a failure too: scancel still cancels the rest when one of the jobs is already gone
+        slurmJobProvider.refresh();
+        jobHistoryProvider.refresh();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(`Cancelled ${count} job${count === 1 ? '' : 's'} that would never run.`);
         } else {
             vscode.window.showErrorMessage(result.message);
         }
@@ -1790,6 +1821,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
+    context.subscriptions.push(cancelNeverRunJobsCommand);
     context.subscriptions.push(cancelAllRunningJobsCommand);
     context.subscriptions.push(submitJobCommand);
     context.subscriptions.push(submitJobWithDependencyCommand);
@@ -1832,6 +1864,69 @@ export async function deactivate(): Promise<void> {
     // Sign out of a cluster this window signed in to, rather than leave the connection open
     await activeClusterConnection?.shutdown();
     console.log('SLURM Cluster Manager deactivated');
+}
+
+/**
+ * Confirms a cancel. Pending jobs that can only run if the job (`jobName`)
+ * finishes successfully could never run once it is cancelled, so the dialog
+ * names them and offers to cancel them as well. That question is asked even
+ * with `confirmCancelJob` off, since its two answers leave different queues
+ * behind. Resolves to the jobs to cancel as well (none, or all of `stranded`),
+ * or undefined when the user backed out.
+ */
+async function confirmJobCancel(
+    message: string,
+    confirmLabel: string,
+    jobName: string,
+    stranded: readonly SlurmJob[],
+    askToConfirm: boolean,
+): Promise<readonly SlurmJob[] | undefined> {
+    if (stranded.length === 0) {
+        if (!askToConfirm) {
+            return [];
+        }
+        const choice = await vscode.window.showWarningMessage(message, { modal: true }, confirmLabel);
+        return choice === confirmLabel ? [] : undefined;
+    }
+
+    const count = stranded.length;
+    const withDependents = `${confirmLabel} and ${count} Dependent${count === 1 ? '' : 's'}`;
+    const alone = `${confirmLabel} Only`;
+    const choice = await vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail: describeStrandedJobs(jobName, stranded) },
+        withDependents,
+        alone,
+    );
+    if (choice === withDependents) {
+        return stranded;
+    }
+    return choice === alone ? [] : undefined;
+}
+
+/**
+ * Reports a cancel that went through, first cancelling the dependents the user
+ * chose to cancel with it. They go only after it, so none is cancelled for a
+ * job that turned out not to be.
+ */
+async function cancelDependentsAndReport(slurmService: SlurmService, message: string, dependents: readonly SlurmJob[]): Promise<void> {
+    if (dependents.length === 0) {
+        vscode.window.showInformationMessage(message);
+        return;
+    }
+
+    // A pending array goes whole, as its dependency holds back every pending
+    // task, but only its pending tasks: the ones already running stay
+    const result = await slurmService.cancelPendingJobs([...new Set(dependents.map((job) => extractBaseJobId(job.jobId)))]);
+    const count = dependents.length;
+    if (result.success) {
+        vscode.window.showInformationMessage(`${message}, along with ${count} dependent job${count === 1 ? '' : 's'}.`);
+    } else {
+        const notCancelled = count === 1
+            ? 'its dependent job may not have been cancelled'
+            : `its ${count} dependent jobs may not all have been cancelled`;
+        vscode.window.showWarningMessage(`${message}, but ${notCancelled}: ${result.message}`);
+    }
 }
 
 /**
