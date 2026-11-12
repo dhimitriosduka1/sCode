@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { describeStrandedJobs, listJobsForDialog, parseDependency, pendingRowCancelIds, QueueDependencies, readCancelTarget } from '../jobDependencies';
+import { describeStrandedJobs, parseDependency, pendingRowCancelIds, QueueDependencies, readCancelTarget } from '../jobDependencies';
 
 function job(jobId: string, name: string, overrides: Partial<SlurmJob> = {}): SlurmJob {
     const pending = overrides.dependency !== undefined || overrides.pendingReason !== undefined;
@@ -316,12 +316,6 @@ describe('describeStrandedJobs', () => {
         assert.equal(lines[0], 'These 12 pending jobs would never run without "prep" finishing successfully:');
         assert.equal(lines.length, 2 + 10 + 1);
         assert.equal(lines[lines.length - 1], '…and 2 more');
-    });
-});
-
-describe('listJobsForDialog', () => {
-    it('gives each job a line with its name and ID', () => {
-        assert.equal(listJobsForDialog([job('91007', 'plot-results'), job('300_1', 'eval')]), '• plot-results (91007)\n• eval (300_1)');
     });
 });
 

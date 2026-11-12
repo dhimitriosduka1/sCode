@@ -23,7 +23,7 @@ import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
 import { CLUSTER_FILE_SCHEME, clusterFileUri, ClusterFileSystemProvider } from './clusterFileSystem';
 import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
-import { describeStrandedJobs, listJobsForDialog, pendingRowCancelIds, readCancelTarget } from './jobDependencies';
+import { describeStrandedJobs, pendingRowCancelIds, readCancelTarget } from './jobDependencies';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -1321,16 +1321,17 @@ export function activate(context: vscode.ExtensionContext) {
     // Cancels the pending jobs the Pending header counts as never running: nothing
     // else clears them, since they would wait in the queue indefinitely
     const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
-        const jobs = item?.neverRunJobs ?? [];
-        if (jobs.length === 0) {
+        if (!item || item.neverRunJobs.length === 0) {
             return;
         }
 
-        const count = jobs.length;
+        const count = item.neverRunJobs.length;
         const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
         const confirmation = await vscode.window.showWarningMessage(
-            count === 1 ? 'Cancel the pending job that will never run?' : `Cancel the ${count} pending jobs that will never run?`,
-            { modal: true, detail: listJobsForDialog(jobs) },
+            count === 1
+                ? 'Are you sure you want to cancel the pending job that will never run?'
+                : `Are you sure you want to cancel the ${count} pending jobs that will never run?`,
+            { modal: true },
             confirmLabel
         );
 
@@ -1338,7 +1339,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const result = await slurmService.cancelPendingJobs(pendingRowCancelIds(jobs));
+        const result = await slurmService.cancelPendingJobs(pendingRowCancelIds(item.neverRunJobs));
         // After a failure too: scancel still cancels the rest when one of the jobs is already gone
         slurmJobProvider.refresh();
         jobHistoryProvider.refresh();
