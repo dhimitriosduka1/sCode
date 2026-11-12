@@ -14,7 +14,7 @@ import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvide
 import { SlurmScriptCompletionProvider, SLURM_SCRIPT_COMPLETION_TRIGGER_CHARACTERS } from './slurmScriptCompletionProvider';
 import { SlurmScriptDiagnostics } from './slurmScriptDiagnostics';
 import { PartitionDataStore } from './partitionDataStore';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId, samePartitionSet, splitPartitionList } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -1620,6 +1620,67 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register update partition command (pending jobs and the pending part of arrays)
+    const updateJobPartitionCommand = vscode.commands.registerCommand('slurmJobs.updateJobPartition', async (item: any) => {
+        const job: SlurmJob | undefined = item?.job;
+        if (!job?.jobId) {
+            vscode.window.showWarningMessage('No job selected');
+            return;
+        }
+        if (job.state !== 'PD') {
+            vscode.window.showWarningMessage(`Job ${job.jobId} is not pending; only pending jobs can change partition.`);
+            return;
+        }
+
+        const current = splitPartitionList(job.partition);
+        const available = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Window, title: 'Reading SLURM partitions' },
+            () => slurmService.getPartitionNames(),
+        );
+        if (available.length === 0) {
+            vscode.window.showErrorMessage('Could not read the partition list from sinfo.');
+            return;
+        }
+
+        // A partition the job already names stays in the list even if sinfo hides it
+        const names = [...available, ...current.filter(name => !available.includes(name))];
+        const isArray = job.jobId.includes('[');
+        const picked = await vscode.window.showQuickPick(
+            names.map(name => ({
+                label: name,
+                description: current.includes(name) ? 'current' : undefined,
+                picked: current.includes(name),
+            })),
+            {
+                canPickMany: true,
+                title: `${isArray ? 'Array partition' : 'Partition'}: ${job.name} (${job.jobId})`,
+                placeHolder: isArray
+                    ? 'Check the partitions for the pending tasks; running tasks keep theirs'
+                    : 'Check the partitions the job may run in',
+            },
+        );
+        if (!picked) {
+            return;
+        }
+        const chosen = picked.map(entry => entry.label);
+        if (chosen.length === 0) {
+            vscode.window.showWarningMessage(`No partition checked; job ${job.jobId} stays in ${job.partition}.`);
+            return;
+        }
+        if (samePartitionSet(chosen, current)) {
+            vscode.window.showInformationMessage(`Job ${job.jobId} already uses ${job.partition}.`);
+            return;
+        }
+
+        const result = await slurmService.updateJobPartition(job.jobId, chosen);
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+            slurmJobProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    });
+
     // Register hold job command
     const holdJobCommand = vscode.commands.registerCommand('slurmJobs.holdJob', async (item: any) => {
         if (!item?.job?.jobId) {
@@ -1807,6 +1868,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(copyJobIdCommand);
     context.subscriptions.push(updateArrayThrottleCommand);
+    context.subscriptions.push(updateJobPartitionCommand);
     context.subscriptions.push(updateJobDependencyCommand);
     context.subscriptions.push(holdJobCommand);
     context.subscriptions.push(releaseJobCommand);

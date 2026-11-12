@@ -26,6 +26,8 @@ describe('SlurmService command runner', () => {
         ['holdJob', (service) => service.holdJob('123')],
         ['releaseJob', (service) => service.releaseJob('123')],
         ['updateJobDependency', (service) => service.updateJobDependency('123', 'afterok:100')],
+        ['getPartitionNames', (service) => service.getPartitionNames()],
+        ['updateJobPartition', (service) => service.updateJobPartition('123_[4-9%2]', ['cpu.q'])],
     ];
 
     for (const [name, call] of calls) {

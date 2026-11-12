@@ -2837,6 +2837,74 @@ export class SlurmService {
         }
     }
 
+    /** Partition names `sinfo` reports, for the partition picker. Empty when sinfo fails. */
+    async getPartitionNames(): Promise<string[]> {
+        if (this.isMockMode()) {
+            return parsePartitionNames(
+                parseSinfoCpuOutput(MOCK_SINFO_CPU_OUTPUT).map(entry => entry.partition).join('\n')
+            );
+        }
+        try {
+            const { stdout } = await this.commandRunner('sinfo --noheader --format="%R"');
+            return parsePartitionNames(stdout);
+        } catch (error) {
+            console.error('Failed to list partitions:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Moves a pending job, or the pending tasks of a job array, to the given
+     * partitions with `scontrol update`. Running array tasks keep theirs.
+     */
+    async updateJobPartition(jobId: string, partitions: string[]): Promise<{ success: boolean; message: string }> {
+        const names = [...new Set(partitions.map(name => name.trim()).filter(Boolean))];
+        if (names.length === 0) {
+            return { success: false, message: 'Choose at least one partition.' };
+        }
+        const invalid = names.filter(name => !isValidPartitionName(name));
+        if (invalid.length > 0) {
+            return { success: false, message: `Invalid partition name: ${invalid.join(', ')}` };
+        }
+        const partitionList = names.join(',');
+
+        if (this.isMockMode()) {
+            const job = this.getMutableMockJobs().find(j => j.jobId === jobId && j.state === 'PD');
+            if (!job) {
+                return { success: false, message: `Pending job ${jobId} not found in mock jobs.` };
+            }
+            job.partition = partitionList;
+            return { success: true, message: `Job ${jobId} moved to ${partitionList} (Mock)` };
+        }
+
+        const target = buildPartitionUpdateTarget(jobId);
+        try {
+            await this.commandRunner(buildPartitionUpdateCommand(target, names));
+            return { success: true, message: `Job ${target} moved to ${partitionList}.` };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            // scontrol reports per task. A task that started meanwhile fails while
+            // the rest move, so ask squeue what the pending part has now.
+            try {
+                const { stdout } = await this.commandRunner(
+                    `squeue --noheader --states=PD --jobs=${extractBaseJobId(jobId)} --format="%i|%P"`
+                );
+                if (pendingRowsUsePartitions(stdout, jobId, names)) {
+                    return {
+                        success: true,
+                        message: jobId.includes('[')
+                            ? `Pending tasks of job ${extractBaseJobId(jobId)} moved to ${partitionList}; tasks that had already started keep their partition.`
+                            : `Job ${target} moved to ${partitionList}.`,
+                    };
+                }
+            } catch {
+                // Fall through to the scontrol error
+            }
+            console.error(`Failed to update partition for job ${target}:`, error);
+            return { success: false, message: `Failed to change partition of job ${target}: ${errorMessage}` };
+        }
+    }
+
     /**
      * Hold a pending SLURM job using scontrol hold
      * @param jobId The job ID to hold
@@ -3063,6 +3131,67 @@ export function isJobHeld(reason: string | undefined): boolean {
         return false;
     }
     return reason.includes('Hold') || reason.includes('Held');
+}
+
+/** A partition name as sinfo prints it; anything else is refused before it reaches a shell. */
+export function isValidPartitionName(name: string): boolean {
+    return /^[A-Za-z0-9_.-]+$/.test(name);
+}
+
+/** `sinfo --format="%R"` output as sorted, unique partition names. */
+export function parsePartitionNames(stdout: string): string[] {
+    const names = stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(name => name.length > 0 && isValidPartitionName(name));
+    return [...new Set(names)].sort();
+}
+
+/** A job's partition column (comma-separated when it may run in several) as a list. */
+export function splitPartitionList(value: string | undefined): string[] {
+    return (value ?? '')
+        .split(',')
+        .map(name => name.trim())
+        .filter(name => name.length > 0 && name !== 'N/A');
+}
+
+export function samePartitionSet(a: string[], b: string[]): boolean {
+    const left = new Set(a);
+    const right = new Set(b);
+    return left.size === right.size && [...left].every(name => right.has(name));
+}
+
+/**
+ * The JobId `scontrol update` takes for a job's pending part. An array's pending
+ * record "123_[4-9%2]" becomes "123_[4-9]". On Slurm 21.08.5, scontrol rejects
+ * the "%2" throttle suffix ("Invalid job id specified"), and the bare "123"
+ * also reaches the array's running tasks, which fail with "Job is no longer
+ * pending execution" and make scontrol exit 1.
+ */
+export function buildPartitionUpdateTarget(jobId: string): string {
+    return jobId.trim().replace(/%\d+(?=\]$)/, '');
+}
+
+export function buildPartitionUpdateCommand(target: string, partitions: string[]): string {
+    return `scontrol update JobId=${quoteForShell(target)} Partition=${quoteForShell(partitions.join(','))}`;
+}
+
+/**
+ * Whether squeue (`--states=PD --format="%i|%P"`) shows the pending part of
+ * `jobId` in `partitions`. A single job matches its own row. An array's
+ * pending record changes shape as tasks start, split off (`123_3`) or merge
+ * back (`123_[0-3,5]`), so any pending row of the array in those partitions counts.
+ */
+export function pendingRowsUsePartitions(stdout: string, jobId: string, partitions: string[]): boolean {
+    const isArrayRecord = jobId.includes('[');
+    const arrayPrefix = `${extractBaseJobId(jobId)}_`;
+    return stdout.split('\n').some(line => {
+        const [id, partition] = line.split('|').map(part => part?.trim() ?? '');
+        if (!id || !(isArrayRecord ? id.startsWith(arrayPrefix) : id === jobId.trim())) {
+            return false;
+        }
+        return samePartitionSet(splitPartitionList(partition), partitions);
+    });
 }
 
 export function cleanJobIdForScontrol(jobId: string): string {
