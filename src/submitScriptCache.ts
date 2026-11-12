@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DeferredSave } from './deferredSave';
 
 /**
  * Cached submit script information
@@ -23,6 +24,7 @@ export class SubmitScriptCache {
     private context: vscode.ExtensionContext;
     private cache: Map<string, CachedSubmitScript>;
     private cacheDir: string;
+    private readonly deferredSave = new DeferredSave(() => this.saveCache());
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -135,7 +137,7 @@ export class SubmitScriptCache {
             };
 
             this.cache.set(key, entry);
-            await this.saveCache();
+            this.deferredSave.schedule();
 
             console.log(`Cached submit script for job ${jobId}: ${cachedPath}`);
             return cachedPath;
@@ -147,10 +149,22 @@ export class SubmitScriptCache {
 
     /**
      * Entries are kept per cluster, since job IDs repeat across clusters; jobs
-     * on this machine keep the bare job ID they always had.
+     * on this machine keep the bare job ID they always had. Every task of an
+     * array (123_4, 123_[5-9%2]) was submitted with one script, so they share
+     * the base job ID's entry instead of each copying the file.
      */
     private static key(jobId: string, cluster?: string): string {
-        return cluster ? `${cluster}:${jobId}` : jobId;
+        const baseJobId = /^(\d+)/.exec(jobId)?.[1] ?? jobId;
+        return cluster ? `${cluster}:${baseJobId}` : baseJobId;
+    }
+
+    /** Writes any pending change now. */
+    flush(): Promise<void> {
+        return this.deferredSave.flush();
+    }
+
+    dispose(): void {
+        this.flush().catch(error => console.error('Failed to save cache:', error));
     }
 
     /**
@@ -204,7 +218,8 @@ export class SubmitScriptCache {
         });
 
         this.cache.clear();
-        await this.saveCache();
+        this.deferredSave.schedule();
+        await this.deferredSave.flush();
     }
 
     /**
