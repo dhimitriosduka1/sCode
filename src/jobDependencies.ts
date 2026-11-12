@@ -278,7 +278,14 @@ export class QueueDependencies {
         }
         const [base, task] = condition.jobId.split('_');
         const rows = this.byBase.get(base) ?? [];
-        return task && task !== '*' ? rows.filter((row) => row.jobId === condition.jobId) : rows;
+        if (task && task !== '*') {
+            return rows.filter((row) => row.jobId === condition.jobId);
+        }
+        // aftercorr pairs task with task: a task waits only for the one with its own index
+        const partner = condition.type === 'aftercorr'
+            ? rows.filter((row) => row.jobId === `${base}_${job.jobId.split('_')[1]}`)
+            : [];
+        return partner.length > 0 ? partner : rows;
     }
 
     /**

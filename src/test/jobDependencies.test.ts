@@ -143,6 +143,20 @@ describe('QueueDependencies.describe', () => {
         assert.deepEqual(queue.describe(cleanup), { kind: 'never', failed: [], succeeded: [], waitsOn: ['publish (1008)'] });
     });
 
+    // aftercorr pairs task with task: eval's task 0 waits only for train's task 0
+    it('carries "never runs" down an aftercorr chain only to the task with the same index', () => {
+        const evalRunnable = job('300_0', 'eval', { dependency: 'aftercorr:200_*(unfulfilled)' });
+        const evalStuck = job('300_1', 'eval', { dependency: 'aftercorr:200_*(unfulfilled)' });
+        const queue = new QueueDependencies([
+            job('200_0', 'train'),
+            job('200_1', 'train', { dependency: 'aftercorr:100_*(failed)', pendingReason: 'DependencyNeverSatisfied' }),
+            evalRunnable,
+            evalStuck,
+        ]);
+        assert.deepEqual(queue.describe(evalRunnable), { kind: 'waiting', jobs: ['train (200)'], anyOf: false });
+        assert.deepEqual(queue.describe(evalStuck), { kind: 'never', failed: [], succeeded: [], waitsOn: ['train (200)'] });
+    });
+
     it('takes Slurm\'s word that a dependency can never be met', () => {
         const stuck = job('1007', 'stuck', { pendingReason: 'DependencyNeverSatisfied' });
         assert.deepEqual(new QueueDependencies([stuck]).describe(stuck), { kind: 'never', failed: [], succeeded: [], waitsOn: [] });
