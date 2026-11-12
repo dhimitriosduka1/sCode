@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { DeferredSave } from './deferredSave';
 
 /**
  * Cached job path information
@@ -19,6 +20,7 @@ export class JobPathCache {
 
     private context: vscode.ExtensionContext;
     private cache: Map<string, CachedJobPaths>;
+    private readonly deferredSave = new DeferredSave(() => this.saveCache());
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -81,13 +83,30 @@ export class JobPathCache {
             return;
         }
 
+        const stdout = stdoutPath || 'N/A';
+        const stderr = stderrPath || 'N/A';
+        // Every refresh reports the same paths for every active job; only a change is worth a write
+        const existing = this.cache.get(jobId);
+        if (existing && existing.stdoutPath === stdout && existing.stderrPath === stderr) {
+            return;
+        }
+
         this.cache.set(jobId, {
-            stdoutPath: stdoutPath || 'N/A',
-            stderrPath: stderrPath || 'N/A',
+            stdoutPath: stdout,
+            stderrPath: stderr,
             cachedAt: Date.now(),
         });
 
-        await this.saveCache();
+        this.deferredSave.schedule();
+    }
+
+    /** Writes any pending change now. */
+    flush(): Promise<void> {
+        return this.deferredSave.flush();
+    }
+
+    dispose(): void {
+        this.flush().catch(error => console.error('Failed to save cache:', error));
     }
 
     /**
@@ -109,6 +128,7 @@ export class JobPathCache {
      */
     async clear(): Promise<void> {
         this.cache.clear();
-        await this.saveCache();
+        this.deferredSave.schedule();
+        await this.deferredSave.flush();
     }
 }
