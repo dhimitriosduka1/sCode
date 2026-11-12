@@ -63,7 +63,7 @@ function createStandardJobDescription(job: SlurmJob, dependency: DependencyStatu
 
     // First, so it lines up across the pending rows
     if (job.state === 'PD' && job.queuedSeconds !== undefined) {
-        parts.push(`queued ${formatDuration(job.queuedSeconds)}`);
+        parts.push(`Queued ${formatDuration(job.queuedSeconds)}`);
     }
 
     // Waiting on other jobs, the useful fact is which: Slurm gives no start

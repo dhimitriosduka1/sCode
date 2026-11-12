@@ -85,7 +85,7 @@ describe('Slurm job row formatting', () => {
     it('says how long a pending job has been queued, right after its ID', () => {
         assert.equal(
             getSlurmJobRowParts(job({ state: 'PD', pendingReason: 'Priority', queuedSeconds: 3275 })).description,
-            '91001 • queued 54m • Waiting on priority • Starts: ~TBD',
+            '91001 • Queued 54m • Waiting on priority • Starts: ~TBD',
         );
     });
 
@@ -127,8 +127,8 @@ describe('Slurm job row dependencies', () => {
     });
 
     it('puts the queued time before what the job waits for', () => {
-        assert.equal(describeRow({ queuedSeconds: 2700 }, { kind: 'waiting', jobs: ['train-a'], anyOf: false }), '1005 • queued 45m • after train-a');
-        assert.equal(describeRow({ queuedSeconds: 7200 }, { kind: 'never', failed: ['998'], succeeded: [], waitsOn: [] }), '1005 • queued 2h • never runs: 998 failed');
+        assert.equal(describeRow({ queuedSeconds: 2700 }, { kind: 'waiting', jobs: ['train-a'], anyOf: false }), '1005 • Queued 45m • after train-a');
+        assert.equal(describeRow({ queuedSeconds: 7200 }, { kind: 'never', failed: ['998'], succeeded: [], waitsOn: [] }), '1005 • Queued 2h • never runs: 998 failed');
     });
 
     it('says why a job never runs', () => {
