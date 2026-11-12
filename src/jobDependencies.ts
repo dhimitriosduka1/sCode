@@ -313,8 +313,8 @@ export class QueueDependencies {
  * (`123_[4-9]`) has no job record, so Slurm drops a dependency on it rather
  * than failing it, and the job runs. `aftercorr` needs success too, task by
  * task, but is left out: a dependent task whose partner already succeeded
- * still runs, and the queue no longer shows which did, so offering its pending
- * tasks could cancel ones that would have run.
+ * still runs, and a dependent array's pending tasks are cancelled together, so
+ * offering it could cancel ones that would have run.
  */
 function breaksOnCancel(condition: DependencyCondition, target: CancelTarget, row: SlurmJob | undefined): boolean {
     if (condition.type !== 'afterok') {

@@ -250,7 +250,7 @@ describe('QueueDependencies.strandedByCancel', () => {
         ]);
 
         // aftercorr pairs task with task: a dependent task whose partner already
-        // succeeded still runs, and the queue no longer shows which did
+        // succeeded still runs, and a dependent's pending tasks are cancelled together
         it('strands what needs the array when all of it is cancelled, but not an aftercorr dependent', () => {
             assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200'))), ['301', '303', '304']);
         });
