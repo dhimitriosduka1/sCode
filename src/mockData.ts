@@ -22,6 +22,7 @@ export function createMockJobs(): SlurmJob[] {
     return [
         {
             jobId: '91001',
+            queuedSeconds: 42,
             name: 'train-transformer',
             state: 'R',
             time: '00:42:10',
@@ -43,6 +44,7 @@ export function createMockJobs(): SlurmJob[] {
             // mode shows the remaining-time row and its orange icon next to the
             // ordinary running job above.
             jobId: '91006',
+            queuedSeconds: 380,
             name: 'finetune-llm',
             state: 'R',
             time: '05:46:00',
@@ -61,6 +63,7 @@ export function createMockJobs(): SlurmJob[] {
         },
         {
             jobId: '91002',
+            queuedSeconds: 11520,
             name: 'large-sweep',
             state: 'PD',
             time: '0:00',
@@ -80,6 +83,7 @@ export function createMockJobs(): SlurmJob[] {
         },
         {
             jobId: '91003',
+            queuedSeconds: 2700,
             name: 'dependent-eval',
             state: 'PD',
             time: '0:00',
@@ -102,6 +106,7 @@ export function createMockJobs(): SlurmJob[] {
             // Second link in the chain below train-transformer: cancelling 91001
             // offers to cancel both this and dependent-eval
             jobId: '91009',
+            queuedSeconds: 2700,
             name: 'eval-report',
             state: 'PD',
             time: '0:00',
@@ -120,6 +125,7 @@ export function createMockJobs(): SlurmJob[] {
         {
             // Needed failed-preprocess (90991, in history) to succeed, so it never runs
             jobId: '91007',
+            queuedSeconds: 93600,
             name: 'plot-results',
             state: 'PD',
             time: '0:00',
@@ -139,6 +145,7 @@ export function createMockJobs(): SlurmJob[] {
             // Waits on plot-results, which never runs, so this never runs either
             // although Slurm still calls its reason Dependency
             jobId: '91008',
+            queuedSeconds: 93600,
             name: 'publish-figures',
             state: 'PD',
             time: '0:00',
@@ -156,6 +163,7 @@ export function createMockJobs(): SlurmJob[] {
         },
         {
             jobId: '91004_[3-10%2]',
+            queuedSeconds: 600,
             name: 'array-postprocess',
             state: 'PD',
             time: '0:00',
@@ -175,6 +183,7 @@ export function createMockJobs(): SlurmJob[] {
         },
         {
             jobId: '91004_3',
+            queuedSeconds: 600,
             name: 'array-postprocess',
             state: 'PD',
             time: '0:00',
@@ -194,6 +203,7 @@ export function createMockJobs(): SlurmJob[] {
         },
         {
             jobId: '91005',
+            queuedSeconds: 15,
             name: 'cleanup',
             state: 'CG',
             time: '00:04:12',

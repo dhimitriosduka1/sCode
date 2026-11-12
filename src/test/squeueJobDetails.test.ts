@@ -4,9 +4,9 @@ import { parseJobDetailsOutput, parseSqueueJobDetails, SlurmService, SQUEUE_JOB_
 
 // As squeue prints SQUEUE_JOB_DETAILS_COMMAND on slurm-submit (Slurm 26.05)
 const ROWS = [
-    '52894729_[7-12%3]|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|',
-    '52894729_4|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|',
-    '52891442|/home/ada/l40/train.out|/home/ada/l40/train.err|/home/ada/l40/run job.sbatch|/home/ada/l40|2|cpu=16,mem=64G,node=2,billing=16,gres/gpu=6,gres/gpu:l40=6|gres/gpu:l40:3|N/A|afterok:52891441(unfulfilled)|',
+    '52894729_[7-12%3]|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|3275|',
+    '52894729_4|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|1|',
+    '52891442|/home/ada/l40/train.out|/home/ada/l40/train.err|/home/ada/l40/run job.sbatch|/home/ada/l40|2|cpu=16,mem=64G,node=2,billing=16,gres/gpu=6,gres/gpu:l40=6|gres/gpu:l40:3|N/A|afterok:52891441(unfulfilled)|227|',
 ].join('\n');
 
 describe('job details from one squeue request', () => {
@@ -23,15 +23,34 @@ describe('job details from one squeue request', () => {
             gpuType: undefined,
             memory: '200M',
             dependency: undefined,
+            queuedSeconds: 1,
         });
-        // The same answer scontrol's own record gives
-        assert.deepEqual(details.get('52891442'), parseJobDetailsOutput(
+        // The same answer scontrol's own record gives, which has no queued time
+        const { queuedSeconds, ...fromScontrolFields } = details.get('52891442')!;
+        assert.equal(queuedSeconds, 227);
+        assert.deepEqual(fromScontrolFields, parseJobDetailsOutput(
             'JobId=52891442 NumNodes=2 AllocTRES=cpu=16,mem=64G,node=2,billing=16,gres/gpu=6,gres/gpu:l40=6 TresPerNode=gres/gpu:l40:3 '
             + 'Dependency=afterok:52891441(unfulfilled)\n   Command=/home/ada/l40/run job.sbatch\n   WorkDir=/home/ada/l40\n'
             + '   StdErr=/home/ada/l40/train.err\n   StdOut=/home/ada/l40/train.out',
         ));
         assert.equal(details.get('52891442')?.gpuCount, 6);
         assert.equal(details.get('52891442')?.gpuType, 'L40');
+    });
+
+    it('asks squeue for the time in the queue', () => {
+        assert.match(SQUEUE_JOB_DETAILS_COMMAND, /,PendingTime:\|"$/);
+    });
+
+    // squeue before 20.11 has no PendingTime: it prints an error, skips the
+    // field and succeeds, so each row is a column short
+    it('still reads every job from an squeue that has no PendingTime', () => {
+        const older = ROWS.split('\n').map((row) => row.replace(/\|\d+\|$/, '|')).join('\n');
+        const details = parseSqueueJobDetails(older);
+
+        assert.deepEqual([...details.keys()], ['52894729_[7-12%3]', '52894729_4', '52891442']);
+        assert.equal(details.get('52894729_4')?.stdoutPath, '/home/ada/jobs/%x-%A_%a.out');
+        assert.equal(details.get('52891442')?.gpuCount, 6);
+        assert.equal(details.get('52894729_4')?.queuedSeconds, undefined);
     });
 
     it('skips lines that are not rows of it, such as the other squeue format', () => {
@@ -62,6 +81,8 @@ describe('job details from one squeue request', () => {
             '/home/ada/jobs/scode-cpu-52894730.out',
         ]);
         assert.deepEqual(commands.filter((command) => command.startsWith('scontrol')), ['scontrol show job 52894730']);
+        // Only squeue reports the time in the queue
+        assert.deepEqual(jobs.map((job) => job.queuedSeconds), [1, undefined]);
     });
 
     it('asks nothing more when there are no jobs', async () => {

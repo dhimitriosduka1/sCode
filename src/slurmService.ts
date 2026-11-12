@@ -99,6 +99,11 @@ export interface SlurmJob {
     dependency?: string;
     /** Slurm pending reason code (e.g., Resources, Priority, Dependency) */
     pendingReason?: string;
+    /**
+     * Seconds in the queue, as of the fetch: since submission for a pending job,
+     * and before it started for one that has. From squeue's PendingTime.
+     */
+    queuedSeconds?: number;
 }
 
 /**
@@ -533,27 +538,32 @@ export function formatRemainingTime(seconds: number): string {
         return '';
     }
 
+    return `${formatDuration(seconds)} left`;
+}
+
+/** A duration in its two largest units, zeros dropped: `59s`, `54m`, `1h 5m`, `2d 4h`. */
+export function formatDuration(seconds: number): string {
     if (seconds < 60) {
-        return `${seconds}s left`;
+        return `${seconds}s`;
     }
 
     const totalMinutes = Math.floor(seconds / 60);
 
     if (totalMinutes < 60) {
-        return `${totalMinutes}m left`;
+        return `${totalMinutes}m`;
     }
 
     const totalHours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
 
     if (totalHours < 24) {
-        return minutes > 0 ? `${totalHours}h ${minutes}m left` : `${totalHours}h left`;
+        return minutes > 0 ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
     }
 
     const days = Math.floor(totalHours / 24);
     const hours = totalHours % 24;
 
-    return hours > 0 ? `${days}d ${hours}h left` : `${days}d left`;
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
 }
 
 /**
@@ -946,29 +956,42 @@ const SQUEUE_JOB_DETAIL_FIELDS: [squeueField: string, scontrolKey: string][] = [
 ];
 
 /**
- * squeue command listing the user's jobs with SQUEUE_JOB_DETAIL_FIELDS, `|` after
- * each field. The `:` with no size keeps fields whole: a size, or no `:` (20),
- * cuts them to that width, which would cut long log paths.
+ * squeue command listing the user's jobs with SQUEUE_JOB_DETAIL_FIELDS, then
+ * PendingTime, which scontrol has no key for. `|` follows each field. The `:`
+ * with no size keeps fields whole: a size, or no `:` (20), cuts them to that
+ * width, which would cut long log paths.
+ *
+ * PendingTime (Slurm 20.11+) is in seconds, measured on the cluster: a time
+ * zone-free count, where SubmitTime is a local time with no zone, wrong by
+ * hours when the cluster is in another zone than VS Code.
  */
-export const SQUEUE_JOB_DETAILS_COMMAND = `squeue -u $USER --noheader -O "${['JobArrayID', ...SQUEUE_JOB_DETAIL_FIELDS.map(([field]) => field)].map((field) => `${field}:|`).join(',')}"`;
+export const SQUEUE_JOB_DETAILS_COMMAND = `squeue -u $USER --noheader -O "${['JobArrayID', ...SQUEUE_JOB_DETAIL_FIELDS.map(([field]) => field), 'PendingTime'].map((field) => `${field}:|`).join(',')}"`;
+
+type SqueueJobDetails = ReturnType<typeof parseJobDetailsOutput> & { queuedSeconds?: number };
 
 /**
  * Reads SQUEUE_JOB_DETAILS_COMMAND's output into each job's details, keyed by
  * the job ID squeue's `%i` prints. Each row is turned into the Key=Value
  * record scontrol prints, so one parser reads both.
  */
-export function parseSqueueJobDetails(stdout: string): Map<string, ReturnType<typeof parseJobDetailsOutput>> {
-    const details = new Map<string, ReturnType<typeof parseJobDetailsOutput>>();
+export function parseSqueueJobDetails(stdout: string): Map<string, SqueueJobDetails> {
+    const details = new Map<string, SqueueJobDetails>();
     for (const line of stdout.split('\n')) {
         const values = line.split('|');
-        // The job ID, each field, and what follows the last `|`
-        if (values.length !== SQUEUE_JOB_DETAIL_FIELDS.length + 2 || !values[0].trim()) {
+        // The job ID, each field, PendingTime, and what follows the last `|`.
+        // squeue before 20.11 skips PendingTime, which it lacks, so a column fewer.
+        const hasPendingTime = values.length === SQUEUE_JOB_DETAIL_FIELDS.length + 3;
+        if ((!hasPendingTime && values.length !== SQUEUE_JOB_DETAIL_FIELDS.length + 2) || !values[0].trim()) {
             continue;
         }
         const record = SQUEUE_JOB_DETAIL_FIELDS
             .map(([, scontrolKey], index) => `${scontrolKey}=${values[index + 1].trim()}`)
             .join('\n');
-        details.set(values[0].trim(), parseJobDetailsOutput(record));
+        const pendingTime = hasPendingTime ? values[SQUEUE_JOB_DETAIL_FIELDS.length + 1].trim() : '';
+        details.set(values[0].trim(), {
+            ...parseJobDetailsOutput(record),
+            queuedSeconds: /^\d+$/.test(pendingTime) ? Number(pendingTime) : undefined,
+        });
     }
     return details;
 }
@@ -2007,6 +2030,7 @@ export class SlurmService {
                 job.gpuType = details.gpuType;
                 job.memory = details.memory;
                 job.dependency = details.dependency;
+                job.queuedSeconds = detailsById.get(job.jobId)?.queuedSeconds;
 
                 // Cache the paths for later use in history
                 await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
@@ -2027,7 +2051,7 @@ export class SlurmService {
     }
 
     /** Every job's details from one squeue request; empty if squeue can't report them. */
-    private async getAllJobDetails(): Promise<Map<string, ReturnType<typeof parseJobDetailsOutput>>> {
+    private async getAllJobDetails(): Promise<Map<string, SqueueJobDetails>> {
         try {
             const { stdout } = await this.commandRunner(SQUEUE_JOB_DETAILS_COMMAND, { maxBuffer: 32 * 1024 * 1024 });
             return parseSqueueJobDetails(stdout);

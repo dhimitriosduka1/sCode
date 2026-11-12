@@ -31,7 +31,7 @@ SLURM Cluster Manager brings your cluster workflow into the editor. Follow runni
 
 ## Highlights
 
-- **Follow every job.** See job states, elapsed time, pending reasons, and estimated start times.
+- **Follow every job.** See job states, elapsed time, how long jobs have been queued, pending reasons, and estimated start times.
 - **Open logs in a click.** Access stdout and stderr from active jobs and job history.
 - **Choose a suitable partition.** Compare GPU availability and get partition suggestions as you write a script.
 - **Catch GPU mismatches early.** Get warnings when a requested GPU type is unavailable in the selected partitions.
