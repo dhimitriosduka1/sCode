@@ -2,7 +2,7 @@
   "name": "slurm-cluster-manager",
   "displayName": "SLURM Cluster Manager",
   "description": "Manage and monitor SLURM cluster jobs directly from VSCode",
-  "version": "1.8.0",
+  "version": "1.8.5",
   "icon": "icon.png",
   "publisher": "DhimitriosDuka",
   "license": "MIT",
@@ -105,7 +105,7 @@
       {
         "view": "slurmStatus",
         "contents": "Checking whether Slurm is available on this machine…",
-        "when": "!slurmClusterManager.slurmStatus"
+        "when": "!slurmClusterManager.slurmStatus && slurmClusterManager.connection != connecting"
       },
       {
         "view": "slurmStatus",

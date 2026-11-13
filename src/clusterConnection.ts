@@ -9,6 +9,7 @@ import {
     ensurePrivateSocketDir,
     getSocketPath,
     isMasterRunning,
+    MASTER_KEEPALIVE_MS,
     readRemoteFileTail,
     RemoteFileStat,
     removeStaleSocket,
@@ -34,6 +35,9 @@ const NETWORK_FAILURE_PATTERN = /Could not resolve hostname|Connection timed out
 const SIGN_IN_POLL_MS = 750;
 const SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000;
 
+/** The host this workspace was last connected to, to reconnect to when the window comes back. */
+const CONNECTED_HOST_KEY = 'slurmClusterManager.connectedHost';
+
 /**
  * Where Slurm commands run: on this machine, or on a cluster over SSH. Every
  * command goes through `run`, which follows the current connection.
@@ -42,8 +46,6 @@ export class ClusterConnection implements vscode.Disposable {
     private state: ClusterConnectionState = { kind: 'local' };
     private target?: SshTarget;
     private sshRunner?: SlurmCommandRunner;
-    /** Whether this window started the master, rather than reusing another window's. */
-    private ownsMaster = false;
     /** The account ssh logs in to the connected host as. */
     private username?: string;
     /** That account's home folder on the host, for `~` in paths. */
@@ -56,8 +58,17 @@ export class ClusterConnection implements vscode.Disposable {
     private attempt = 0;
     private signInTerminal?: vscode.Terminal;
     private dropCheck?: { target: SshTarget; promise: Promise<void> };
+    private keepAlive?: ReturnType<typeof setInterval>;
     private readonly changeEmitter = new vscode.EventEmitter<ClusterConnectionState>();
     readonly onDidChange = this.changeEmitter.event;
+
+    /** @param memory Where the connected host is remembered, per workspace */
+    constructor(private readonly memory: vscode.Memento) {}
+
+    /** The host this workspace was connected to when its window last closed or reloaded. */
+    getRememberedHost(): string | undefined {
+        return this.memory.get<string>(CONNECTED_HOST_KEY);
+    }
 
     getState(): ClusterConnectionState {
         return this.state;
@@ -134,11 +145,13 @@ export class ClusterConnection implements vscode.Disposable {
 
     /**
      * Signs in to the host and switches commands over to it, replacing any
-     * connection or attempt before it. Uses a master another window already
-     * has, then tries signing in without prompts, and only then opens a terminal
-     * for the user to sign in to OpenSSH themselves.
+     * connection or attempt before it. Uses a master that is still open (from
+     * another window, or this one before it reloaded), then tries signing in
+     * without prompts, and only then opens a terminal for the user to sign in to
+     * OpenSSH themselves. Without `interactive`, as when reconnecting by itself,
+     * it stops short of the terminal and says the host needs signing in to.
      */
-    async connect(host: SshConfigHost): Promise<void> {
+    async connect(host: SshConfigHost, { interactive = true }: { interactive?: boolean } = {}): Promise<void> {
         // A second click on the host already signing in changes nothing
         if (this.state.kind === 'connecting' && this.state.host.alias === host.alias) {
             return;
@@ -172,6 +185,10 @@ export class ClusterConnection implements vscode.Disposable {
                 }
                 if (NETWORK_FAILURE_PATTERN.test(background.stderr)) {
                     this.setState({ kind: 'local', notice: `Could not connect to ${host.alias}: ${describeSshError(background.stderr)}` });
+                    return;
+                }
+                if (!interactive) {
+                    this.setState({ kind: 'local', notice: `Reconnecting to ${host.alias} needs you to sign in.` });
                     return;
                 }
                 const signedIn = await this.signInInTerminal(target, superseded);
@@ -209,6 +226,7 @@ export class ClusterConnection implements vscode.Disposable {
             if (ownsMaster) {
                 await stopMaster(target);
             }
+            void this.memory.update(CONNECTED_HOST_KEY, undefined);
             this.setState({
                 kind: 'local',
                 notice: `Did not connect to ${host.alias}: this computer does not share its file system (${shared.reason}). `
@@ -217,10 +235,14 @@ export class ClusterConnection implements vscode.Disposable {
             return;
         }
         this.target = target;
-        this.ownsMaster = ownsMaster;
         this.username = username;
         this.homeDir = homeDir;
         this.sshRunner = createSshCommandRunner(target);
+        // An open window keeps the master in use, so it never closes itself under it
+        this.keepAlive = setInterval(() => void this.run('true').catch(() => undefined), MASTER_KEEPALIVE_MS);
+        // Not waited for: nothing may come between the superseded check above and
+        // the new state, or an attempt the user has since left would still connect
+        void this.memory.update(CONNECTED_HOST_KEY, host.alias);
         this.setState({ kind: 'connected', host });
     }
 
@@ -241,6 +263,7 @@ export class ClusterConnection implements vscode.Disposable {
     async disconnect(notice?: string): Promise<void> {
         const target = this.target;
         await this.endCurrent();
+        void this.memory.update(CONNECTED_HOST_KEY, undefined);
         this.setState({ kind: 'local', notice });
         if (target) {
             await stopMaster(target);
@@ -266,18 +289,16 @@ export class ClusterConnection implements vscode.Disposable {
     }
 
     /**
-     * For when the window closes: closes the master only if this window opened
-     * it, since another window may still be using one it reused.
+     * For when the window closes or reloads, which it cannot tell apart: leaves
+     * the master open, so a reloaded window reconnects without signing in, and
+     * it closes itself once unused for MASTER_IDLE_TIMEOUT.
      */
     async shutdown(): Promise<void> {
-        const target = this.ownsMaster ? this.target : undefined;
         await this.endCurrent();
-        if (target) {
-            await stopMaster(target);
-        }
     }
 
     dispose(): void {
+        clearInterval(this.keepAlive);
         this.changeEmitter.dispose();
     }
 
@@ -288,9 +309,10 @@ export class ClusterConnection implements vscode.Disposable {
      */
     private async endCurrent(): Promise<void> {
         this.attempt++;
+        clearInterval(this.keepAlive);
+        this.keepAlive = undefined;
         this.target = undefined;
         this.sshRunner = undefined;
-        this.ownsMaster = false;
         this.username = undefined;
         this.homeDir = undefined;
         this.signInTerminal?.dispose();

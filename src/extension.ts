@@ -331,7 +331,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     // Where Slurm commands run: this machine, or a cluster signed in to over SSH
-    const clusterConnection = new ClusterConnection();
+    const clusterConnection = new ClusterConnection(context.workspaceState);
     activeClusterConnection = clusterConnection;
     context.subscriptions.push(clusterConnection);
 
@@ -422,7 +422,14 @@ export function activate(context: vscode.ExtensionContext) {
             refreshViews?.();
         }
     };
-    void updateSlurmAvailabilityContext();
+    // A workspace connected to a cluster when its window last closed or reloaded
+    // reconnects, and the views wait for that rather than list the hosts meanwhile.
+    // Not in mock mode, which shows no cluster's data.
+    const rememberedAlias = isMockModeEnabled() ? undefined : clusterConnection.getRememberedHost();
+    const rememberedHost = rememberedAlias ? readSshConfigHosts().find((host) => host.alias === rememberedAlias) : undefined;
+    if (!rememberedHost) {
+        void updateSlurmAvailabilityContext();
+    }
     // Re-reads the SSH config, for hosts added since the view filled in
     context.subscriptions.push(vscode.commands.registerCommand('slurmStatus.refresh', () => {
         clusterConnection.clearNotice();
@@ -970,6 +977,12 @@ export function activate(context: vscode.ExtensionContext) {
             resetClusterData();
         }
     }));
+    if (rememberedHost) {
+        void vscode.window.withProgress(
+            { location: { viewId: 'slurmStatus' } },
+            () => clusterConnection.connect(rememberedHost, { interactive: false }),
+        );
+    }
 
     // Listen for configuration changes to update autorefresh
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
@@ -1870,10 +1883,9 @@ export function activate(context: vscode.ExtensionContext) {
  */
 export async function deactivate(): Promise<void> {
     stopAutoRefresh();
-    // Write cache changes made in the last moments before shutdown. First, since
-    // the write is local and quick, while signing out waits on the cluster
+    // Write cache changes made in the last moments before shutdown
     await Promise.all(deferredCaches.map(cache => cache.flush().catch(error => console.error('Failed to save cache:', error))));
-    // Sign out of a cluster this window signed in to, rather than leave the connection open
+    // Ends a sign-in in progress. A connection stays open, for a reloaded window to find
     await activeClusterConnection?.shutdown();
     console.log('SLURM Cluster Manager deactivated');
 }

@@ -72,11 +72,10 @@ describe('buildRunArgs', () => {
 });
 
 describe('buildMasterArgs', () => {
-    it('keeps the background master in our process and never lets it prompt', () => {
+    it('never lets the background master prompt', () => {
         const background = buildMasterArgs(TARGET, 'background');
 
         assert.deepEqual(background.slice(0, 2), ['-M', '-N']);
-        assert.ok(!background.includes('-f'), 'not forked, so its pid is the one we spawned');
         assert.ok(optionValues(background).includes('BatchMode=yes'));
         assert.ok(optionValues(background).includes('ServerAliveInterval=15'));
         assert.deepEqual(background.slice(-2), ['--', 'raven']);
@@ -88,6 +87,14 @@ describe('buildMasterArgs', () => {
         assert.deepEqual(terminal.slice(0, 3), ['-M', '-N', '-f']);
         assert.ok(!optionValues(terminal).includes('BatchMode=yes'));
         assert.deepEqual(terminal.slice(-2), ['--', 'raven']);
+    });
+
+    // A reloaded window finds the connection still open, and one nobody uses
+    // any more closes itself, since the window cannot tell a reload from closing
+    it('keeps either master open for 2 hours after its last use', () => {
+        for (const mode of ['background', 'terminal'] as const) {
+            assert.ok(optionValues(buildMasterArgs(TARGET, mode)).includes('ControlPersist=2h'), mode);
+        }
     });
 });
 

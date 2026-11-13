@@ -72,22 +72,33 @@ export function buildRunArgs(target: SshTarget, remoteCommand: string): string[]
 }
 
 /**
+ * How long a master stays open after its last command. A window cannot tell a
+ * reload from closing, so it leaves the master open when it goes: a reloaded
+ * window finds it still signed in, and one nobody uses any more closes itself.
+ * An open window keeps it in use (MASTER_KEEPALIVE_MS).
+ */
+const MASTER_IDLE_TIMEOUT = '2h';
+
+/** How often an open window uses the master, well inside MASTER_IDLE_TIMEOUT. */
+export const MASTER_KEEPALIVE_MS = 4 * 60 * 1000;
+
+/**
  * Arguments for starting the master, which signs in and then serves the control
- * socket without running anything (`-N`) until it is told to exit or the server
- * stops answering keepalives (about 45 s).
+ * socket without running anything (`-N`) until it is told to exit, goes unused
+ * for MASTER_IDLE_TIMEOUT, or the server stops answering keepalives (about 45 s).
+ * Once signed in, ssh hands the socket to a master it forks into the
+ * background, and returns.
  *
- * - `background`: never prompts (BatchMode) and stays in the foreground of the
- *   process the extension spawned, so the extension knows its pid and can stop
- *   it whatever happens to the socket.
- * - `terminal`: prompts in the terminal it runs in, then forks into the
- *   background (`-f`) once signed in, so it outlives the terminal.
+ * - `background`: never prompts (BatchMode).
+ * - `terminal`: prompts in the terminal it runs in, and forks (`-f`) so it
+ *   outlives the terminal.
  */
 export function buildMasterArgs(target: SshTarget, mode: 'background' | 'terminal'): string[] {
     return [
         '-M', '-N',
         ...(mode === 'terminal' ? ['-f'] : []),
         '-o', `ControlPath=${target.socketPath}`,
-        '-o', 'ControlPersist=no',
+        '-o', `ControlPersist=${MASTER_IDLE_TIMEOUT}`,
         '-o', 'ServerAliveInterval=15',
         '-o', 'ServerAliveCountMax=3',
         '-o', 'ConnectTimeout=15',
@@ -454,11 +465,11 @@ const STDERR_DRAIN_MS = 500;
  * agent is enough. Anything needing the user (a password, 2FA, an unknown host
  * key) fails fast instead, and is left to the terminal sign-in.
  *
- * Success means `ssh -O check` reports this very process as the master: an ssh
- * that signed in but could not take the socket would otherwise sit there signed
- * in with nothing able to reach or stop it, so it is killed instead. The
- * process runs in its own session, so no jump host can prompt on a terminal the
- * editor was started from, and is left running when the extension stops.
+ * Success means ssh signed in, forked the master and returned, and a master
+ * answers on the socket. An ssh that signed in but found the socket taken (by
+ * another window) would otherwise sit there signed in with nothing able to
+ * reach or stop it, so it is killed instead. ssh runs in its own session, so no
+ * jump host can prompt on a terminal the editor was started from.
  */
 export function startMasterInBackground(
     target: SshTarget,
@@ -492,48 +503,53 @@ export function startMasterInBackground(
                 return;
             }
             settled = true;
-            if (result.status === 'started') {
-                // Ours to keep running: stop listening to it, and let the extension exit without it
-                child.stderr?.destroy();
-                child.unref();
-            } else if (!exited) {
+            // Stop listening: a jump host's helper can hold stderr open as long as the master lives
+            child.stderr?.destroy();
+            if (!exited) {
                 child.kill();
             }
             resolve(result);
         };
 
-        // Each check waits for the previous one, so slow checks never pile up
-        const poll = async () => {
+        child.stderr?.on('data', () => {
+            if (/already exists, disabling multiplexing/.test(stderr)) {
+                finish({ status: 'shared' });
+            }
+        });
+
+        // Watches for the attempt being cancelled, or taking too long
+        const poll = () => {
             if (settled || exited) {
                 return;
             }
             if (options.isCancelled?.()) {
                 finish({ status: 'failed', stderr: 'Cancelled' });
-                return;
-            }
-            const pid = await getMasterPid(target);
-            if (settled || exited) {
-                return;
-            }
-            if (pid === child.pid) {
-                finish({ status: 'started' });
-            } else if (pid !== undefined) {
-                finish({ status: 'shared' });
             } else if (Date.now() - startedAt >= timeoutMs) {
                 finish({ status: 'failed', stderr: `${stderr}\nTimed out signing in`.trim() });
             } else {
-                setTimeout(() => void poll(), BACKGROUND_POLL_MS);
+                setTimeout(poll, BACKGROUND_POLL_MS);
             }
         };
-        setTimeout(() => void poll(), BACKGROUND_POLL_MS);
+        setTimeout(poll, BACKGROUND_POLL_MS);
 
-        const settleOnExit = () => finish({ status: 'failed', stderr: stderr.trim() || 'ssh exited' });
-        child.on('exit', () => {
+        let exitCode: number | null = null;
+        const settleOnExit = async () => {
+            if (settled) {
+                return;
+            }
+            if (exitCode === 0 && await isMasterRunning(target)) {
+                finish({ status: 'started' });
+            } else {
+                finish({ status: 'failed', stderr: stderr.trim() || 'ssh exited' });
+            }
+        };
+        child.on('exit', (code) => {
             exited = true;
+            exitCode = code;
             // Wait for stderr to drain, which says why, but not forever
-            setTimeout(settleOnExit, STDERR_DRAIN_MS);
+            setTimeout(() => void settleOnExit(), STDERR_DRAIN_MS);
         });
-        child.on('close', settleOnExit);
+        child.on('close', () => void settleOnExit());
         child.on('error', (error) => {
             exited = true;
             finish({ status: 'failed', stderr: error.message });
