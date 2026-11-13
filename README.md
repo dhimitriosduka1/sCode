@@ -59,6 +59,7 @@ When Slurm isn’t installed where VS Code runs, the sidebar shows **Slurm Not A
 
 - **Same files on both sides.** Connecting writes a small file into your cluster home folder from this computer, checks that the cluster sees it, and removes it. If the cluster doesn’t see it, the extension doesn’t connect and says why. Scripts in your workspace submit as they would on a login node.
 - **Your SSH setup.** Signing in uses the system’s OpenSSH, so keys, the agent, `~/.ssh/config` and jump hosts work as in a terminal. When a password, 2FA code or new host key is needed, a terminal opens for it; what you type never passes through the extension. One connection per host is shared by every command.
+- **Staying connected.** A workspace reconnects to its cluster when its window reloads or reopens. The connection stays open for 2 hours after the last window using it closes, so a reload needs no new sign-in. If signing in needs you again, the host list says so, and clicking the host signs in. Disconnecting from the status bar closes the connection at once.
 - **Logs from the cluster.** stdout and stderr open read-only over the same connection and update while the job writes to them. Logs over 10 MB show their last 10 MB.
 
 Connecting relies on OpenSSH connection sharing (`ControlMaster`), available on Linux and macOS but not Windows.
