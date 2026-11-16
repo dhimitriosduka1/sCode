@@ -98,10 +98,10 @@ describe('Slurm service helper functions', () => {
         );
 
         // Outside an array Slurm writes its "no array task" value, 4294967294, for %a,
-        // not 0, so a log named with it is 53395239_4294967294_...
+        // not 0, so a log named with it is 123_4294967294_...
         assert.equal(
-            expandPathPlaceholders('logs/%A_%a_%b_%x_%j.out', '53395239', 'qwen3vl', 'gpu24-h100-08'),
-            'logs/53395239_4294967294_4_qwen3vl_53395239.out'
+            expandPathPlaceholders('logs/%A_%a_%b_%x_%j.out', '123', 'train', 'node01'),
+            'logs/123_4294967294_4_train_123.out'
         );
 
         assert.equal(
