@@ -108,7 +108,6 @@ describe('SlurmService mock mode', () => {
 
         const history = await service.getJobHistory();
         const paths = await service.getHistoryJobPaths('90990');
-        const hogs = await service.getClusterHogs();
         const leaderboard = await service.getClusterLeaderboard();
         const accountOverview = await service.getClusterAccountOverview();
         const partitionUsage = await service.getPartitionUsage();
@@ -121,10 +120,6 @@ describe('SlurmService mock mode', () => {
         assert.deepEqual(paths, {
             stdoutPath: '/work/vision_lab/runs/finished-training/logs/90990.out',
             stderrPath: '/work/vision_lab/runs/finished-training/logs/90990.err',
-        });
-        assert.deepEqual(hogs, {
-            topJobHog: { username: 'nova42', jobCount: 8 },
-            topGpuHog: { username: 'nova42', gpuCount: 24 },
         });
         assert.ok(leaderboard.length >= 6);
         assert.deepEqual(leaderboard[0], {

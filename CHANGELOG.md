@@ -2,6 +2,14 @@
 
 All notable changes to the SLURM Cluster Manager extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **GPUs In Use In Active Jobs**: A row at the top of Active Jobs adds up the GPUs your running jobs hold, with the count of each type next to it (`GPUs in use: 6   4× A100, 2× H200`), or reads `GPUs in use: 0` when they hold none. It has the circuit-board icon that marks a job's GPUs in its details. Its tooltip says how many jobs hold each type. It counts what Slurm allocated each running job, which Active Jobs already reads with your jobs, so nothing more is asked of Slurm. Pending jobs are left out, since they hold no GPUs yet, and a search doesn't change the total.
+
+### Changed
+- **Titles Move From Active Jobs To The Hall of Shame**: The two rows at the top of Active Jobs naming the user with the most running jobs and the user with the most GPUs are gone. Finding those users meant listing every running job on the cluster at each refresh, which was most of what a refresh cost the scheduler. The Hall of Shame already lists those jobs, only when it opens or is refreshed, so titles moved there, one for each of its top three users: `🦈 Node Nom-Nom:`, `🐨 CUDA Cuddler:` and the new `🐼 Batch Bandit:` before their name, in place of 💀 🔥 👹, with the title highlighted so it stands out from the rest of the row. Each rank keeps its title, rather than one being picked at random. The `showResourceHogs` setting, which hid the rows, is removed.
+
 ## [1.9.0] - 2026-11-13
 
 ### Added

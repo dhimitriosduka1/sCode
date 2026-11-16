@@ -1014,11 +1014,6 @@ export interface ClusterLeaderboardGpuType {
     count: number;
 }
 
-export interface ClusterHogSummary {
-    topJobHog: { username: string; jobCount: number } | null;
-    topGpuHog: { username: string; gpuCount: number } | null;
-}
-
 export interface ClusterAccountOverviewEntry {
     account: string;
     gpuCount: number;
@@ -1347,46 +1342,6 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
         users: Array.from(usersByAccount.get(account)?.values() || [])
             .sort((a, b) => b.gpuCount - a.gpuCount || b.gpuJobCount - a.gpuJobCount || a.username.localeCompare(b.username)),
     }));
-}
-
-export function parseClusterHogsOutput(stdout: string): ClusterHogSummary {
-    const lines = stdout.trim().split('\n').filter(line => line.trim());
-
-    if (lines.length === 0) {
-        return { topJobHog: null, topGpuHog: null };
-    }
-
-    const jobCounts = new Map<string, number>();
-    const gpuCounts = new Map<string, number>();
-
-    for (const line of lines) {
-        const row = parseRunningGpuJobRow(line);
-        if (!row) {
-            continue;
-        }
-        const { user, gpuAllocations } = row;
-
-        jobCounts.set(user, (jobCounts.get(user) || 0) + 1);
-        if (gpuAllocations.length > 0) {
-            gpuCounts.set(user, (gpuCounts.get(user) || 0) + sumGpuAllocations(gpuAllocations));
-        }
-    }
-
-    let topJobHog: ClusterHogSummary['topJobHog'] = null;
-    for (const [username, jobCount] of jobCounts.entries()) {
-        if (!topJobHog || jobCount > topJobHog.jobCount) {
-            topJobHog = { username, jobCount };
-        }
-    }
-
-    let topGpuHog: ClusterHogSummary['topGpuHog'] = null;
-    for (const [username, gpuCount] of gpuCounts.entries()) {
-        if (!topGpuHog || gpuCount > topGpuHog.gpuCount) {
-            topGpuHog = { username, gpuCount };
-        }
-    }
-
-    return { topJobHog, topGpuHog };
 }
 
 /**
@@ -2104,31 +2059,6 @@ export class SlurmService {
         }
 
         return this.availabilityProbe;
-    }
-
-    /**
-     * Get the users with the most running jobs and most GPUs on the cluster
-     * @returns Object with top job hog and top GPU hog, or null if unavailable
-     */
-    async getClusterHogs(): Promise<ClusterHogSummary> {
-        if (this.isMockMode()) {
-            return {
-                topJobHog: { username: 'nova42', jobCount: 8 },
-                topGpuHog: { username: 'nova42', gpuCount: 24 },
-            };
-        }
-
-        try {
-            const { stdout } = await this.commandRunner(
-                SQUEUE_RUNNING_GPU_JOBS_COMMAND,
-                { maxBuffer: 32 * 1024 * 1024 }
-            );
-
-            return parseClusterHogsOutput(stdout);
-        } catch (error) {
-            console.error('Failed to get cluster hogs:', error);
-            return { topJobHog: null, topGpuHog: null };
-        }
     }
 
     /**

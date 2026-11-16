@@ -169,8 +169,43 @@ describe('leaderboard ranking', () => {
         });
 
         assert.deepEqual(rowLabel, {
-            label: '💀 mock-user mock_inst · 6 GPUs · 2 GPU jobs',
+            label: '🦈 Node Nom-Nom: mock-user mock_inst · 6 GPUs · 2 GPU jobs',
+            highlights: [[3, 15]],
         });
+    });
+
+    it('highlights the top three users\' titles so they stand out from the row', () => {
+        // Each emoji is two UTF-16 code units, so a title starts at 3; all three are 12 long.
+        for (const rank of [1, 2, 3]) {
+            assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('someone', rank, false)).highlights, [[3, 15]]);
+        }
+        assert.equal(getLeaderboardEntryRowLabel(rankedEntry('someone', 4, false)).highlights, undefined);
+    });
+
+    it('gives the top three users a fixed title after their rank emoji', () => {
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('first', 1, false)).label,
+            '🦈 Node Nom-Nom: first test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('second', 2, false)).label,
+            '🐨 CUDA Cuddler: second test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('third', 3, false)).label,
+            '🐼 Batch Bandit: third test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('fourth', 4, false)).label,
+            '4. fourth test_inst · 1 GPUs · 1 GPU job'
+        );
+    });
+
+    it('highlights both the title and the username, not the same letters in the title', () => {
+        // 'andi' is also in Bandit; '🐼 Batch Bandit: ' is 17 UTF-16 code units.
+        const rowLabel = getLeaderboardEntryRowLabel(rankedEntry('andi', 3, true));
+
+        assert.deepEqual(rowLabel.highlights, [[3, 15], [17, 21]]);
     });
 
     it('highlights only the username in the full visible current-user row', () => {

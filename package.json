@@ -646,11 +646,6 @@
           "default": true,
           "description": "Show Slurm fair share standing: your Fair Tree factor in the active jobs list, per-user factors in the Hall of Shame, and the priority breakdown for pending jobs. Requires a cluster with Slurm accounting and the multifactor priority plugin."
         },
-        "slurmClusterManager.showResourceHogs": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether to fetch and display the Job Hog and GPU Gobbler stats at the top of the active jobs list."
-        },
         "slurmClusterManager.showOpenLogsSideBySideButton": {
           "type": "boolean",
           "default": true,

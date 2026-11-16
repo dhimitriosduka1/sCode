@@ -72,6 +72,8 @@ Connecting relies on OpenSSH connection sharing (`ControlMaster`), available on 
 
 Jobs are grouped by state, with progress bars showing elapsed time against the requested time limit. Pending jobs show readable reasons such as “Waiting for resources” and estimated start times when available. A job waiting on others names them with their IDs (`after train-a (1002) + train-b (1003)`), and one whose dependency can never be met says why, in red (`never runs: 998 failed`). The Pending header counts such jobs and can cancel them all at once.
 
+The top of the view shows how many GPUs your running jobs hold, by type, for example `GPUs in use: 6   4× A100, 2× H200`, or `GPUs in use: 0` when they hold none.
+
 - **Inspect details:** Expand a job for its partition, resources, time limit, dependencies, and available logs.
 - **Find jobs:** Search by name, job ID, or pending reason.
 - **Cancel jobs:** Cancel one job, checked jobs, all active jobs, or just the running or pending group. When cancelling a job would leave pending jobs that need it to succeed unable to run, the confirmation lists them and offers to cancel them too.
@@ -142,8 +144,7 @@ These details require Slurm accounting and the multifactor priority plugin. Disa
 ### Cluster activity and maintenance
 
 - **Cluster Overview:** Compare Slurm accounts by allocated GPUs, GPU types, and share of the allocated GPU pool. Hover an account to see its top users.
-- **Hall of Shame:** View users ranked by allocated GPUs, with account details, GPU types, cluster share, and fair share when available. The top three get 💀 🔥 👹, and your own row remains visible even outside the configured top count.
-- **Resource hog indicators:** See the biggest job and GPU users at the top of Active Jobs, with titles such as 🐷 Job Hog and 🧛 VRAMpire. Hide them with `slurmClusterManager.showResourceHogs`.
+- **Hall of Shame:** View users ranked by allocated GPUs, with account details, GPU types, cluster share, and fair share when available. The top three get 🦈 Node Nom-Nom, 🐨 CUDA Cuddler and 🐼 Batch Bandit, and your own row remains visible even outside the configured top count.
 - **Maintenance warnings:** Active Jobs, GPU Partition Usage, and Cluster Overview show upcoming or active reservations flagged `MAINT`, with affected nodes and times on hover.
 
 Cluster Overview and Hall of Shame fetch data on first opening or explicit refresh and display when they were last updated.
@@ -162,7 +163,6 @@ All settings below use the `slurmClusterManager.` prefix, for example `slurmClus
 | `confirmCancelJob` | `true` | Ask before cancelling a job. |
 | `submitDependencyBehavior` | `"prompt"` | Currently has no effect. Use the editor’s dependency button to submit with dependencies. |
 | `showFairShare` | `true` | Show fair share and pending-job priority details. |
-| `showResourceHogs` | `true` | Show the biggest job and GPU users in Active Jobs. |
 | `leaderboardTopUserCount` | `10` | Number of top users in Hall of Shame, from `1` to `100`. Your own row remains visible. |
 | `showOpenLogsSideBySideButton` | `true` | Show the split-log button on active jobs. The action remains in the context menu when hidden. |
 | `openLogFileInPreview` | `true` | Open logs in reusable preview tabs. Set to `false` for permanent tabs. |
