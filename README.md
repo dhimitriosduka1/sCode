@@ -144,10 +144,10 @@ These details require Slurm accounting and the multifactor priority plugin. Disa
 ### Cluster activity and maintenance
 
 - **Cluster Overview:** Compare Slurm accounts by allocated GPUs, GPU types, and share of the allocated GPU pool. Hover an account to see its top users.
-- **Hall of Shame:** View users ranked by allocated GPUs, with account details, GPU types, cluster share, and fair share when available. The top three get 🦈 Node Nom-Nom, 🐨 CUDA Cuddler and 🐼 Batch Bandit, and your own row remains visible even outside the configured top count.
+- **Hall of Shame:** View users ranked by allocated GPUs. Each row shows the user's GPUs, their share of the cluster's GPUs in use, and their fair share (FS) with the partition it applies to, for example `24 GPUs (25%) · FS 0.420 (gpu-h100)`; expand it for their accounts, GPU jobs, GPU types, and the fair share of every account they have, A to Z. The top three get 🦈 Node Nom-Nom, 🐨 CUDA Cuddler and 🐼 Batch Bandit, and your own row remains visible even outside the configured top count.
 - **Maintenance warnings:** Active Jobs, GPU Partition Usage, and Cluster Overview show upcoming or active reservations flagged `MAINT`, with affected nodes and times on hover.
 
-Cluster Overview and Hall of Shame fetch data on first opening or explicit refresh and display when they were last updated.
+Cluster Overview and Hall of Shame fetch data on first opening or explicit refresh. Active Jobs, Job History, both Partition Usage views, Cluster Overview and Hall of Shame show when their data was last refreshed in their title bar, next to their name.
 
 ## Configuration
 

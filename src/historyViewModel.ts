@@ -1,5 +1,4 @@
 import { getHistoryStateInfo, HistoryJob } from './slurmService';
-import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 export interface HistoryDateGroup {
     key: string;
@@ -38,44 +37,11 @@ export function formatHistoryJobDescription(job: HistoryJob, now: Date = new Dat
     return parts.join(' • ');
 }
 
-export function formatHistorySummaryDescription(
-    historyDays: number,
-    totalJobs: number,
-    filteredJobs: number = totalJobs,
-    searchFilter: string = '',
-): string {
-    const rangeLabel = `Last ${historyDays} day${historyDays === 1 ? '' : 's'}`;
-    const jobLabel = totalJobs === 1 ? 'job' : 'jobs';
-
-    if (searchFilter) {
-        return `${rangeLabel} · ${filteredJobs} of ${totalJobs} ${jobLabel}`;
-    }
-
-    return `${rangeLabel} · ${totalJobs} ${jobLabel}`;
-}
-
-export function formatHistorySummaryTooltip(
-    refreshedAt: Date,
-    historyDays: number,
-    totalJobs: number,
-    filteredJobs: number,
-    searchFilter: string,
-): string {
-    const details = [
-        { label: 'Fetched at', value: refreshedAt.toLocaleString() },
-        { label: 'Range', value: `Last ${historyDays} day${historyDays === 1 ? '' : 's'}` },
-        { label: 'Jobs', value: searchFilter ? `${filteredJobs} of ${totalJobs}` : totalJobs },
-    ];
-
-    if (searchFilter) {
-        details.push({ label: 'Filter', value: searchFilter });
-    }
-
-    return formatTooltipMarkdown({
-        title: 'Job History refresh',
-        details,
-        note: 'Use Refresh Job History to update it, or Set Job History Range to change the lookback window.',
-    });
+/** What an active search left of the history; undefined without one. */
+export function formatHistorySearchMessage(searchFilter: string, matchingJobs: number, totalJobs: number): string | undefined {
+    return searchFilter
+        ? `Search "${searchFilter}": ${matchingJobs} of ${totalJobs} job${totalJobs === 1 ? '' : 's'}`
+        : undefined;
 }
 
 export function normalizeHistoryDays(value: number): number {

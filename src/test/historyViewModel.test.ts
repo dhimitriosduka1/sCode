@@ -3,8 +3,7 @@ import * as assert from 'node:assert/strict';
 import { HistoryJob } from '../slurmService';
 import {
     formatHistoryJobDescription,
-    formatHistorySummaryDescription,
-    formatHistorySummaryTooltip,
+    formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
     normalizeHistoryDays,
 } from '../historyViewModel';
@@ -72,31 +71,16 @@ describe('history view model', () => {
         );
     });
 
-    it('formats summary descriptions with and without a search filter', () => {
-        assert.equal(formatHistorySummaryDescription(7, 42), 'Last 7 days · 42 jobs');
-        assert.equal(formatHistorySummaryDescription(1, 1), 'Last 1 day · 1 job');
-        assert.equal(formatHistorySummaryDescription(30, 42, 3, 'train'), 'Last 30 days · 3 of 42 jobs');
-    });
-
-    it('formats history summary tooltip markdown', () => {
-        const refreshedAt = new Date('2026-04-28T14:05:00');
-
-        assert.equal(formatHistorySummaryTooltip(refreshedAt, 7, 42, 3, 'train'), [
-            '**Job History refresh**',
-            '',
-            `- **Fetched at:** ${refreshedAt.toLocaleString()}`,
-            '- **Range:** Last 7 days',
-            '- **Jobs:** 3 of 42',
-            '- **Filter:** train',
-            '',
-            'Use Refresh Job History to update it, or Set Job History Range to change the lookback window.',
-        ].join('\n'));
-    });
-
     it('normalizes history day ranges', () => {
         assert.equal(normalizeHistoryDays(0), 1);
         assert.equal(normalizeHistoryDays(7.8), 7);
         assert.equal(normalizeHistoryDays(1000), 365);
         assert.equal(normalizeHistoryDays(Number.NaN), 7);
+    });
+
+    it('says what a search left of the history, and nothing without one', () => {
+        assert.equal(formatHistorySearchMessage('train', 3, 12), 'Search "train": 3 of 12 jobs');
+        assert.equal(formatHistorySearchMessage('train', 1, 1), 'Search "train": 1 of 1 job');
+        assert.equal(formatHistorySearchMessage('', 12, 12), undefined);
     });
 });

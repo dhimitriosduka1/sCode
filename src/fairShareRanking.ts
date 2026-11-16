@@ -156,22 +156,6 @@ export function formatFairShareTooltip(summary: FairShareSummary): string {
     });
 }
 
-/**
- * A user's fair share as one value: the factor alone for a single account,
- * otherwise each account, the one their jobs run under first.
- */
-export function formatFairShareAccounts(summary: FairShareSummary): string {
-    if (summary.accounts.length === 1) {
-        return formatFairShareFactor(summary.fairShareFactor);
-    }
-
-    const ordered = [
-        ...summary.accounts.filter(({ account }) => account === summary.account),
-        ...summary.accounts.filter(({ account }) => account !== summary.account),
-    ];
-    return ordered.map(({ account, fairShareFactor }) => `${account} ${formatFairShareFactor(fairShareFactor)}`).join(' · ');
-}
-
 const PRIORITY_COMPONENT_LABELS: { key: keyof JobPriorityFactors; label: string }[] = [
     { key: 'fairshare', label: 'Fair share' },
     { key: 'age', label: 'Age' },

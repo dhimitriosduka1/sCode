@@ -3,8 +3,8 @@ import * as assert from 'node:assert/strict';
 import {
     formatDataAge,
     formatLeaderboardRefreshLabel,
-    formatLeaderboardRefreshTooltip,
     formatPartitionDataFreshness,
+    showRefreshTime,
 } from '../leaderboardRefreshTime';
 
 describe('leaderboard refresh time formatting', () => {
@@ -37,65 +37,28 @@ describe('leaderboard refresh time formatting', () => {
 
         assert.equal(formatLeaderboardRefreshLabel(refreshedAt, now), `Last refreshed: ${expectedDate}, ${expectedTime}`);
     });
+});
 
-    it('explains how to update stale Hall of Shame data in the tooltip', () => {
-        const refreshedAt = new Date(2026, 3, 28, 9, 5, 7);
+describe('showRefreshTime', () => {
+    const refreshedAt = new Date();
+    const label = formatLeaderboardRefreshLabel(refreshedAt);
 
-        assert.equal(
-            formatLeaderboardRefreshTooltip(refreshedAt),
-            [
-                '**Hall of Shame refresh**',
-                '',
-                `- **Fetched at:** ${refreshedAt.toLocaleString()}`,
-                '',
-                'Use Refresh Hall of Shame to update it.',
-            ].join('\n')
-        );
+    it('puts when the data was fetched in the view\'s title bar', () => {
+        const view: { description?: string } = {};
+
+        showRefreshTime(view, refreshedAt);
+        assert.equal(view.description, label);
     });
 
-    it('formats view-specific refresh tooltip text', () => {
-        const refreshedAt = new Date(2026, 3, 28, 9, 5, 7);
+    it('clears it when there is no data, rather than show an old time', () => {
+        const view = { description: label };
 
-        assert.equal(
-            formatLeaderboardRefreshTooltip(refreshedAt, {
-                title: 'Cluster Overview refresh',
-                refreshCommandLabel: 'Refresh Cluster Overview',
-            }),
-            [
-                '**Cluster Overview refresh**',
-                '',
-                `- **Fetched at:** ${refreshedAt.toLocaleString()}`,
-                '',
-                'Use Refresh Cluster Overview to update it.',
-            ].join('\n')
-        );
+        showRefreshTime(view, undefined);
+        assert.equal(view.description, undefined);
     });
 
-    it('states the background refresh interval for auto-refreshing views', () => {
-        const refreshedAt = new Date(2026, 3, 28, 9, 5, 7);
-
-        assert.equal(
-            formatLeaderboardRefreshTooltip(refreshedAt, {
-                title: 'GPU Partition Usage refresh',
-                refreshCommandLabel: 'Refresh GPU Partition Usage',
-                autoRefreshMinutes: 5,
-            }),
-            [
-                '**GPU Partition Usage refresh**',
-                '',
-                `- **Fetched at:** ${refreshedAt.toLocaleString()}`,
-                '- **Auto-refresh:** every 5 min',
-                '',
-                'Use Refresh GPU Partition Usage to update it now.',
-            ].join('\n')
-        );
-    });
-
-    it('says when background refresh is turned off', () => {
-        const markdown = formatLeaderboardRefreshTooltip(new Date(2026, 3, 28, 9, 5, 7), { autoRefreshMinutes: 0 });
-
-        assert.match(markdown, /- \*\*Auto-refresh:\*\* off/);
-        assert.match(markdown, /to update it\.$/);
+    it('does nothing before the view exists', () => {
+        assert.doesNotThrow(() => showRefreshTime(undefined, refreshedAt));
     });
 });
 
