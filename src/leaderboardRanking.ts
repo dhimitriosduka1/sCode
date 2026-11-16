@@ -190,7 +190,7 @@ export function getLeaderboardEntryLabel(entry: RankedLeaderboardEntry): Leaderb
 }
 
 /** The titles of the users holding the most GPUs, ranks 1, 2 and 3 in order. */
-const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'VRAMpire'];
+const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'Batch Bandit'];
 
 export function getLeaderboardEntryRowLabel(
     entry: RankedLeaderboardEntry,
@@ -205,7 +205,7 @@ export function getLeaderboardEntryRowLabel(
 }
 
 function getLeaderboardRankLabel(rank: number): string {
-    return rank === 1 ? '💀' : rank === 2 ? '🔥' : rank === 3 ? '👹' : `${rank}.`;
+    return rank === 1 ? '🦈' : rank === 2 ? '🐨' : rank === 3 ? '🐼' : `${rank}.`;
 }
 
 function highlightCurrentUsername(
