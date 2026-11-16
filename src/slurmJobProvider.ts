@@ -315,7 +315,7 @@ export class JobDetailItem extends vscode.TreeItem {
 /**
  * Tree item for submit script links (current vs cached)
  */
-class SubmitScriptItem extends vscode.TreeItem {
+export class SubmitScriptItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
         public readonly filePath: string,

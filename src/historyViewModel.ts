@@ -37,6 +37,13 @@ export function formatHistoryJobDescription(job: HistoryJob, now: Date = new Dat
     return parts.join(' • ');
 }
 
+/** Whether a job matches a Job History search: its name, ID, or how it ended (`timeout`, `out of memory`). */
+export function matchesHistorySearch(job: HistoryJob, searchFilter: string): boolean {
+    const filter = searchFilter.toLowerCase();
+    return [job.name, job.jobId, job.state, getHistoryStateInfo(job.state, job.exitCode).description]
+        .some(field => field.toLowerCase().includes(filter));
+}
+
 /** What an active search left of the history; undefined without one. */
 export function formatHistorySearchMessage(searchFilter: string, matchingJobs: number, totalJobs: number): string | undefined {
     return searchFilter

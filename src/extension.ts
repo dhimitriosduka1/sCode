@@ -499,7 +499,7 @@ export function activate(context: vscode.ExtensionContext) {
     const slurmJobProvider = new SlurmJobProvider(slurmService, submitScriptCache, checkedJobIds);
 
     // Create the history provider with shared service
-    const jobHistoryProvider = new JobHistoryProvider(slurmService);
+    const jobHistoryProvider = new JobHistoryProvider(slurmService, submitScriptCache);
 
     // Partition data shared by GPU Partition Usage and partition autocomplete,
     // refreshed in the background and by the view's refresh button
@@ -813,7 +813,7 @@ export function activate(context: vscode.ExtensionContext) {
     const searchHistoryCommand = vscode.commands.registerCommand('slurmHistory.search', async () => {
         const currentFilter = jobHistoryProvider.getSearchFilter();
         const searchTerm = await vscode.window.showInputBox({
-            prompt: 'Search Job History by name or Job ID',
+            prompt: 'Search Job History by name, Job ID or state (failed, timeout, ...)',
             placeHolder: 'Enter search term...',
             value: currentFilter,
         });

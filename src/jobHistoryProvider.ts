@@ -2,12 +2,15 @@ import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 import { showRefreshTime } from './leaderboardRefreshTime';
+import { SubmitScriptItem } from './slurmJobProvider';
+import { SubmitScriptCache } from './submitScriptCache';
 import { RefreshGate } from './refreshGate';
 import {
     formatHistoryJobDescription,
     formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
     HistoryDateGroup,
+    matchesHistorySearch,
     normalizeHistoryDays,
 } from './historyViewModel';
 
@@ -147,6 +150,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         this._onDidChangeTreeData.event;
 
     private slurmService: SlurmService;
+    /** The copies Active Jobs kept of each job's submit script */
+    private scriptCache?: SubmitScriptCache;
     private cachedJobs: HistoryJob[] = [];
     private cachedSlurmAvailable: boolean | null = null;
     private lastRefreshedAt: Date | undefined;
@@ -164,8 +169,9 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     /** Shows when the data was fetched in its title bar */
     view: vscode.TreeView<vscode.TreeItem> | undefined;
 
-    constructor(slurmService: SlurmService) {
+    constructor(slurmService: SlurmService, scriptCache?: SubmitScriptCache) {
         this.slurmService = slurmService;
+        this.scriptCache = scriptCache;
     }
 
     /**
@@ -311,12 +317,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             // Apply search filter
             let filteredJobs = this.cachedJobs;
             if (this.searchFilter) {
-                const filterLower = this.searchFilter.toLowerCase();
-                filteredJobs = this.cachedJobs.filter(job =>
-                    job.name.toLowerCase().includes(filterLower) ||
-                    job.jobId.includes(this.searchFilter)
-                );
-
+                filteredJobs = this.cachedJobs.filter(job => matchesHistorySearch(job, this.searchFilter));
             }
 
             this.totalFilteredJobs = filteredJobs.length;
@@ -381,6 +382,18 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
         children.push(new HistoryDetailItem('Started', job.startTime, 'calendar'));
         children.push(new HistoryDetailItem('Ended', job.endTime, 'calendar'));
+
+        // The copy Active Jobs kept while the job was queued or running, if it saw the job
+        const cluster = this.slurmService.getAccount().cluster;
+        const cachedScript = this.scriptCache?.getCachedScriptPath(job.jobId, cluster);
+        if (cachedScript) {
+            children.push(new SubmitScriptItem(
+                'Submit Script (cached)',
+                cachedScript,
+                true,
+                this.scriptCache?.formatCacheTime(job.jobId, cluster),
+            ));
+        }
 
         // Lazy-load stdout/stderr paths only when the job is expanded
         if (job.stdoutPath === 'N/A' && job.stderrPath === 'N/A') {

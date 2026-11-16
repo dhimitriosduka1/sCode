@@ -5,6 +5,7 @@ import {
     formatHistoryJobDescription,
     formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
+    matchesHistorySearch,
     normalizeHistoryDays,
 } from '../historyViewModel';
 
@@ -82,5 +83,18 @@ describe('history view model', () => {
         assert.equal(formatHistorySearchMessage('train', 3, 12), 'Search "train": 3 of 12 jobs');
         assert.equal(formatHistorySearchMessage('train', 1, 1), 'Search "train": 1 of 1 job');
         assert.equal(formatHistorySearchMessage('', 12, 12), undefined);
+    });
+
+    it('finds jobs by name, ID, or how they ended', () => {
+        const timedOut = historyJob({ jobId: '45210', name: 'train-vit', state: 'TIMEOUT' });
+        const outOfMemory = historyJob({ jobId: '45211', name: 'eval', state: 'OUT_OF_MEMORY' });
+
+        assert.equal(matchesHistorySearch(timedOut, 'ViT'), true);
+        assert.equal(matchesHistorySearch(timedOut, '4521'), true);
+        assert.equal(matchesHistorySearch(timedOut, 'timeout'), true);
+        assert.equal(matchesHistorySearch(timedOut, 'failed'), false);
+        // As the view labels it, too
+        assert.equal(matchesHistorySearch(outOfMemory, 'out of memory'), true);
+        assert.equal(matchesHistorySearch(outOfMemory, 'OUT_OF'), true);
     });
 });
