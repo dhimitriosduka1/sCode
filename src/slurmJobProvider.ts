@@ -387,13 +387,13 @@ class MessageItem extends vscode.TreeItem {
  */
 class UserGpuUsageItem extends vscode.TreeItem {
     constructor(usage: UserGpuUsage) {
-        super(`Your GPUs: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
+        super(`GPUs in use: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
         // Same icon as the GPU line in job details
         this.iconPath = new vscode.ThemeIcon('circuit-board');
         this.description = formatGpuTypeBreakdown(usage);
         const jobs = (count: number) => `${count} running job${count === 1 ? '' : 's'}`;
         this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
-            title: 'Your GPUs',
+            title: 'GPUs in use',
             summary: usage.gpuCount === 0
                 ? 'Your running jobs hold no GPUs.'
                 : `${usage.gpuCount} GPU${usage.gpuCount === 1 ? '' : 's'} held by your ${jobs(usage.jobCount)}.`,
