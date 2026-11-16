@@ -18,7 +18,7 @@ describe('summarizeRunningGpus', () => {
                 { type: 'H200', gpuCount: 4, jobCount: 2 },
             ],
         });
-        assert.equal(formatGpuTypeBreakdown(usage!), '4× A100, 4× H200');
+        assert.equal(formatGpuTypeBreakdown(usage), '4× A100, 4× H200');
     });
 
     it('leaves out pending and finishing jobs and jobs without GPUs', () => {
@@ -37,14 +37,17 @@ describe('summarizeRunningGpus', () => {
         });
     });
 
-    it('is undefined when no running job holds a GPU', () => {
-        assert.equal(summarizeRunningGpus([{ state: 'R', gpuCount: 0 }, { state: 'PD', gpuCount: 4 }]), undefined);
-        assert.equal(summarizeRunningGpus([]), undefined);
+    it('counts zero when no running job holds a GPU', () => {
+        const none = { gpuCount: 0, jobCount: 0, types: [] };
+
+        assert.deepEqual(summarizeRunningGpus([{ state: 'R', gpuCount: 0 }, { state: 'PD', gpuCount: 4 }]), none);
+        assert.deepEqual(summarizeRunningGpus([]), none);
+        assert.equal(formatGpuTypeBreakdown(none), '');
     });
 
     it('calls GPUs of no known type plain GPUs', () => {
         const usage = summarizeRunningGpus([{ state: 'R', gpuCount: 2 }]);
 
-        assert.equal(formatGpuTypeBreakdown(usage!), '2× GPU');
+        assert.equal(formatGpuTypeBreakdown(usage), '2× GPU');
     });
 });

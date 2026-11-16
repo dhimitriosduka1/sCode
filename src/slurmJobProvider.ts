@@ -387,12 +387,16 @@ class MessageItem extends vscode.TreeItem {
  */
 class UserGpuUsageItem extends vscode.TreeItem {
     constructor(usage: UserGpuUsage) {
-        super(`🎮 Your GPUs: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
+        super(`Your GPUs: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
+        // The icon job details mark GPUs with
+        this.iconPath = new vscode.ThemeIcon('circuit-board');
         this.description = formatGpuTypeBreakdown(usage);
         const jobs = (count: number) => `${count} running job${count === 1 ? '' : 's'}`;
         this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
             title: 'Your GPUs',
-            summary: `${usage.gpuCount} GPU${usage.gpuCount === 1 ? '' : 's'} held by your ${jobs(usage.jobCount)}.`,
+            summary: usage.gpuCount === 0
+                ? 'Your running jobs hold no GPUs.'
+                : `${usage.gpuCount} GPU${usage.gpuCount === 1 ? '' : 's'} held by your ${jobs(usage.jobCount)}.`,
             details: usage.types.map(({ type, gpuCount, jobCount }) => ({ label: type, value: `${gpuCount} (${jobs(jobCount)})` })),
         }));
         this.contextValue = 'userGpuUsage';
@@ -607,13 +611,12 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
             // All of the user's jobs, whatever the search shows
-            const gpuUsage = summarizeRunningGpus(this.cachedJobs);
-            const gpuUsageItem = gpuUsage ? new UserGpuUsageItem(gpuUsage) : null;
+            const gpuUsageItem = new UserGpuUsageItem(summarizeRunningGpus(this.cachedJobs));
 
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
                 if (maintenanceItem) { items.push(maintenanceItem); }
-                if (gpuUsageItem) { items.push(gpuUsageItem); }
+                items.push(gpuUsageItem);
                 if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
                 return items;
@@ -622,7 +625,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (filteredJobs.length === 0 && this.searchFilter) {
                 const items: vscode.TreeItem[] = [];
                 if (maintenanceItem) { items.push(maintenanceItem); }
-                if (gpuUsageItem) { items.push(gpuUsageItem); }
+                items.push(gpuUsageItem);
                 if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
                 return items;
@@ -633,7 +636,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             // Add maintenance warning, GPUs in use and fair share at the top
             if (maintenanceItem) { categories.push(maintenanceItem); }
-            if (gpuUsageItem) { categories.push(gpuUsageItem); }
+            categories.push(gpuUsageItem);
             if (fairShareItem) { categories.push(fairShareItem); }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {

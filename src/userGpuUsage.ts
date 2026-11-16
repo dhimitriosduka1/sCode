@@ -11,10 +11,10 @@ export interface UserGpuUsage {
 }
 
 /**
- * The GPUs the user's running jobs hold, from what Slurm allocated each one;
- * undefined when they hold none. Pending jobs hold nothing yet.
+ * The GPUs the user's running jobs hold, from what Slurm allocated each one.
+ * Pending jobs hold nothing yet.
  */
-export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'state' | 'gpuCount' | 'gpuType'>[]): UserGpuUsage | undefined {
+export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'state' | 'gpuCount' | 'gpuType'>[]): UserGpuUsage {
     const byType = new Map<string, { type: string; gpuCount: number; jobCount: number }>();
     let gpuCount = 0;
     let jobCount = 0;
@@ -30,10 +30,6 @@ export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'state' | 'gpuCount' |
         entry.gpuCount += job.gpuCount;
         entry.jobCount += 1;
         byType.set(type, entry);
-    }
-
-    if (gpuCount === 0) {
-        return undefined;
     }
 
     const types = [...byType.values()].sort((a, b) => b.gpuCount - a.gpuCount || a.type.localeCompare(b.type));

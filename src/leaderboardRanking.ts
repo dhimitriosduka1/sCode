@@ -196,7 +196,7 @@ export function getLeaderboardEntryRowLabel(
     entry: RankedLeaderboardEntry,
 ): LeaderboardEntryLabel {
     const title = LEADERBOARD_TITLES[entry.rank - 1];
-    const prefix = [getLeaderboardRankLabel(entry.rank), title, entry.username].filter(Boolean).join(' ');
+    const prefix = [getLeaderboardRankLabel(entry.rank), title && `${title}:`, entry.username].filter(Boolean).join(' ');
     const description = formatLeaderboardEntryDescription(entry);
     const label = description ? `${prefix} ${description}` : prefix;
 

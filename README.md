@@ -72,7 +72,7 @@ Connecting relies on OpenSSH connection sharing (`ControlMaster`), available on 
 
 Jobs are grouped by state, with progress bars showing elapsed time against the requested time limit. Pending jobs show readable reasons such as “Waiting for resources” and estimated start times when available. A job waiting on others names them with their IDs (`after train-a (1002) + train-b (1003)`), and one whose dependency can never be met says why, in red (`never runs: 998 failed`). The Pending header counts such jobs and can cancel them all at once.
 
-While your running jobs hold GPUs, the top of the view adds them up by type, for example `🎮 Your GPUs: 6   4× A100, 2× H200`.
+The top of the view shows how many GPUs your running jobs hold, by type, for example `Your GPUs: 6   4× A100, 2× H200`, or `Your GPUs: 0` when they hold none.
 
 - **Inspect details:** Expand a job for its partition, resources, time limit, dependencies, and available logs.
 - **Find jobs:** Search by name, job ID, or pending reason.
