@@ -98,6 +98,11 @@ describe('history view model', () => {
         // As the view labels it, too
         assert.equal(matchesHistorySearch(outOfMemory, 'out of memory'), true);
         assert.equal(matchesHistorySearch(outOfMemory, 'OUT_OF'), true);
+
+        // Slurm names who cancelled a job by user ID; digits meant for a job ID must not match it
+        const cancelled = historyJob({ jobId: '45212', name: 'sweep', state: 'CANCELLED by 1000' });
+        assert.equal(matchesHistorySearch(cancelled, 'cancelled'), true);
+        assert.equal(matchesHistorySearch(cancelled, '100'), false);
     });
 
     it('puts the time limit the job asked for next to how long it ran', () => {

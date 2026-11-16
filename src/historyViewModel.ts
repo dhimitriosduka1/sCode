@@ -40,7 +40,9 @@ export function formatHistoryJobDescription(job: HistoryJob, now: Date = new Dat
 /** Whether a job matches a Job History search: its name, ID, or how it ended (`timeout`, `out of memory`). */
 export function matchesHistorySearch(job: HistoryJob, searchFilter: string): boolean {
     const filter = searchFilter.toLowerCase();
-    return [job.name, job.jobId, job.state, getHistoryStateInfo(job.state, job.exitCode).description]
+    // Only the state's first word: "CANCELLED by 1000" ends in a user ID that digits of a job ID would match
+    const state = job.state.split(' ')[0];
+    return [job.name, job.jobId, state, getHistoryStateInfo(job.state, job.exitCode).description]
         .some(field => field.toLowerCase().includes(filter));
 }
 
