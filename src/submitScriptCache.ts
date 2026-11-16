@@ -67,24 +67,15 @@ export class SubmitScriptCache {
     }
 
     /**
-     * Remove entries older than MAX_AGE_DAYS and their cached files
+     * Remove entries older than MAX_AGE_DAYS, and copies that old from this
+     * machine's folder
      */
     private cleanupOldEntries(): void {
-        const maxAgeMs = SubmitScriptCache.MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-        const now = Date.now();
+        const oldest = Date.now() - SubmitScriptCache.MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
         let cleaned = false;
 
         this.cache.forEach((value, key) => {
-            if (now - value.cachedAt > maxAgeMs) {
-                // Delete the cached file
-                try {
-                    if (fs.existsSync(value.cachedPath)) {
-                        fs.unlinkSync(value.cachedPath);
-                    }
-                } catch (error) {
-                    console.error(`Failed to delete cached script for job ${key}:`, error);
-                }
-
+            if (value.cachedAt < oldest) {
                 this.cache.delete(key);
                 cleaned = true;
             }
@@ -92,6 +83,21 @@ export class SubmitScriptCache {
 
         if (cleaned) {
             this.saveCache();
+        }
+
+        // The entries are shared by every machine the extension runs on, each with
+        // its own folder of copies, so another machine may have dropped the entry
+        // of a copy kept here. Copies are therefore aged by the time in their own
+        // name (<job>_<time copied>.<ext>), not by the entries.
+        try {
+            for (const name of fs.readdirSync(this.cacheDir)) {
+                const copiedAt = /_(\d{13})(\.[^.]*)?$/.exec(name)?.[1];
+                if (copiedAt && Number(copiedAt) < oldest) {
+                    fs.unlinkSync(path.join(this.cacheDir, name));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to delete old submit script copies:', error);
         }
     }
 

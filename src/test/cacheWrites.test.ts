@@ -125,3 +125,61 @@ describe('SubmitScriptCache array tasks', () => {
         }
     });
 });
+
+describe('SubmitScriptCache cleanup', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    it('deletes old copies in its folder even when their entries are gone', () => {
+        // The index is shared by every machine the extension runs on: another one can
+        // drop an entry without being able to delete the copy, which is in this folder
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
+        try {
+            const copies = path.join(dir, 'submit-scripts');
+            fs.mkdirSync(copies);
+            const old = `123_${Date.now() - 31 * DAY_MS}.sh`;
+            const oldOnCluster = `cluster-a_124_${Date.now() - 200 * DAY_MS}.sbatch`;
+            const recent = `125_${Date.now() - 29 * DAY_MS}.sh`;
+            for (const name of [old, oldOnCluster, recent, 'notes.txt']) {
+                fs.writeFileSync(path.join(copies, name), '#!/bin/bash\n');
+            }
+
+            new SubmitScriptCache(fakeContext(dir).context);
+
+            assert.deepEqual(fs.readdirSync(copies).sort(), [recent, 'notes.txt'].sort());
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('drops an old entry and its copy, and keeps recent ones', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
+        try {
+            const copies = path.join(dir, 'submit-scripts');
+            fs.mkdirSync(copies);
+            const entry = (jobId: string, ageDays: number, folder = copies) => {
+                const cachedAt = Date.now() - ageDays * DAY_MS;
+                return { originalPath: '/home/ada/job.sh', cachedPath: path.join(folder, `${jobId}_${cachedAt}.sh`), cachedAt };
+            };
+            const index = {
+                '123': entry('123', 31),
+                '125': entry('125', 29),
+                // A copy on another machine, which this one cannot delete
+                '126': entry('126', 31, '/other-machine/submit-scripts'),
+            };
+            fs.writeFileSync(index['123'].cachedPath, '#!/bin/bash\n');
+            fs.writeFileSync(index['125'].cachedPath, '#!/bin/bash\n');
+            const { context, store } = fakeContext(dir);
+            store.set('slurmSubmitScriptCache', index);
+
+            const cache = new SubmitScriptCache(context);
+            await cache.flush();
+
+            assert.equal(cache.has('123'), false);
+            assert.equal(cache.has('126'), false);
+            assert.equal(cache.has('125'), true);
+            assert.deepEqual(fs.readdirSync(copies), [path.basename(index['125'].cachedPath)]);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
