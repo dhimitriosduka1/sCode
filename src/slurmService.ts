@@ -676,7 +676,8 @@ export function expandPathPlaceholders(
     // Job array placeholders
     const [jobAllocationId, ...stepParts] = jobId.split('.');
     const arrayParts = jobAllocationId.split('_');
-    const arrayIndex = arrayParts.length > 1 ? arrayParts[1] : '0';
+    // Outside an array Slurm writes its "no array task" value (NO_VAL) for %a, and %b from it
+    const arrayIndex = arrayParts.length > 1 ? arrayParts[1] : '4294967294';
     const arrayIndexNumber = parseInt(arrayIndex, 10);
     const stepId = stepParts.length > 0 ? stepParts[stepParts.length - 1] : '0';
     expanded = expanded.replace(/%A/g, arrayParts[0]); // Master job ID

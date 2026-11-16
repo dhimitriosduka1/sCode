@@ -97,6 +97,13 @@ describe('Slurm service helper functions', () => {
             'logs/123-17-7-3-gpu-node03.out'
         );
 
+        // Outside an array Slurm writes its "no array task" value, 4294967294, for %a,
+        // not 0, so a log named with it is 123_4294967294_...
+        assert.equal(
+            expandPathPlaceholders('logs/%A_%a_%b_%x_%j.out', '123', 'train', 'node01'),
+            'logs/123_4294967294_4_train_123.out'
+        );
+
         assert.equal(
             expandPathPlaceholders('logs/%x-%j-%N.out', '456', 'pending', 'N/A'),
             'logs/pending-456-PENDING_NODE.out'
