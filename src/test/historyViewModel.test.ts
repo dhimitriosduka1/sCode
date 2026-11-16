@@ -2,9 +2,11 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { HistoryJob } from '../slurmService';
 import {
+    formatHistoryElapsed,
     formatHistoryJobDescription,
     formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
+    matchesHistorySearch,
     normalizeHistoryDays,
 } from '../historyViewModel';
 
@@ -21,6 +23,7 @@ function historyJob(overrides: Partial<HistoryJob>): HistoryJob {
         nodes: 'gpu-node[03]',
         cpus: '16',
         maxMemory: '72G',
+        timeLimit: '02:00:00',
         stdoutPath: 'N/A',
         stderrPath: 'N/A',
         ...overrides,
@@ -82,5 +85,32 @@ describe('history view model', () => {
         assert.equal(formatHistorySearchMessage('train', 3, 12), 'Search "train": 3 of 12 jobs');
         assert.equal(formatHistorySearchMessage('train', 1, 1), 'Search "train": 1 of 1 job');
         assert.equal(formatHistorySearchMessage('', 12, 12), undefined);
+    });
+
+    it('finds jobs by name, ID, or how they ended', () => {
+        const timedOut = historyJob({ jobId: '45210', name: 'train-vit', state: 'TIMEOUT' });
+        const outOfMemory = historyJob({ jobId: '45211', name: 'eval', state: 'OUT_OF_MEMORY' });
+
+        assert.equal(matchesHistorySearch(timedOut, 'ViT'), true);
+        assert.equal(matchesHistorySearch(timedOut, '4521'), true);
+        assert.equal(matchesHistorySearch(timedOut, 'timeout'), true);
+        assert.equal(matchesHistorySearch(timedOut, 'failed'), false);
+        // As the view labels it, too
+        assert.equal(matchesHistorySearch(outOfMemory, 'out of memory'), true);
+        assert.equal(matchesHistorySearch(outOfMemory, 'OUT_OF'), true);
+
+        // Slurm names who cancelled a job by user ID; digits meant for a job ID must not match it
+        const cancelled = historyJob({ jobId: '45212', name: 'sweep', state: 'CANCELLED by 1000' });
+        assert.equal(matchesHistorySearch(cancelled, 'cancelled'), true);
+        assert.equal(matchesHistorySearch(cancelled, '100'), false);
+    });
+
+    it('puts the time limit the job asked for next to how long it ran', () => {
+        assert.equal(formatHistoryElapsed('03:58:12', '04:00:00'), '03:58:12 of 04:00:00');
+        assert.equal(formatHistoryElapsed('1-02:00:00', '2-00:00:00'), '1-02:00:00 of 2-00:00:00');
+        // Limits that are not a duration, or none, leave it as it was
+        assert.equal(formatHistoryElapsed('00:05:00', 'UNLIMITED'), '00:05:00');
+        assert.equal(formatHistoryElapsed('00:05:00', 'Partition_Limit'), '00:05:00');
+        assert.equal(formatHistoryElapsed('00:05:00', 'N/A'), '00:05:00');
     });
 });

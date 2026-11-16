@@ -37,6 +37,23 @@ export function formatHistoryJobDescription(job: HistoryJob, now: Date = new Dat
     return parts.join(' • ');
 }
 
+/** Whether a job matches a Job History search: its name, ID, or how it ended (`timeout`, `out of memory`). */
+export function matchesHistorySearch(job: HistoryJob, searchFilter: string): boolean {
+    const filter = searchFilter.toLowerCase();
+    // Only the state's first word: "CANCELLED by 1000" ends in a user ID that digits of a job ID would match
+    const state = job.state.split(' ')[0];
+    return [job.name, job.jobId, state, getHistoryStateInfo(job.state, job.exitCode).description]
+        .some(field => field.toLowerCase().includes(filter));
+}
+
+/**
+ * How long a job ran, with the time limit it asked for when that is a
+ * duration (`03:58:12 of 04:00:00`), so a run that nearly hit it shows.
+ */
+export function formatHistoryElapsed(elapsed: string, timeLimit: string): string {
+    return parseElapsedSeconds(timeLimit) === undefined ? elapsed : `${elapsed} of ${timeLimit}`;
+}
+
 /** What an active search left of the history; undefined without one. */
 export function formatHistorySearchMessage(searchFilter: string, matchingJobs: number, totalJobs: number): string | undefined {
     return searchFilter

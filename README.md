@@ -97,9 +97,9 @@ Array cancellation options appear on pending array entries. Running tasks are ca
 
 ![Job History grouped by day, with finished jobs expanded to show exit codes, resources, and log files](screenshots/job_history.png)
 
-Browse completed, failed, timed-out, and cancelled jobs, grouped by day. The default range is **7 days**; choose 1 day, 30 days, or a custom lookback from the toolbar. Search by name or job ID and page through longer histories.
+Browse completed, failed, timed-out, and cancelled jobs, grouped by day. The default range is **7 days**; choose 1 day, 30 days, or a custom lookback from the toolbar. Search by name, job ID, or how a job ended (`failed`, `timeout`), and page through longer histories.
 
-Expand a job to see its exit code, partition, nodes, CPUs, peak memory when reported, and start and end times. Open available stdout and stderr files directly from the job’s details.
+Expand a job to see its exit code, partition, nodes, CPUs, peak memory when reported, and start and end times. Open available stdout and stderr files directly from the job’s details, and the copy of its submit script kept while Active Jobs listed it.
 
 For running jobs, **Open Stdout and Stderr Side by Side** opens both logs in a split editor. If both streams use the same file, it opens once.
 

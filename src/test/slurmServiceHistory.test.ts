@@ -11,11 +11,11 @@ describe('SlurmService job history', () => {
             optionsSeen.push(options);
             return {
                 stdout: [
-                    '123|complete_job|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T10:05:00|00:05:00|a100|node-a|4|',
-                    '123.batch|batch|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T10:05:00|00:05:00||node-a|4|1024K',
-                    '124|running_job|RUNNING|0:0|2026-05-22T10:00:00|Unknown|00:00:30|a100|node-b|4|',
-                    '125|pending_job|PENDING|0:0|Unknown|Unknown|00:00:00|a100||4|',
-                    '126|failed_job|FAILED|1:0|2026-05-22T10:00:00|2026-05-22T10:06:00|00:06:00|a100|node-c|4|',
+                    '123|complete_job|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T10:05:00|00:05:00|a100|node-a|4||01:00:00',
+                    '123.batch|batch|COMPLETED|0:0|2026-05-22T10:00:00|2026-05-22T10:05:00|00:05:00||node-a|4|1024K|',
+                    '124|running_job|RUNNING|0:0|2026-05-22T10:00:00|Unknown|00:00:30|a100|node-b|4||01:00:00',
+                    '125|pending_job|PENDING|0:0|Unknown|Unknown|00:00:00|a100||4||01:00:00',
+                    '126|failed_job|FAILED|1:0|2026-05-22T10:00:00|2026-05-22T10:06:00|00:06:00|a100|node-c|4||1-00:00:00',
                 ].join('\n'),
                 stderr: '',
             };
@@ -27,10 +27,11 @@ describe('SlurmService job history', () => {
         assert.equal(commands.length, 1);
         assert.match(commands[0], /^sacct -X -u \$USER --starttime=\d{4}-\d{2}-\d{2}/);
         assert.match(commands[0], /--parsable2/);
-        assert.match(commands[0], /--format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS/);
+        assert.match(commands[0], /--format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,Timelimit/);
         assert.equal((optionsSeen[0] as { maxBuffer?: number }).maxBuffer, 16 * 1024 * 1024);
         assert.deepEqual(jobs.map(job => job.jobId), ['126', '123']);
         assert.deepEqual(jobs.map(job => job.state), ['FAILED', 'COMPLETED']);
+        assert.deepEqual(jobs.map(job => job.timeLimit), ['1-00:00:00', '01:00:00']);
     });
 
     it('resolves history paths from cache, including base ID fallback for arrays', async () => {
