@@ -388,7 +388,7 @@ class MessageItem extends vscode.TreeItem {
 class UserGpuUsageItem extends vscode.TreeItem {
     constructor(usage: UserGpuUsage) {
         super(`Your GPUs: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
-        // The icon job details mark GPUs with
+        // Same icon as the GPU line in job details
         this.iconPath = new vscode.ThemeIcon('circuit-board');
         this.description = formatGpuTypeBreakdown(usage);
         const jobs = (count: number) => `${count} running job${count === 1 ? '' : 's'}`;
