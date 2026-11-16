@@ -170,7 +170,16 @@ describe('leaderboard ranking', () => {
 
         assert.deepEqual(rowLabel, {
             label: '🦈 Node Nom-Nom: mock-user mock_inst · 6 GPUs · 2 GPU jobs',
+            highlights: [[3, 15]],
         });
+    });
+
+    it('highlights the top three users\' titles so they stand out from the row', () => {
+        // Each emoji is two UTF-16 code units, so a title starts at 3; all three are 12 long.
+        for (const rank of [1, 2, 3]) {
+            assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('someone', rank, false)).highlights, [[3, 15]]);
+        }
+        assert.equal(getLeaderboardEntryRowLabel(rankedEntry('someone', 4, false)).highlights, undefined);
     });
 
     it('gives the top three users a fixed title after their rank emoji', () => {
@@ -192,11 +201,11 @@ describe('leaderboard ranking', () => {
         );
     });
 
-    it('highlights the username, not the same letters in the title', () => {
+    it('highlights both the title and the username, not the same letters in the title', () => {
         // 'andi' is also in Bandit; '🐼 Batch Bandit: ' is 17 UTF-16 code units.
         const rowLabel = getLeaderboardEntryRowLabel(rankedEntry('andi', 3, true));
 
-        assert.deepEqual(rowLabel.highlights, [[17, 21]]);
+        assert.deepEqual(rowLabel.highlights, [[3, 15], [17, 21]]);
     });
 
     it('highlights only the username in the full visible current-user row', () => {

@@ -195,13 +195,23 @@ const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'Batch Bandit'];
 export function getLeaderboardEntryRowLabel(
     entry: RankedLeaderboardEntry,
 ): LeaderboardEntryLabel {
+    const rankLabel = getLeaderboardRankLabel(entry.rank);
     const title = LEADERBOARD_TITLES[entry.rank - 1];
-    const prefix = [getLeaderboardRankLabel(entry.rank), title && `${title}:`, entry.username].filter(Boolean).join(' ');
+    const prefix = [rankLabel, title && `${title}:`, entry.username].filter(Boolean).join(' ');
     const description = formatLeaderboardEntryDescription(entry);
     const label = description ? `${prefix} ${description}` : prefix;
 
-    // The username ends the prefix; searching for it could land inside the title
-    return highlightCurrentUsername(label, entry, prefix.length - entry.username.length);
+    // The title is highlighted so it stands out from the rest of the row, and
+    // so is the username on your own row. The username ends the prefix;
+    // searching for it could land inside the title.
+    const highlights: [number, number][] = [];
+    if (title) {
+        highlights.push([rankLabel.length + 1, rankLabel.length + 1 + title.length]);
+    }
+    if (entry.isCurrentUser) {
+        highlights.push([prefix.length - entry.username.length, prefix.length]);
+    }
+    return highlights.length > 0 ? { label, highlights } : { label };
 }
 
 function getLeaderboardRankLabel(rank: number): string {
@@ -211,12 +221,12 @@ function getLeaderboardRankLabel(rank: number): string {
 function highlightCurrentUsername(
     label: string,
     entry: RankedLeaderboardEntry,
-    usernameStart: number = label.indexOf(entry.username),
 ): LeaderboardEntryLabel {
     if (!entry.isCurrentUser) {
         return { label };
     }
 
+    const usernameStart = label.indexOf(entry.username);
     return {
         label,
         highlights: usernameStart >= 0
