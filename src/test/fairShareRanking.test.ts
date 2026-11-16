@@ -3,7 +3,6 @@ import * as assert from 'node:assert/strict';
 import {
     buildFairShareLookup,
     findJobPriorityFactors,
-    formatFairShareAccounts,
     formatFairShareFactor,
     formatFairShareHeaderLabel,
     formatFairShareTooltip,
@@ -170,11 +169,6 @@ describe('fair share tooltips', () => {
 
     it('skips the account list for a single account', () => {
         assert.doesNotMatch(formatFairShareTooltip(getFairShareSummary(lookup, 'solo')!), /Your accounts/);
-    });
-
-    it('formats a user\'s fair share across accounts, the applicable one first', () => {
-        assert.equal(formatFairShareAccounts(getFairShareSummary(lookup, 'solo')!), '0.500');
-        assert.equal(formatFairShareAccounts(getFairShareSummary(lookup, 'nova42', { jobAccounts: ['atlas_lab'] })!), 'atlas_lab 0.143 · vision_lab 0.643');
     });
 });
 

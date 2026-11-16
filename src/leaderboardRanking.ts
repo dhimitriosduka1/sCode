@@ -1,5 +1,5 @@
 import { generateProgressBar } from './slurmService';
-import { FairShareSummary, formatFairShareAccounts, formatFairShareFactor } from './fairShareRanking';
+import { FairShareSummary, formatFairShareFactor } from './fairShareRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
 
 export interface LeaderboardEntry {
@@ -93,18 +93,6 @@ export function getLeaderboardEntryDetails(entry: LeaderboardEntry, totalGpuCoun
     return details;
 }
 
-export function formatLeaderboardAccountLabel(accounts: string[]): string {
-    if (accounts.length === 0) {
-        return '';
-    }
-
-    if (accounts.length <= 2) {
-        return accounts.join(', ');
-    }
-
-    return `${accounts[0]}, ${accounts[1]} +${accounts.length - 2}`;
-}
-
 export function formatLeaderboardGpuTypeLabel(gpuTypes: LeaderboardGpuType[]): string {
     if (gpuTypes.length === 0) {
         return 'Unknown';
@@ -130,23 +118,16 @@ export function formatLeaderboardGpuShare(gpuCount: number, totalGpuCount: numbe
     return generateProgressBar(roundedPercentage, 8);
 }
 
+/** Who and how much; the row's dropdown has the rest. */
 export function formatLeaderboardTooltipMarkdown(
     entry: RankedLeaderboardEntry,
     topUserCount: number,
 ): string {
     const gpuLabel = entry.gpuCount === 1 ? 'GPU' : 'GPUs';
     const gpuJobLabel = entry.gpuJobCount === 1 ? 'GPU job' : 'GPU jobs';
-    const accountLabel = formatLeaderboardAccountLabel(entry.accounts) || 'Unknown';
     return formatTooltipMarkdown({
         title: entry.username,
         summary: `Rank #${entry.rank} · ${entry.gpuCount} ${gpuLabel} · ${entry.gpuJobCount} ${gpuJobLabel}`,
-        details: [
-            { label: `Slurm account${entry.accounts.length === 1 ? '' : 's'}`, value: accountLabel },
-            { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes) },
-            ...(entry.fairShare
-                ? [{ label: 'Fair share', value: formatFairShareAccounts(entry.fairShare) }]
-                : []),
-        ],
         note: entry.isCurrentUser && entry.isOutsideTopEntries
             ? `Your row is shown outside the configured top ${topUserCount}.`
             : undefined,

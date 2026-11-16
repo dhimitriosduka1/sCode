@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
-    formatLeaderboardAccountLabel,
     formatLeaderboardEntrySummary,
     formatLeaderboardGpuShare,
     formatLeaderboardGpuTypeLabel,
@@ -234,13 +233,6 @@ describe('leaderboard ranking', () => {
         });
     });
 
-    it('formats compact Slurm account labels', () => {
-        assert.equal(formatLeaderboardAccountLabel([]), '');
-        assert.equal(formatLeaderboardAccountLabel(['mswk_inst']), 'mswk_inst');
-        assert.equal(formatLeaderboardAccountLabel(['a_inst', 'b_inst']), 'a_inst, b_inst');
-        assert.equal(formatLeaderboardAccountLabel(['a_inst', 'b_inst', 'c_inst']), 'a_inst, b_inst +1');
-    });
-
     it('formats GPU type labels for tooltips', () => {
         assert.equal(formatLeaderboardGpuTypeLabel([]), 'Unknown');
         assert.equal(formatLeaderboardGpuTypeLabel([{ type: 'a100', count: 4 }]), 'a100: 4 GPUs');
@@ -269,7 +261,7 @@ describe('leaderboard ranking', () => {
         assert.equal(formatLeaderboardGpuShare(4, 0), '');
     });
 
-    it('formats leaderboard tooltips as separated markdown blocks', () => {
+    it('keeps the tooltip to who and how much; the dropdown has the rest', () => {
         const tooltip = formatLeaderboardTooltipMarkdown({
             ...rankedEntry('mock-user', 1, false),
             accounts: ['mock_inst'],
@@ -279,15 +271,19 @@ describe('leaderboard ranking', () => {
                 { type: 'a100', count: 4 },
                 { type: 'h200', count: 2 },
             ],
+            fairShare: {
+                username: 'mock-user',
+                account: 'mock_inst',
+                fairShareFactor: 0.5,
+                source: 'jobs' as const,
+                accounts: [{ account: 'mock_inst', fairShareFactor: 0.5 }, { account: 'other_inst', fairShareFactor: 0.25 }],
+            },
         }, 10);
 
         assert.equal(tooltip, [
             '**mock-user**',
             '',
             'Rank #1 · 6 GPUs · 2 GPU jobs',
-            '',
-            '- **Slurm account:** mock_inst',
-            '- **GPU types:** a100: 4 GPUs, h200: 2 GPUs',
         ].join('\n'));
     });
 
