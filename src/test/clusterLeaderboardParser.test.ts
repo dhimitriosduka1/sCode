@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
     parseClusterAccountOverviewOutput,
-    parseClusterHogsOutput,
     parseClusterLeaderboardOutput,
     parsePartitionUsageOutput,
     parseScontrolNodeOutput,
@@ -182,22 +181,6 @@ describe('parseClusterAccountOverviewOutput', () => {
                 users: [{ username: 'dduka', gpuCount: 812, gpuJobCount: 3 }],
             },
         ]);
-    });
-});
-
-describe('parseClusterHogsOutput', () => {
-    it('ranks top GPU hogs by the GPUs Slurm allocated', () => {
-        // Doubling dduka's per-node request would put them ahead (176 GPUs);
-        // Slurm allocated them 88.
-        assert.deepEqual(parseClusterHogsOutput([
-            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,node=11,gres/gpu=44|',
-            'dduka|mpi_gpu|gres/gpu:4,gres/gpu:4|cpu=352,node=11,gres/gpu=44|',
-            'dduka|mpi_gpu|N/A|cpu=4,node=1|',
-            'alice|vision_lab|gres/gpu:8|cpu=384,node=12,gres/gpu=96|',
-        ].join('\n')), {
-            topJobHog: { username: 'dduka', jobCount: 3 },
-            topGpuHog: { username: 'alice', gpuCount: 96 },
-        });
     });
 });
 

@@ -189,14 +189,19 @@ export function getLeaderboardEntryLabel(entry: RankedLeaderboardEntry): Leaderb
     return highlightCurrentUsername(label, entry);
 }
 
+/** The titles of the users holding the most GPUs, ranks 1, 2 and 3 in order. */
+const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'VRAMpire'];
+
 export function getLeaderboardEntryRowLabel(
     entry: RankedLeaderboardEntry,
 ): LeaderboardEntryLabel {
-    const prefix = `${getLeaderboardRankLabel(entry.rank)} ${entry.username}`;
+    const title = LEADERBOARD_TITLES[entry.rank - 1];
+    const prefix = [getLeaderboardRankLabel(entry.rank), title, entry.username].filter(Boolean).join(' ');
     const description = formatLeaderboardEntryDescription(entry);
     const label = description ? `${prefix} ${description}` : prefix;
 
-    return highlightCurrentUsername(label, entry);
+    // The username ends the prefix; searching for it could land inside the title
+    return highlightCurrentUsername(label, entry, prefix.length - entry.username.length);
 }
 
 function getLeaderboardRankLabel(rank: number): string {
@@ -206,12 +211,12 @@ function getLeaderboardRankLabel(rank: number): string {
 function highlightCurrentUsername(
     label: string,
     entry: RankedLeaderboardEntry,
+    usernameStart: number = label.indexOf(entry.username),
 ): LeaderboardEntryLabel {
     if (!entry.isCurrentUser) {
         return { label };
     }
 
-    const usernameStart = label.indexOf(entry.username);
     return {
         label,
         highlights: usernameStart >= 0

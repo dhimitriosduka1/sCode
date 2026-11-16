@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, ClusterHogSummary, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, formatDuration, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, formatDuration, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -16,6 +16,7 @@ import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
 import { SubmitScriptCache } from './submitScriptCache';
+import { formatGpuTypeBreakdown, summarizeRunningGpus, UserGpuUsage } from './userGpuUsage';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
@@ -381,42 +382,20 @@ class MessageItem extends vscode.TreeItem {
 }
 
 /**
- * Fun item showing the user with the most running jobs
+ * Header row with the GPUs the user's running jobs hold, so they can see how
+ * much of the cluster they are using.
  */
-class JobHogItem extends vscode.TreeItem {
-    constructor(username: string, jobCount: number) {
-        const funTitles = ['🐷 Job Hog', '🔥 Cluster Dominator', '🤗 CUDA Cuddler', '😋 Node Nom-Nom'];
-        const title = funTitles[Math.floor(Math.random() * funTitles.length)];
-        super(`${title}: ${username} (${jobCount} jobs)`, vscode.TreeItemCollapsibleState.None);
+class UserGpuUsageItem extends vscode.TreeItem {
+    constructor(usage: UserGpuUsage) {
+        super(`🎮 Your GPUs: ${usage.gpuCount}`, vscode.TreeItemCollapsibleState.None);
+        this.description = formatGpuTypeBreakdown(usage);
+        const jobs = (count: number) => `${count} running job${count === 1 ? '' : 's'}`;
         this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
-            title,
-            summary: `${username} has the most running jobs.`,
-            details: [
-                { label: 'User', value: username },
-                { label: 'Running jobs', value: jobCount },
-            ],
+            title: 'Your GPUs',
+            summary: `${usage.gpuCount} GPU${usage.gpuCount === 1 ? '' : 's'} held by your ${jobs(usage.jobCount)}.`,
+            details: usage.types.map(({ type, gpuCount, jobCount }) => ({ label: type, value: `${gpuCount} (${jobs(jobCount)})` })),
         }));
-        this.contextValue = 'jobHog';
-    }
-}
-
-/**
- * Fun item showing the user with the most GPUs allocated
- */
-class GpuHogItem extends vscode.TreeItem {
-    constructor(username: string, gpuCount: number) {
-        const funTitles = ['🧛 VRAMpire', '🎮 GPU Gobbler', '⚡ Watt Wizard', '🏋️ Tensor Titan'];
-        const title = funTitles[Math.floor(Math.random() * funTitles.length)];
-        super(`${title}: ${username} (${gpuCount} GPUs)`, vscode.TreeItemCollapsibleState.None);
-        this.tooltip = new vscode.MarkdownString(formatTooltipMarkdown({
-            title,
-            summary: `${username} has the most allocated GPUs.`,
-            details: [
-                { label: 'User', value: username },
-                { label: 'Allocated GPUs', value: gpuCount },
-            ],
-        }));
-        this.contextValue = 'gpuHog';
+        this.contextValue = 'userGpuUsage';
     }
 }
 
@@ -437,7 +416,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private cachedJobs: SlurmJob[] = [];
     private cachedDependencies: QueueDependencies | undefined;
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
-    private cachedHogs: ClusterHogSummary | undefined;
     private cachedFairShareSummary: FairShareSummary | undefined;
     private cachedPriorityFactors: Map<string, JobPriorityFactors> | undefined;
     private hasFetchedFairShare = false;
@@ -473,7 +451,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private reload(): void {
         this.cachedJobs = [];
         this.cachedMaintenanceWindows = [];
-        this.cachedHogs = undefined;
         this.cachedFairShareSummary = undefined;
         this.cachedPriorityFactors = undefined;
         this.hasFetchedFairShare = false;
@@ -592,29 +569,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             const filteredJobs = this.getFilteredJobs();
 
             const config = vscode.workspace.getConfiguration('slurmClusterManager');
-            const showResourceHogs = config.get<boolean>('showResourceHogs', true);
-
-            let jobHogItem: JobHogItem | null = null;
-            let gpuHogItem: GpuHogItem | null = null;
-
-            if (showResourceHogs) {
-                try {
-                    // Cached alongside the jobs so re-rendering the tree does not re-query the cluster
-                    if (!this.cachedHogs) {
-                        this.cachedHogs = await this.slurmService.getClusterHogs();
-                    }
-                    const { topJobHog, topGpuHog } = this.cachedHogs;
-                    jobHogItem = topJobHog && topJobHog.jobCount > 1
-                        ? new JobHogItem(topJobHog.username, topJobHog.jobCount)
-                        : null;
-                    gpuHogItem = topGpuHog && topGpuHog.gpuCount > 0
-                        ? new GpuHogItem(topGpuHog.username, topGpuHog.gpuCount)
-                        : null;
-                } catch (e) {
-                    console.error('Failed to fetch cluster hogs:', e);
-                }
-            }
-
             let fairShareItem: FairShareItem | null = null;
 
             if (config.get<boolean>('showFairShare', true)) {
@@ -652,12 +606,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             }
 
             const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
+            // All of the user's jobs, whatever the search shows
+            const gpuUsage = summarizeRunningGpus(this.cachedJobs);
+            const gpuUsageItem = gpuUsage ? new UserGpuUsageItem(gpuUsage) : null;
 
             if (this.cachedJobs.length === 0) {
                 const items: vscode.TreeItem[] = [];
                 if (maintenanceItem) { items.push(maintenanceItem); }
-                if (jobHogItem) { items.push(jobHogItem); }
-                if (gpuHogItem) { items.push(gpuHogItem); }
+                if (gpuUsageItem) { items.push(gpuUsageItem); }
                 if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem('No jobs found', 'info'));
                 return items;
@@ -666,8 +622,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (filteredJobs.length === 0 && this.searchFilter) {
                 const items: vscode.TreeItem[] = [];
                 if (maintenanceItem) { items.push(maintenanceItem); }
-                if (jobHogItem) { items.push(jobHogItem); }
-                if (gpuHogItem) { items.push(gpuHogItem); }
+                if (gpuUsageItem) { items.push(gpuUsageItem); }
                 if (fairShareItem) { items.push(fairShareItem); }
                 items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
                 return items;
@@ -676,10 +631,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
-            // Add maintenance warning and cluster hogs at the top
+            // Add maintenance warning, GPUs in use and fair share at the top
             if (maintenanceItem) { categories.push(maintenanceItem); }
-            if (jobHogItem) { categories.push(jobHogItem); }
-            if (gpuHogItem) { categories.push(gpuHogItem); }
+            if (gpuUsageItem) { categories.push(gpuUsageItem); }
             if (fairShareItem) { categories.push(fairShareItem); }
 
             for (const categoryKey of ['running', 'pending', 'completing', 'other'] as StatusCategory[]) {

@@ -169,8 +169,34 @@ describe('leaderboard ranking', () => {
         });
 
         assert.deepEqual(rowLabel, {
-            label: '💀 mock-user mock_inst · 6 GPUs · 2 GPU jobs',
+            label: '💀 Node Nom-Nom mock-user mock_inst · 6 GPUs · 2 GPU jobs',
         });
+    });
+
+    it('gives the top three users a fixed title after their rank emoji', () => {
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('first', 1, false)).label,
+            '💀 Node Nom-Nom first test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('second', 2, false)).label,
+            '🔥 CUDA Cuddler second test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('third', 3, false)).label,
+            '👹 VRAMpire third test_inst · 1 GPUs · 1 GPU job'
+        );
+        assert.equal(
+            getLeaderboardEntryRowLabel(rankedEntry('fourth', 4, false)).label,
+            '4. fourth test_inst · 1 GPUs · 1 GPU job'
+        );
+    });
+
+    it('highlights the username, not the same letters in the title', () => {
+        // 'pire' is also the end of VRAMpire; '👹 VRAMpire ' is 12 code units.
+        const rowLabel = getLeaderboardEntryRowLabel(rankedEntry('pire', 3, true));
+
+        assert.deepEqual(rowLabel.highlights, [[12, 16]]);
     });
 
     it('highlights only the username in the full visible current-user row', () => {
