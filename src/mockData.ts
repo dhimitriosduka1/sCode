@@ -291,6 +291,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'nova42',
             accounts: ['atlas_lab'],
+            accountPartitions: { atlas_lab: ['a100-long', 'h200'] },
             gpuCount: 24,
             gpuJobCount: 3,
             gpuTypes: [
@@ -301,6 +302,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'pixelwave',
             accounts: ['vision_lab'],
+            accountPartitions: { vision_lab: ['a100-long', 'h200'] },
             gpuCount: 18,
             gpuJobCount: 3,
             gpuTypes: [
@@ -311,6 +313,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'quartz',
             accounts: ['nebula_lab'],
+            accountPartitions: { nebula_lab: ['a100-long'] },
             gpuCount: 16,
             gpuJobCount: 2,
             gpuTypes: [{ type: 'a100', count: 16 }],
@@ -318,6 +321,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'zephyr',
             accounts: ['robotics_lab'],
+            accountPartitions: { robotics_lab: ['gpu'] },
             gpuCount: 8,
             gpuJobCount: 2,
             gpuTypes: [{ type: 'l40s', count: 8 }],
@@ -325,6 +329,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'solis',
             accounts: ['climate_lab'],
+            accountPartitions: { climate_lab: ['h200'] },
             gpuCount: 8,
             gpuJobCount: 1,
             gpuTypes: [{ type: 'h200', count: 8 }],
@@ -332,6 +337,7 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
         {
             username: 'rune',
             accounts: ['data_lab'],
+            accountPartitions: { data_lab: ['debug-gpu'] },
             gpuCount: 6,
             gpuJobCount: 6,
             gpuTypes: [{ type: 'rtx6000', count: 6 }],
@@ -339,7 +345,8 @@ export function createMockLeaderboardEntries(): ClusterLeaderboardEntry[] {
     ];
 }
 
-// squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|"
+// squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|,Partition:|"
+// without the partition, which Cluster Overview doesn't read
 export const MOCK_ACCOUNT_OVERVIEW_ROWS = [
     'nova42|atlas_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',
     'nova42|atlas_lab|gres/gpu:a100:8|cpu=64,mem=512G,node=1,billing=64,gres/gpu=8|',

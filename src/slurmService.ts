@@ -1004,6 +1004,8 @@ function cloneSlurmJob(job: SlurmJob): SlurmJob {
 export interface ClusterLeaderboardEntry {
     username: string;
     accounts: string[];
+    /** The partitions each account runs the user's GPU jobs in, A to Z */
+    accountPartitions: Record<string, string[]>;
     gpuCount: number;
     gpuJobCount: number;
     gpuTypes: ClusterLeaderboardGpuType[];
@@ -1192,26 +1194,27 @@ function addGpuTypes(target: Map<string, number> | undefined, allocations: Clust
 
 /**
  * squeue command listing every running job's user, account, per-node GPU
- * request and allocation, `|` after each field. A job's GPUs are counted from
- * its allocation (tres-alloc), which is what Slurm gave it. The per-node
- * request (tres-per-node, `%b`) times the node count is no substitute: a job
- * submitted with both `--gpus-per-node` and `--gres=gpu` lists its GPUs twice
- * there (`gres/gpu:4,gres/gpu:4`) though Slurm allocates them once, and GPUs
- * requested with `--gpus` or `--gpus-per-task` are not in it at all. The
- * request is read only for the GPU type, which the allocation leaves out on
- * clusters whose accounting does not track GPU types.
+ * request and allocation, and partition, `|` after each field. A job's GPUs
+ * are counted from its allocation (tres-alloc), which is what Slurm gave it.
+ * The per-node request (tres-per-node, `%b`) times the node count is no
+ * substitute: a job submitted with both `--gpus-per-node` and `--gres=gpu`
+ * lists its GPUs twice there (`gres/gpu:4,gres/gpu:4`) though Slurm allocates
+ * them once, and GPUs requested with `--gpus` or `--gpus-per-task` are not in
+ * it at all. The request is read only for the GPU type, which the allocation
+ * leaves out on clusters whose accounting does not track GPU types.
  */
-const SQUEUE_RUNNING_GPU_JOBS_COMMAND = 'squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|"';
+const SQUEUE_RUNNING_GPU_JOBS_COMMAND = 'squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|,Partition:|"';
 
 interface RunningGpuJobRow {
     user: string;
     account: string | undefined;
+    partition: string | undefined;
     gpuAllocations: ClusterLeaderboardGpuType[];
 }
 
 /** Reads one row of SQUEUE_RUNNING_GPU_JOBS_COMMAND's output; undefined for a row without a user. */
 function parseRunningGpuJobRow(line: string): RunningGpuJobRow | undefined {
-    const [user = '', account = '', tresPerNode = '', tresAlloc = ''] = line.split('|').map(field => field.trim());
+    const [user = '', account = '', tresPerNode = '', tresAlloc = '', partition = ''] = line.split('|').map(field => field.trim());
     if (!user) {
         return undefined;
     }
@@ -1219,6 +1222,7 @@ function parseRunningGpuJobRow(line: string): RunningGpuJobRow | undefined {
     return {
         user,
         account: normalizeSlurmAccount(account),
+        partition: partition || undefined,
         gpuAllocations: readAllocatedGpus(tresAlloc, tresPerNode),
     };
 }
@@ -1252,6 +1256,7 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
     const gpuJobCounts = new Map<string, number>();
     const gpuCounts = new Map<string, number>();
     const accountsByUser = new Map<string, Set<string>>();
+    const partitionsByUserAccount = new Map<string, Map<string, Set<string>>>();
     const gpuTypesByUser = new Map<string, Map<string, number>>();
 
     for (const line of lines) {
@@ -1259,7 +1264,7 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
         if (!row) {
             continue;
         }
-        const { user, account, gpuAllocations } = row;
+        const { user, account, partition, gpuAllocations } = row;
 
         if (gpuAllocations.length > 0) {
             const jobGpuCount = sumGpuAllocations(gpuAllocations);
@@ -1276,6 +1281,12 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
                     accountsByUser.set(user, new Set<string>());
                 }
                 accountsByUser.get(user)?.add(account);
+
+                if (partition) {
+                    const byAccount = partitionsByUserAccount.get(user) ?? new Map<string, Set<string>>();
+                    partitionsByUserAccount.set(user, byAccount);
+                    byAccount.set(account, (byAccount.get(account) ?? new Set<string>()).add(partition));
+                }
             }
         }
     }
@@ -1283,6 +1294,10 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
     return Array.from(gpuCounts.keys()).map(username => ({
         username,
         accounts: Array.from(accountsByUser.get(username) || []).sort((a, b) => a.localeCompare(b)),
+        accountPartitions: Object.fromEntries(
+            Array.from(partitionsByUserAccount.get(username) ?? [], ([account, partitions]) =>
+                [account, Array.from(partitions).sort((a, b) => a.localeCompare(b))]),
+        ),
         gpuCount: gpuCounts.get(username) || 0,
         gpuJobCount: gpuJobCounts.get(username) || 0,
         gpuTypes: formatGpuTypeEntries(gpuTypesByUser.get(username) || new Map<string, number>()),

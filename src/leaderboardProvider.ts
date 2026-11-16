@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SlurmService } from './slurmService';
 import { buildFairShareLookup, getFairShareSummary } from './fairShareRanking';
-import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { RefreshGate } from './refreshGate';
 import {
     DEFAULT_LEADERBOARD_ENTRY_COUNT,
@@ -10,6 +10,7 @@ import {
     getGpuLeaderboardEntries,
     getLeaderboardEntryDetails,
     getLeaderboardEntryRowLabel,
+    getLeaderboardEmojiIconSvg,
     getTotalLeaderboardGpuCount,
     getVisibleLeaderboardEntries,
     LeaderboardEntry,
@@ -19,17 +20,22 @@ import {
 } from './leaderboardRanking';
 
 /**
- * A single user row in the Hall of Shame: who, their GPUs and fair share, with
- * the rest in its dropdown.
+ * A single user row in the Hall of Shame: who, their GPUs, share of the
+ * cluster's GPUs in use and fair share, with the rest in its dropdown.
  */
 class LeaderboardEntryItem extends vscode.TreeItem {
     constructor(
         readonly entry: RankedLeaderboardEntry,
         topUserCount: number,
-        readonly totalGpuCount: number,
+        totalGpuCount: number,
     ) {
         super(getLeaderboardEntryRowLabel(entry), vscode.TreeItemCollapsibleState.Collapsed);
-        this.description = formatLeaderboardEntrySummary(entry);
+        // The top three's emoji; the rest have their rank in the label
+        const emoji = getLeaderboardEmojiIconSvg(entry.rank);
+        if (emoji) {
+            this.iconPath = vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(emoji).toString('base64')}`);
+        }
+        this.description = formatLeaderboardEntrySummary(entry, totalGpuCount);
         this.contextValue = 'leaderboardEntry';
         this.tooltip = new vscode.MarkdownString(formatLeaderboardTooltipMarkdown(entry, topUserCount));
     }
@@ -42,8 +48,8 @@ class LeaderboardDetailItem extends vscode.TreeItem {
     constructor(readonly detail: LeaderboardEntryDetail) {
         super(
             detail.value === undefined ? detail.label : `${detail.label}: ${detail.value}`,
-            // Already one click deep, so what is under it shows at once
-            detail.children ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+            // Closed: fair share lists every account, a line per partition on some clusters
+            detail.children ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
         );
         this.iconPath = new vscode.ThemeIcon(detail.icon);
         this.contextValue = 'leaderboardDetail';
@@ -57,18 +63,6 @@ class LeaderboardMessageItem extends vscode.TreeItem {
     constructor(message: string, icon: string = 'info') {
         super(message, vscode.TreeItemCollapsibleState.None);
         this.iconPath = new vscode.ThemeIcon(icon);
-    }
-}
-
-/**
- * Informational item showing when the Hall of Shame data was fetched.
- */
-class LeaderboardRefreshItem extends vscode.TreeItem {
-    constructor(refreshedAt: Date) {
-        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
-        this.iconPath = new vscode.ThemeIcon('history');
-        this.contextValue = 'leaderboardRefreshInfo';
-        this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt));
     }
 }
 
@@ -101,6 +95,8 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
         (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmLeaderboard.refreshing', refreshing),
     );
     private currentUsernameProvider: () => string | undefined;
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
 
     constructor(slurmService: SlurmService, currentUsernameProvider?: () => string | undefined) {
         this.slurmService = slurmService;
@@ -133,18 +129,26 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         if (element instanceof LeaderboardEntryItem) {
-            return getLeaderboardEntryDetails(element.entry, element.totalGpuCount)
+            return getLeaderboardEntryDetails(element.entry)
                 .map(detail => new LeaderboardDetailItem(detail));
         }
         if (element instanceof LeaderboardDetailItem) {
-            return (element.detail.children ?? [])
-                .map(({ label, value }) => new vscode.TreeItem(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None));
+            return (element.detail.children ?? []).map(({ label, value }) => {
+                const item = new vscode.TreeItem(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
+                // Lines it up after the icon of the line above, not under it
+                item.iconPath = new vscode.ThemeIcon('circle-small-filled');
+                return item;
+            });
         }
         if (element) {
             return [];
         }
 
-        return this.refreshGate.load(() => this.getRootItems());
+        return this.refreshGate.load(async () => {
+            const items = await this.getRootItems();
+            showRefreshTime(this.view, this.lastRefreshedAt);
+            return items;
+        });
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
@@ -169,10 +173,6 @@ export class LeaderboardProvider implements vscode.TreeDataProvider<vscode.TreeI
             }
 
             const items: vscode.TreeItem[] = [];
-            if (this.lastRefreshedAt) {
-                items.push(new LeaderboardRefreshItem(this.lastRefreshedAt));
-            }
-
             const gpuEntries = getGpuLeaderboardEntries(this.cachedEntries);
             const totalGpuCount = getTotalLeaderboardGpuCount(gpuEntries);
             const topUserCount = getConfiguredTopUserCount();

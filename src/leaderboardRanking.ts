@@ -5,6 +5,8 @@ import { formatTooltipMarkdown } from './tooltipMarkdown';
 export interface LeaderboardEntry {
     username: string;
     accounts: string[];
+    /** The partitions each account runs the user's GPU jobs in */
+    accountPartitions: Record<string, string[]>;
     gpuCount: number;
     gpuJobCount: number;
     gpuTypes: LeaderboardGpuType[];
@@ -43,14 +45,21 @@ export function sortLeaderboardEntries(entries: LeaderboardEntry[]): Leaderboard
 }
 
 /**
- * A row's dimmed text: the GPUs a user holds and the fair share of the account
- * their GPU jobs run under, spelled out as "Your fair share" is in Active Jobs.
+ * A row's dimmed text: the GPUs a user holds, their share of all GPUs in use,
+ * and the fair share (FS, as sshare calls it) of the account their GPU jobs
+ * run under, with the partition it runs them in: `24 GPUs (25%) · FS 0.420 (gpu-h100)`.
  */
-export function formatLeaderboardEntrySummary(entry: LeaderboardEntry): string {
-    const gpus = `${entry.gpuCount} GPU${entry.gpuCount === 1 ? '' : 's'}`;
-    return entry.fairShare
-        ? `${gpus} · fair share ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
-        : gpus;
+export function formatLeaderboardEntrySummary(entry: LeaderboardEntry, totalGpuCount: number): string {
+    const share = totalGpuCount > 0 ? ` (${getLeaderboardGpuSharePercent(entry.gpuCount, totalGpuCount)}%)` : '';
+    const gpus = `${entry.gpuCount} GPU${entry.gpuCount === 1 ? '' : 's'}${share}`;
+    if (!entry.fairShare) {
+        return gpus;
+    }
+
+    // An account can run in several partitions on some clusters
+    const [partition, ...others] = entry.accountPartitions[entry.fairShare.account] ?? [];
+    const where = partition ? ` (${partition}${others.length > 0 ? ` +${others.length}` : ''})` : '';
+    return `${gpus} · FS ${formatFairShareFactor(entry.fairShare.fairShareFactor)}${where}`;
 }
 
 export interface LeaderboardEntryDetail {
@@ -62,31 +71,22 @@ export interface LeaderboardEntryDetail {
     children?: { label: string; value: string }[];
 }
 
-/** What a row's dropdown lists: everything about the user the row itself leaves out. */
-export function getLeaderboardEntryDetails(entry: LeaderboardEntry, totalGpuCount: number): LeaderboardEntryDetail[] {
+/** What a row's dropdown lists: the user's accounts, GPU jobs and types, and the fair share of every account. */
+export function getLeaderboardEntryDetails(entry: LeaderboardEntry): LeaderboardEntryDetail[] {
     const details: LeaderboardEntryDetail[] = [
         { label: entry.accounts.length === 1 ? 'Account' : 'Accounts', value: entry.accounts.join(', ') || 'Unknown', icon: 'organization' },
         { label: 'GPU jobs', value: String(entry.gpuJobCount), icon: 'play-circle' },
         { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes), icon: 'circuit-board' },
     ];
 
-    const share = formatLeaderboardGpuShare(entry.gpuCount, totalGpuCount);
-    if (share) {
-        details.push({ label: 'Cluster share', value: share, icon: 'pie-chart' });
-    }
-
-    // Only the accounts their GPU jobs run under: users can have many (one per
-    // partition on some clusters), and with one, the row already shows it.
-    // The account the row shows comes first.
-    const shown = entry.fairShare?.account;
-    const inUse = (entry.fairShare?.accounts ?? [])
-        .filter(({ account }) => entry.accounts.includes(account))
-        .sort((a, b) => Number(b.account === shown) - Number(a.account === shown));
-    if (inUse.length > 1) {
+    // Every account the user has (one per partition on some clusters), not
+    // only those their GPU jobs run under, A to Z so every list reads alike.
+    if (entry.fairShare) {
+        const accounts = [...entry.fairShare.accounts].sort((a, b) => a.account.localeCompare(b.account));
         details.push({
             label: 'Fair share',
             icon: 'law',
-            children: inUse.map(({ account, fairShareFactor }) => ({ label: account, value: formatFairShareFactor(fairShareFactor) })),
+            children: accounts.map(({ account, fairShareFactor }) => ({ label: account, value: formatFairShareFactor(fairShareFactor) })),
         });
     }
 
@@ -112,10 +112,11 @@ export function formatLeaderboardGpuShare(gpuCount: number, totalGpuCount: numbe
         return '';
     }
 
-    const percentage = (gpuCount / totalGpuCount) * 100;
-    const roundedPercentage = Math.max(0, Math.min(100, Math.round(percentage)));
+    return generateProgressBar(getLeaderboardGpuSharePercent(gpuCount, totalGpuCount), 8);
+}
 
-    return generateProgressBar(roundedPercentage, 8);
+function getLeaderboardGpuSharePercent(gpuCount: number, totalGpuCount: number): number {
+    return Math.max(0, Math.min(100, Math.round((gpuCount / totalGpuCount) * 100)));
 }
 
 /** Who and how much; the row's dropdown has the rest. */
@@ -195,23 +196,26 @@ const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'Batch Bandit'];
 export function getLeaderboardEntryRowLabel(
     entry: RankedLeaderboardEntry,
 ): LeaderboardEntryLabel {
-    const rankLabel = getLeaderboardRankLabel(entry.rank);
+    // The top three's emoji is the row's icon
     const title = LEADERBOARD_TITLES[entry.rank - 1];
-    const label = [rankLabel, title && `${title}:`, entry.username].filter(Boolean).join(' ');
+    const label = title ? `${title}: ${entry.username}` : `${entry.rank}. ${entry.username}`;
 
-    // The title is highlighted so it stands out, and so is the username on
-    // your own row. The username ends the label; searching for it could land
-    // inside the title.
-    const highlights: [number, number][] = [];
-    if (title) {
-        highlights.push([rankLabel.length + 1, rankLabel.length + 1 + title.length]);
-    }
-    if (entry.isCurrentUser) {
-        highlights.push([label.length - entry.username.length, label.length]);
-    }
-    return highlights.length > 0 ? { label, highlights } : { label };
+    // Your own username is highlighted. It ends the label; searching for it
+    // could land inside the title.
+    return entry.isCurrentUser
+        ? { label, highlights: [[label.length - entry.username.length, label.length]] }
+        : { label };
 }
 
-function getLeaderboardRankLabel(rank: number): string {
-    return rank === 1 ? '🦈' : rank === 2 ? '🐨' : rank === 3 ? '🐼' : `${rank}.`;
+const LEADERBOARD_EMOJI = ['🦈', '🐨', '🐼'];
+
+/**
+ * The top three's emoji as a 16×16 icon. As an icon rather than in the label,
+ * it gives the row the width that indents its dropdown, as in the other views.
+ * The rest have no icon.
+ */
+export function getLeaderboardEmojiIconSvg(rank: number): string | undefined {
+    const emoji = LEADERBOARD_EMOJI[rank - 1];
+    return emoji
+        && `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><text x="8" y="13.5" font-size="14" text-anchor="middle">${emoji}</text></svg>`;
 }

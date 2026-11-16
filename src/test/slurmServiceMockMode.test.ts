@@ -125,6 +125,7 @@ describe('SlurmService mock mode', () => {
         assert.deepEqual(leaderboard[0], {
             username: 'nova42',
             accounts: ['atlas_lab'],
+            accountPartitions: { atlas_lab: ['a100-long', 'h200'] },
             gpuCount: 24,
             gpuJobCount: 3,
             gpuTypes: [

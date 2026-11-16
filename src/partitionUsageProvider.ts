@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { MaintenanceWindow, PartitionUsageEntry, PartitionUsageResult, SlurmService } from './slurmService';
 import { PartitionDataStore } from './partitionDataStore';
@@ -15,19 +15,6 @@ import {
 } from './partitionUsageRanking';
 import { formatLeaderboardGpuTypeLabel } from './leaderboardRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
-
-class PartitionUsageRefreshItem extends vscode.TreeItem {
-    constructor(refreshedAt: Date, refreshIntervalMinutes: number) {
-        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
-        this.iconPath = new vscode.ThemeIcon('history');
-        this.contextValue = 'partitionUsageRefreshInfo';
-        this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt, {
-            title: 'GPU Partition Usage refresh',
-            refreshCommandLabel: 'Refresh Partition Usage',
-            autoRefreshMinutes: refreshIntervalMinutes,
-        }));
-    }
-}
 
 class PartitionUsageSummaryItem extends vscode.TreeItem {
     constructor(result: PartitionUsageResult) {
@@ -123,14 +110,12 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private hasFetchedMaintenance = false;
     private readonly unsubscribe: () => void;
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
 
-    /**
-     * @param refreshIntervalMinutes Current background refresh interval, 0 when off
-     */
     constructor(
         private readonly slurmService: SlurmService,
         private readonly store: PartitionDataStore,
-        private readonly refreshIntervalMinutes: () => number,
     ) {
         // Scheduled and manual refreshes both land here, so the view always shows the latest snapshot
         this.unsubscribe = store.onDidChange(() => this._onDidChangeTreeData.fire());
@@ -143,11 +128,6 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
     refresh(): void {
         this.cachedMaintenanceWindows = [];
         this.hasFetchedMaintenance = false;
-        this._onDidChangeTreeData.fire();
-    }
-
-    /** Redraws without fetching, e.g. after the refresh interval changes. */
-    rerender(): void {
         this._onDidChangeTreeData.fire();
     }
 
@@ -184,7 +164,7 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
                 items.push(maintenanceItem);
             }
 
-            items.push(new PartitionUsageRefreshItem(snapshot.fetchedAt, this.refreshIntervalMinutes()));
+            showRefreshTime(this.view, snapshot.fetchedAt);
 
             const entries = sortPartitionUsageEntries(snapshot.usage.entries);
             if (entries.length === 0) {
@@ -198,6 +178,7 @@ export class PartitionUsageProvider implements vscode.TreeDataProvider<vscode.Tr
             return items;
         } catch (error) {
             console.error('Error fetching GPU Partition Usage:', error);
+            showRefreshTime(this.view, undefined);
             return [new PartitionUsageMessageItem('Failed to fetch GPU Partition Usage', 'error')];
         }
     }

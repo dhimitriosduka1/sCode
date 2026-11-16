@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
 import { ClusterAccountOverviewEntry, MaintenanceWindow, SlurmService } from './slurmService';
@@ -12,18 +12,6 @@ import {
     sortClusterAccountOverviewEntries,
 } from './clusterOverviewRanking';
 import { formatTooltipMarkdown } from './tooltipMarkdown';
-
-class ClusterOverviewRefreshItem extends vscode.TreeItem {
-    constructor(refreshedAt: Date) {
-        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
-        this.iconPath = new vscode.ThemeIcon('history');
-        this.contextValue = 'clusterOverviewRefreshInfo';
-        this.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(refreshedAt, {
-            title: 'Cluster Overview refresh',
-            refreshCommandLabel: 'Refresh Cluster Overview',
-        }));
-    }
-}
 
 class ClusterOverviewTotalItem extends vscode.TreeItem {
     constructor(entries: ClusterAccountOverviewEntry[], totalGpuCount: number) {
@@ -76,6 +64,9 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
         (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmClusterOverview.refreshing', refreshing),
     );
 
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
+
     constructor(private readonly slurmService: SlurmService) {}
 
     /** Reloads the view, once the refresh in progress (if any) is done. */
@@ -100,7 +91,11 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
             return [];
         }
 
-        return this.refreshGate.load(() => this.getRootItems());
+        return this.refreshGate.load(async () => {
+            const items = await this.getRootItems();
+            showRefreshTime(this.view, this.lastRefreshedAt);
+            return items;
+        });
     }
 
     private async getRootItems(): Promise<vscode.TreeItem[]> {
@@ -120,10 +115,6 @@ export class ClusterOverviewProvider implements vscode.TreeDataProvider<vscode.T
             const maintenanceItem = createMaintenanceWarningItem(this.cachedMaintenanceWindows);
             if (maintenanceItem) {
                 items.push(maintenanceItem);
-            }
-
-            if (this.lastRefreshedAt) {
-                items.push(new ClusterOverviewRefreshItem(this.lastRefreshedAt));
             }
 
             const entries = sortClusterAccountOverviewEntries(this.cachedEntries);

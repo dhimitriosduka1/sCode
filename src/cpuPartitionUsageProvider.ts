@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { formatLeaderboardRefreshLabel, formatLeaderboardRefreshTooltip } from './leaderboardRefreshTime';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { formatPartitionLoadDescription, formatPartitionLoadDocumentation, PartitionLoad } from './partitionCompletion';
 import { PartitionDataStore } from './partitionDataStore';
@@ -54,14 +54,12 @@ export class CpuPartitionUsageProvider implements vscode.TreeDataProvider<vscode
     private cachedMaintenanceWindows: MaintenanceWindow[] = [];
     private hasFetchedMaintenance = false;
     private readonly unsubscribe: () => void;
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
 
-    /**
-     * @param refreshIntervalMinutes Current background refresh interval, 0 when off
-     */
     constructor(
         private readonly slurmService: SlurmService,
         private readonly store: PartitionDataStore,
-        private readonly refreshIntervalMinutes: () => number,
     ) {
         this.unsubscribe = store.onDidChange(() => this._onDidChangeTreeData.fire());
     }
@@ -70,11 +68,6 @@ export class CpuPartitionUsageProvider implements vscode.TreeDataProvider<vscode
     refresh(): void {
         this.cachedMaintenanceWindows = [];
         this.hasFetchedMaintenance = false;
-        this._onDidChangeTreeData.fire();
-    }
-
-    /** Redraws without fetching, e.g. after the refresh interval changes. */
-    rerender(): void {
         this._onDidChangeTreeData.fire();
     }
 
@@ -103,14 +96,7 @@ export class CpuPartitionUsageProvider implements vscode.TreeDataProvider<vscode
                 items.push(maintenanceItem);
             }
 
-            const refreshItem = new vscode.TreeItem(formatLeaderboardRefreshLabel(snapshot.fetchedAt));
-            refreshItem.iconPath = new vscode.ThemeIcon('history');
-            refreshItem.tooltip = new vscode.MarkdownString(formatLeaderboardRefreshTooltip(snapshot.fetchedAt, {
-                title: 'CPU Partition Usage refresh',
-                refreshCommandLabel: 'Refresh Partition Usage',
-                autoRefreshMinutes: this.refreshIntervalMinutes(),
-            }));
-            items.push(refreshItem);
+            showRefreshTime(this.view, snapshot.fetchedAt);
 
             // loads are already least occupied first within each resource group
             const cpuLoads = snapshot.loads.filter(load => load.resource === 'CPU');
@@ -133,6 +119,7 @@ export class CpuPartitionUsageProvider implements vscode.TreeDataProvider<vscode
             return items;
         } catch (error) {
             console.error('Error fetching CPU Partition Usage:', error);
+            showRefreshTime(this.view, undefined);
             const failed = new vscode.TreeItem('Failed to fetch CPU Partition Usage');
             failed.iconPath = new vscode.ThemeIcon('error');
             return [failed];

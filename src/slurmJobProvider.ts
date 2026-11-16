@@ -15,6 +15,7 @@ import { describeNeverRunCount, getSlurmJobRowParts } from './slurmJobRow';
 import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { SubmitScriptCache } from './submitScriptCache';
 import { formatGpuTypeBreakdown, summarizeRunningGpus, UserGpuUsage } from './userGpuUsage';
 
@@ -424,11 +425,14 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
     private cachedPriorityFactors: Map<string, JobPriorityFactors> | undefined;
     private hasFetchedFairShare = false;
     private searchFilter: string = '';
+    private lastRefreshedAt: Date | undefined;
     // Disables the view's refresh button while it loads (package.json `enablement`)
     private readonly refreshGate = new RefreshGate<vscode.TreeItem[]>(
         () => this.reload(),
         (refreshing) => void vscode.commands.executeCommand('setContext', 'slurmJobs.refreshing', refreshing),
     );
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
 
     private currentUsernameProvider: () => string | undefined;
 
@@ -458,6 +462,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this.cachedFairShareSummary = undefined;
         this.cachedPriorityFactors = undefined;
         this.hasFetchedFairShare = false;
+        this.lastRefreshedAt = undefined;
         this._onDidChangeTreeData.fire();
     }
 
@@ -537,7 +542,11 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      * those calls would kick off its own squeue/scontrol fan-out.
      */
     private getRootItems(): Promise<vscode.TreeItem[]> {
-        return this.refreshGate.load(() => this.loadRootItems());
+        return this.refreshGate.load(async () => {
+            const items = await this.loadRootItems();
+            showRefreshTime(this.view, this.lastRefreshedAt);
+            return items;
+        });
     }
 
     private async loadRootItems(): Promise<vscode.TreeItem[]> {
@@ -545,6 +554,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // Check if SLURM is available
             const isAvailable = await this.slurmService.isAvailable();
             if (!isAvailable) {
+                this.lastRefreshedAt = undefined;
                 return [new MessageItem('SLURM not available on this system', 'warning')];
             }
 
@@ -558,6 +568,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 this.cachedJobs = jobs;
                 this.cachedDependencies = new QueueDependencies(jobs);
                 this.cachedMaintenanceWindows = maintenanceWindows;
+                this.lastRefreshedAt = new Date();
 
                 // Clean up stale checked jobs (jobs that no longer exist)
                 if (this.checkedJobIds && this.checkedJobIds.size > 0) {
@@ -659,6 +670,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return categories;
         } catch (error) {
             console.error('Error fetching SLURM jobs:', error);
+            // With no refresh before it (it refetches while it has no jobs), the time would be the last load's
+            this.lastRefreshedAt = undefined;
             return [new MessageItem('Error fetching jobs', 'error')];
         }
     }

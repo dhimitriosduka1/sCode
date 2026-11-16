@@ -1,12 +1,11 @@
 import * as vscode from 'vscode';
 import { HistoryJob, SlurmService, getHistoryStateInfo, expandPathPlaceholders } from './slurmService';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
-import { formatLeaderboardRefreshLabel } from './leaderboardRefreshTime';
+import { showRefreshTime } from './leaderboardRefreshTime';
 import { RefreshGate } from './refreshGate';
 import {
     formatHistoryJobDescription,
-    formatHistorySummaryDescription,
-    formatHistorySummaryTooltip,
+    formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
     HistoryDateGroup,
     normalizeHistoryDays,
@@ -104,27 +103,6 @@ export class HistoryFileItem extends vscode.TreeItem {
 }
 
 /**
- * Summary item showing fetch time, Job History range, and job count.
- */
-class HistorySummaryItem extends vscode.TreeItem {
-    constructor(
-        refreshedAt: Date,
-        historyDays: number,
-        totalJobs: number,
-        filteredJobs: number,
-        searchFilter: string,
-    ) {
-        super(formatLeaderboardRefreshLabel(refreshedAt), vscode.TreeItemCollapsibleState.None);
-        this.description = formatHistorySummaryDescription(historyDays, totalJobs, filteredJobs, searchFilter);
-        this.iconPath = new vscode.ThemeIcon('history');
-        this.contextValue = 'historySummary';
-        this.tooltip = new vscode.MarkdownString(
-            formatHistorySummaryTooltip(refreshedAt, historyDays, totalJobs, filteredJobs, searchFilter)
-        );
-    }
-}
-
-/**
  * Date group item for history jobs.
  */
 class HistoryDateGroupItem extends vscode.TreeItem {
@@ -183,6 +161,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private currentPage: number = 0;
     private itemsPerPage: number = 20;
     private totalFilteredJobs: number = 0;
+    /** Shows when the data was fetched in its title bar */
+    view: vscode.TreeView<vscode.TreeItem> | undefined;
 
     constructor(slurmService: SlurmService) {
         this.slurmService = slurmService;
@@ -295,7 +275,17 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
      * Return the root items, sharing a single sacct fetch between concurrent callers.
      */
     private getRootItems(): Promise<vscode.TreeItem[]> {
-        return this.refreshGate.load(() => this.loadRootItems());
+        return this.refreshGate.load(async () => {
+            const items = await this.loadRootItems();
+            showRefreshTime(this.view, this.lastRefreshedAt);
+            if (this.view) {
+                // Only while searching, so a filtered list isn't taken for the whole history
+                this.view.message = this.hasFetchedJobs
+                    ? formatHistorySearchMessage(this.searchFilter, this.totalFilteredJobs, this.cachedJobs.length)
+                    : undefined;
+            }
+            return items;
+        });
     }
 
     private async loadRootItems(): Promise<vscode.TreeItem[]> {
@@ -331,16 +321,6 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
             this.totalFilteredJobs = filteredJobs.length;
             const items: vscode.TreeItem[] = [];
-
-            if (this.lastRefreshedAt) {
-                items.push(new HistorySummaryItem(
-                    this.lastRefreshedAt,
-                    this.historyDays,
-                    this.cachedJobs.length,
-                    filteredJobs.length,
-                    this.searchFilter,
-                ));
-            }
 
             if (this.cachedJobs.length === 0) {
                 items.push(new HistoryMessageItem(`No jobs in the last ${this.historyDays} days`, 'info'));

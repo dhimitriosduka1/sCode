@@ -507,8 +507,8 @@ export function activate(context: vscode.ExtensionContext) {
     const getPartitionRefreshMinutes = () => vscode.workspace
         .getConfiguration('slurmClusterManager')
         .get<number>('partitionRefreshInterval', DEFAULT_PARTITION_REFRESH_MINUTES);
-    const partitionUsageProvider = new PartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
-    const cpuPartitionUsageProvider = new CpuPartitionUsageProvider(slurmService, partitionDataStore, getPartitionRefreshMinutes);
+    const partitionUsageProvider = new PartitionUsageProvider(slurmService, partitionDataStore);
+    const cpuPartitionUsageProvider = new CpuPartitionUsageProvider(slurmService, partitionDataStore);
 
     // Every refresh shows a progress bar on GPU Partition Usage, whoever started it,
     // and disables its refresh button until done (package.json `enablement`)
@@ -549,6 +549,7 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true,
         manageCheckboxStateManually: true,
     });
+    slurmJobProvider.view = treeView;
     context.subscriptions.push(vscode.window.registerFileDecorationProvider(neverRunsDecorationProvider));
 
     treeView.onDidChangeCheckboxState((e) => {
@@ -569,24 +570,28 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: jobHistoryProvider,
         showCollapseAll: true,
     });
+    jobHistoryProvider.view = historyTreeView;
 
     // Register the Partition Usage TreeView
     const partitionUsageTreeView = vscode.window.createTreeView('slurmPartitionUsage', {
         treeDataProvider: partitionUsageProvider,
         showCollapseAll: false,
     });
+    partitionUsageProvider.view = partitionUsageTreeView;
 
     // Register the CPU Partition Usage TreeView
     const cpuPartitionUsageTreeView = vscode.window.createTreeView('slurmCpuPartitionUsage', {
         treeDataProvider: cpuPartitionUsageProvider,
         showCollapseAll: false,
     });
+    cpuPartitionUsageProvider.view = cpuPartitionUsageTreeView;
 
     // Register the Cluster Overview TreeView
     const clusterOverviewTreeView = vscode.window.createTreeView('slurmClusterOverview', {
         treeDataProvider: clusterOverviewProvider,
         showCollapseAll: false,
     });
+    clusterOverviewProvider.view = clusterOverviewTreeView;
 
     // Create the leaderboard provider (no auto-refresh, manual only)
     const leaderboardProvider = new LeaderboardProvider(slurmService);
@@ -596,6 +601,7 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: leaderboardProvider,
         showCollapseAll: false,
     });
+    leaderboardProvider.view = leaderboardTreeView;
 
 
     // Detect SLURM scripts and set context key for editor title button
@@ -998,8 +1004,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (e.affectsConfiguration('slurmClusterManager.partitionRefreshInterval')) {
             schedulePartitionRefresh();
-            partitionUsageProvider.rerender();
-            cpuPartitionUsageProvider.rerender();
         }
 
         if (e.affectsConfiguration('slurmClusterManager.leaderboardTopUserCount')) {

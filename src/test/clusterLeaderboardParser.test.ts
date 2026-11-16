@@ -27,6 +27,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['mswk_inst'],
                 gpuCount: 2,
                 gpuJobCount: 1,
+                accountPartitions: {},
                 gpuTypes: [{ type: 'generic', count: 2 }],
             },
             {
@@ -34,6 +35,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['mcs_inst'],
                 gpuCount: 5,
                 gpuJobCount: 2,
+                accountPartitions: {},
                 gpuTypes: [
                     { type: 'a100', count: 4 },
                     { type: 'h200', count: 1 },
@@ -57,6 +59,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['a_inst', 'z_inst'],
                 gpuCount: 9,
                 gpuJobCount: 4,
+                accountPartitions: {},
                 gpuTypes: [
                     { type: 'a100', count: 4 },
                     { type: 'generic', count: 4 },
@@ -80,6 +83,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['mpi_gpu'],
                 gpuCount: 812,
                 gpuJobCount: 3,
+                accountPartitions: {},
                 gpuTypes: [{ type: 'generic', count: 812 }],
             },
         ]);
@@ -94,6 +98,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['vision_lab'],
                 gpuCount: 16,
                 gpuJobCount: 1,
+                accountPartitions: {},
                 gpuTypes: [{ type: 'generic', count: 16 }],
             },
         ]);
@@ -110,6 +115,7 @@ describe('parseClusterLeaderboardOutput', () => {
                 accounts: ['vision_lab'],
                 gpuCount: 14,
                 gpuJobCount: 3,
+                accountPartitions: {},
                 gpuTypes: [
                     { type: 'h100', count: 8 },
                     { type: 'l40s', count: 4 },
@@ -117,6 +123,22 @@ describe('parseClusterLeaderboardOutput', () => {
                 ],
             },
         ]);
+    });
+
+    it('records which partitions each account runs GPU jobs in', () => {
+        const [entry] = parseClusterLeaderboardOutput([
+            'alice|gpu_h100_bs_default|gres/gpu:4|cpu=8,node=1,gres/gpu=4|gpu-h100|',
+            'alice|gpu_h100_bs_default|gres/gpu:4|cpu=8,node=1,gres/gpu=4|gpu-h100|',
+            'alice|vision_lab|gres/gpu:1|cpu=8,node=1,gres/gpu=1|h100|',
+            'alice|vision_lab|gres/gpu:1|cpu=8,node=1,gres/gpu=1|a100|',
+            // CPU-only jobs hold no GPUs, so their partition is left out too
+            'alice|vision_lab|N/A|cpu=4,node=1|cpu|',
+        ].join('\n'));
+
+        assert.deepEqual(entry.accountPartitions, {
+            gpu_h100_bs_default: ['gpu-h100'],
+            vision_lab: ['a100', 'h100'],
+        });
     });
 
     it('returns an empty leaderboard for empty squeue output', () => {
