@@ -2,14 +2,12 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
     formatLeaderboardAccountLabel,
-    formatLeaderboardEntryDescription,
-    formatLeaderboardEntryRowDescription,
-    formatLeaderboardEntryTrailingDescription,
+    formatLeaderboardEntrySummary,
     formatLeaderboardGpuShare,
     formatLeaderboardGpuTypeLabel,
     formatLeaderboardTooltipMarkdown,
     getGpuLeaderboardEntries,
-    getLeaderboardEntryLabel,
+    getLeaderboardEntryDetails,
     getLeaderboardEntryRowLabel,
     getTotalLeaderboardGpuCount,
     getVisibleLeaderboardEntries,
@@ -148,30 +146,14 @@ describe('leaderboard ranking', () => {
         assert.deepEqual(visible.map(e => e.username), ['first']);
     });
 
-    it('highlights the current user label without changing the row icon', () => {
-        assert.deepEqual(getLeaderboardEntryLabel(rankedEntry('you', 12, true)), {
-            label: '12. you',
-            highlights: [[4, 7]],
-        });
-
-        assert.deepEqual(getLeaderboardEntryLabel(rankedEntry('someone-else', 4, false)), {
-            label: '4. someone-else',
-        });
-    });
-
-    it('formats the full visible leaderboard row as a single label', () => {
-        const rowLabel = getLeaderboardEntryRowLabel({
-            ...rankedEntry('mock-user', 1, false),
-            accounts: ['mock_inst'],
-            gpuCount: 6,
-            gpuJobCount: 2,
-            gpuTypes: [{ type: 'a100', count: 6 }],
-        });
-
-        assert.deepEqual(rowLabel, {
-            label: '🦈 Node Nom-Nom: mock-user mock_inst · 6 GPUs · 2 GPU jobs',
+    it('keeps the row to the rank, title and username', () => {
+        assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('first', 1, false)), {
+            label: '🦈 Node Nom-Nom: first',
             highlights: [[3, 15]],
         });
+        assert.equal(getLeaderboardEntryRowLabel(rankedEntry('second', 2, false)).label, '🐨 CUDA Cuddler: second');
+        assert.equal(getLeaderboardEntryRowLabel(rankedEntry('third', 3, false)).label, '🐼 Batch Bandit: third');
+        assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('fourth', 4, false)), { label: '4. fourth' });
     });
 
     it('highlights the top three users\' titles so they stand out from the row', () => {
@@ -179,26 +161,6 @@ describe('leaderboard ranking', () => {
         for (const rank of [1, 2, 3]) {
             assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('someone', rank, false)).highlights, [[3, 15]]);
         }
-        assert.equal(getLeaderboardEntryRowLabel(rankedEntry('someone', 4, false)).highlights, undefined);
-    });
-
-    it('gives the top three users a fixed title after their rank emoji', () => {
-        assert.equal(
-            getLeaderboardEntryRowLabel(rankedEntry('first', 1, false)).label,
-            '🦈 Node Nom-Nom: first test_inst · 1 GPUs · 1 GPU job'
-        );
-        assert.equal(
-            getLeaderboardEntryRowLabel(rankedEntry('second', 2, false)).label,
-            '🐨 CUDA Cuddler: second test_inst · 1 GPUs · 1 GPU job'
-        );
-        assert.equal(
-            getLeaderboardEntryRowLabel(rankedEntry('third', 3, false)).label,
-            '🐼 Batch Bandit: third test_inst · 1 GPUs · 1 GPU job'
-        );
-        assert.equal(
-            getLeaderboardEntryRowLabel(rankedEntry('fourth', 4, false)).label,
-            '4. fourth test_inst · 1 GPUs · 1 GPU job'
-        );
     });
 
     it('highlights both the title and the username, not the same letters in the title', () => {
@@ -208,27 +170,14 @@ describe('leaderboard ranking', () => {
         assert.deepEqual(rowLabel.highlights, [[3, 15], [17, 21]]);
     });
 
-    it('highlights only the username in the full visible current-user row', () => {
-        const rowLabel = getLeaderboardEntryRowLabel(rankedEntry('you', 12, true));
-
-        assert.deepEqual(rowLabel, {
-            label: '12. you test_inst · 1 GPUs · 1 GPU job',
+    it('highlights only the username in the current user\'s row below the top three', () => {
+        assert.deepEqual(getLeaderboardEntryRowLabel(rankedEntry('you', 12, true)), {
+            label: '12. you',
             highlights: [[4, 7]],
         });
     });
 
-    it('formats GPU leaderboard descriptions using only GPU jobs', () => {
-        assert.equal(
-            formatLeaderboardEntryDescription(entry('mixed-user', 4, 2, ['mswk_inst'])),
-            'mswk_inst · 4 GPUs · 2 GPU jobs'
-        );
-        assert.equal(
-            formatLeaderboardEntryDescription(entry('single-gpu-job', 1, 1, [])),
-            '1 GPUs · 1 GPU job'
-        );
-    });
-
-    it('spells out fair share in the row, as Active Jobs does', () => {
+    it('sums a row up as its GPUs and fair share', () => {
         const withFairShare = {
             ...entry('nova42', 24, 3, ['atlas_lab']),
             fairShare: {
@@ -240,21 +189,49 @@ describe('leaderboard ranking', () => {
             },
         };
 
-        assert.equal(formatLeaderboardEntryDescription(withFairShare), 'atlas_lab · 24 GPUs · 3 GPU jobs · fair share 0.143');
+        assert.equal(formatLeaderboardEntrySummary(withFairShare), '24 GPUs · fair share 0.143');
+        assert.equal(formatLeaderboardEntrySummary(entry('solo', 1, 1)), '1 GPU');
     });
 
-    it('formats GPU leaderboard row descriptions with cluster share progress at the end', () => {
-        assert.equal(
-            formatLeaderboardEntryRowDescription(entry('mixed-user', 4, 2, ['mswk_inst']), 16),
-            'mswk_inst · 4 GPUs · 2 GPU jobs · ●●○○○○○○ 25%'
-        );
+    it('lists the rest of a row in its dropdown', () => {
+        assert.deepEqual(getLeaderboardEntryDetails({
+            ...entry('mixed-user', 4, 2, ['a_inst', 'b_inst', 'c_inst']),
+            gpuTypes: [{ type: 'a100', count: 3 }, { type: 'h100', count: 1 }],
+        }, 16), [
+            { label: 'Accounts', value: 'a_inst, b_inst, c_inst', icon: 'organization' },
+            { label: 'GPU jobs', value: '2', icon: 'play-circle' },
+            { label: 'GPU types', value: 'a100: 3 GPUs, h100: 1 GPU', icon: 'circuit-board' },
+            { label: 'Cluster share', value: '●●○○○○○○ 25%', icon: 'pie-chart' },
+        ]);
+        assert.deepEqual(getLeaderboardEntryDetails(entry('solo', 1, 1, ['only_inst']), 4)[0], {
+            label: 'Account', value: 'only_inst', icon: 'organization',
+        });
     });
 
-    it('formats the trailing leaderboard description as only the cluster share progress', () => {
-        assert.equal(
-            formatLeaderboardEntryTrailingDescription(entry('mixed-user', 4, 2, ['mswk_inst']), 16),
-            '●●○○○○○○ 25%'
-        );
+    it('lists fair share in the dropdown for each account the user\'s GPU jobs run under, when there are several', () => {
+        // Users can have many accounts (one per partition on some clusters); only those in use matter here.
+        const allAccounts = [
+            { account: 'atlas_lab', fairShareFactor: 0.5 },
+            { account: 'idle_lab', fairShareFactor: 0.9 },
+            { account: 'vision_lab', fairShareFactor: 0.25 },
+        ];
+        const withAccounts = (jobAccounts: string[]) => ({
+            ...entry('nova42', 8, 2, jobAccounts),
+            fairShare: { username: 'nova42', account: 'atlas_lab', fairShareFactor: 0.5, source: 'jobs' as const, accounts: allAccounts },
+        });
+        const fairShareLine = (jobAccounts: string[]) =>
+            getLeaderboardEntryDetails(withAccounts(jobAccounts), 8).find(({ label }) => label === 'Fair share');
+
+        assert.equal(fairShareLine(['atlas_lab']), undefined);
+        // One line per account, the one the row shows first
+        assert.deepEqual(fairShareLine(['vision_lab', 'atlas_lab']), {
+            label: 'Fair share',
+            icon: 'law',
+            children: [
+                { label: 'atlas_lab', value: '0.500' },
+                { label: 'vision_lab', value: '0.250' },
+            ],
+        });
     });
 
     it('formats compact Slurm account labels', () => {

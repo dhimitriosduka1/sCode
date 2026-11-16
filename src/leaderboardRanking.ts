@@ -42,30 +42,55 @@ export function sortLeaderboardEntries(entries: LeaderboardEntry[]): Leaderboard
     return sorted;
 }
 
-export function formatLeaderboardEntryDescription(entry: LeaderboardEntry): string {
-    const accountLabel = formatLeaderboardAccountLabel(entry.accounts);
-    const usageLabel = `${entry.gpuCount} GPUs · ${entry.gpuJobCount} GPU job${entry.gpuJobCount === 1 ? '' : 's'}`;
-    const baseLabel = accountLabel ? `${accountLabel} · ${usageLabel}` : usageLabel;
-
-    // The GPU share bar already occupies the trailing slot, so fair share stays
-    // a number here: the standing of the account their GPU jobs run under.
-    // Spelled out, matching "Your fair share" in Active Jobs.
+/**
+ * A row's dimmed text: the GPUs a user holds and the fair share of the account
+ * their GPU jobs run under, spelled out as "Your fair share" is in Active Jobs.
+ */
+export function formatLeaderboardEntrySummary(entry: LeaderboardEntry): string {
+    const gpus = `${entry.gpuCount} GPU${entry.gpuCount === 1 ? '' : 's'}`;
     return entry.fairShare
-        ? `${baseLabel} · fair share ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
-        : baseLabel;
+        ? `${gpus} · fair share ${formatFairShareFactor(entry.fairShare.fairShareFactor)}`
+        : gpus;
 }
 
-export function formatLeaderboardEntryRowDescription(entry: LeaderboardEntry, totalGpuCount: number): string {
-    const baseDescription = formatLeaderboardEntryDescription(entry);
-    const gpuShare = formatLeaderboardGpuShare(entry.gpuCount, totalGpuCount);
-    return gpuShare ? `${baseDescription} · ${gpuShare}` : baseDescription;
+export interface LeaderboardEntryDetail {
+    label: string;
+    value?: string;
+    /** Codicon id */
+    icon: string;
+    /** Lines listed under this one */
+    children?: { label: string; value: string }[];
 }
 
-export function formatLeaderboardEntryTrailingDescription(
-    entry: LeaderboardEntry,
-    totalGpuCount: number,
-): string {
-    return formatLeaderboardGpuShare(entry.gpuCount, totalGpuCount);
+/** What a row's dropdown lists: everything about the user the row itself leaves out. */
+export function getLeaderboardEntryDetails(entry: LeaderboardEntry, totalGpuCount: number): LeaderboardEntryDetail[] {
+    const details: LeaderboardEntryDetail[] = [
+        { label: entry.accounts.length === 1 ? 'Account' : 'Accounts', value: entry.accounts.join(', ') || 'Unknown', icon: 'organization' },
+        { label: 'GPU jobs', value: String(entry.gpuJobCount), icon: 'play-circle' },
+        { label: 'GPU types', value: formatLeaderboardGpuTypeLabel(entry.gpuTypes), icon: 'circuit-board' },
+    ];
+
+    const share = formatLeaderboardGpuShare(entry.gpuCount, totalGpuCount);
+    if (share) {
+        details.push({ label: 'Cluster share', value: share, icon: 'pie-chart' });
+    }
+
+    // Only the accounts their GPU jobs run under: users can have many (one per
+    // partition on some clusters), and with one, the row already shows it.
+    // The account the row shows comes first.
+    const shown = entry.fairShare?.account;
+    const inUse = (entry.fairShare?.accounts ?? [])
+        .filter(({ account }) => entry.accounts.includes(account))
+        .sort((a, b) => Number(b.account === shown) - Number(a.account === shown));
+    if (inUse.length > 1) {
+        details.push({
+            label: 'Fair share',
+            icon: 'law',
+            children: inUse.map(({ account, fairShareFactor }) => ({ label: account, value: formatFairShareFactor(fairShareFactor) })),
+        });
+    }
+
+    return details;
 }
 
 export function formatLeaderboardAccountLabel(accounts: string[]): string {
@@ -183,12 +208,6 @@ export function getVisibleLeaderboardEntries(
     return visible;
 }
 
-export function getLeaderboardEntryLabel(entry: RankedLeaderboardEntry): LeaderboardEntryLabel {
-    const label = `${getLeaderboardRankLabel(entry.rank)} ${entry.username}`;
-
-    return highlightCurrentUsername(label, entry);
-}
-
 /** The titles of the users holding the most GPUs, ranks 1, 2 and 3 in order. */
 const LEADERBOARD_TITLES = ['Node Nom-Nom', 'CUDA Cuddler', 'Batch Bandit'];
 
@@ -197,40 +216,21 @@ export function getLeaderboardEntryRowLabel(
 ): LeaderboardEntryLabel {
     const rankLabel = getLeaderboardRankLabel(entry.rank);
     const title = LEADERBOARD_TITLES[entry.rank - 1];
-    const prefix = [rankLabel, title && `${title}:`, entry.username].filter(Boolean).join(' ');
-    const description = formatLeaderboardEntryDescription(entry);
-    const label = description ? `${prefix} ${description}` : prefix;
+    const label = [rankLabel, title && `${title}:`, entry.username].filter(Boolean).join(' ');
 
-    // The title is highlighted so it stands out from the rest of the row, and
-    // so is the username on your own row. The username ends the prefix;
-    // searching for it could land inside the title.
+    // The title is highlighted so it stands out, and so is the username on
+    // your own row. The username ends the label; searching for it could land
+    // inside the title.
     const highlights: [number, number][] = [];
     if (title) {
         highlights.push([rankLabel.length + 1, rankLabel.length + 1 + title.length]);
     }
     if (entry.isCurrentUser) {
-        highlights.push([prefix.length - entry.username.length, prefix.length]);
+        highlights.push([label.length - entry.username.length, label.length]);
     }
     return highlights.length > 0 ? { label, highlights } : { label };
 }
 
 function getLeaderboardRankLabel(rank: number): string {
     return rank === 1 ? '🦈' : rank === 2 ? '🐨' : rank === 3 ? '🐼' : `${rank}.`;
-}
-
-function highlightCurrentUsername(
-    label: string,
-    entry: RankedLeaderboardEntry,
-): LeaderboardEntryLabel {
-    if (!entry.isCurrentUser) {
-        return { label };
-    }
-
-    const usernameStart = label.indexOf(entry.username);
-    return {
-        label,
-        highlights: usernameStart >= 0
-            ? [[usernameStart, usernameStart + entry.username.length]]
-            : undefined,
-    };
 }
