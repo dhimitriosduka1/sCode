@@ -6,6 +6,7 @@ import { SubmitScriptItem } from './slurmJobProvider';
 import { SubmitScriptCache } from './submitScriptCache';
 import { RefreshGate } from './refreshGate';
 import {
+    formatHistoryElapsed,
     formatHistoryJobDescription,
     formatHistorySearchMessage,
     groupHistoryJobsByEndDate,
@@ -369,7 +370,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
         // Status with color
         children.push(new HistoryDetailItem('Status', stateInfo.description, stateInfo.icon, stateInfo.color));
         children.push(new HistoryDetailItem('Exit Code', String(job.exitCode), job.exitCode === 0 ? 'check' : 'error', job.exitCode === 0 ? 'charts.green' : 'charts.red'));
-        children.push(new HistoryDetailItem('Elapsed', job.elapsed, 'watch'));
+        children.push(new HistoryDetailItem('Elapsed', formatHistoryElapsed(job.elapsed, job.timeLimit), 'watch'));
         children.push(new HistoryDetailItem('Partition', job.partition, 'server'));
         children.push(new HistoryDetailItem('Nodes', job.nodes, 'vm'));
 

@@ -2614,9 +2614,9 @@ export class SlurmService {
             startDate.setDate(startDate.getDate() - days);
             const startDateStr = startDate.toISOString().split('T')[0];
 
-            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS
+            // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS|Timelimit
             const { stdout } = await this.commandRunner(
-                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS`,
+                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,Timelimit`,
                 { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
             );
 
@@ -2659,6 +2659,7 @@ export class SlurmService {
                         nodes: parts[8].trim() || 'N/A',
                         cpus: parts[9]?.trim() || 'N/A',
                         maxMemory: parts[10]?.trim() || 'N/A',
+                        timeLimit: parts[11]?.trim() || 'N/A',
                         stdoutPath: 'N/A',
                         stderrPath: 'N/A',
                     });
@@ -3041,6 +3042,8 @@ export interface HistoryJob {
     nodes: string;
     cpus: string;
     maxMemory: string;
+    /** The time limit the job asked for, as sacct gives it (`04:00:00`, `UNLIMITED`) */
+    timeLimit: string;
     stdoutPath: string;
     stderrPath: string;
 }

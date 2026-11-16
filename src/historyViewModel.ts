@@ -44,6 +44,14 @@ export function matchesHistorySearch(job: HistoryJob, searchFilter: string): boo
         .some(field => field.toLowerCase().includes(filter));
 }
 
+/**
+ * How long a job ran, with the time limit it asked for when that is a
+ * duration (`03:58:12 of 04:00:00`), so a run that nearly hit it shows.
+ */
+export function formatHistoryElapsed(elapsed: string, timeLimit: string): string {
+    return parseElapsedSeconds(timeLimit) === undefined ? elapsed : `${elapsed} of ${timeLimit}`;
+}
+
 /** What an active search left of the history; undefined without one. */
 export function formatHistorySearchMessage(searchFilter: string, matchingJobs: number, totalJobs: number): string | undefined {
     return searchFilter
