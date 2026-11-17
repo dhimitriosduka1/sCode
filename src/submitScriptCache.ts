@@ -117,8 +117,9 @@ export class SubmitScriptCache {
     async cacheScript(jobId: string, originalScriptPath: string, cluster?: string): Promise<string | undefined> {
         const key = SubmitScriptCache.key(jobId, cluster);
         // Skip if already cached
-        if (this.cache.has(key)) {
-            return this.cache.get(key)?.cachedPath;
+        const cached = this.get(jobId, cluster);
+        if (cached) {
+            return cached.cachedPath;
         }
 
         // Skip if original path is not available
@@ -181,10 +182,13 @@ export class SubmitScriptCache {
     }
 
     /**
-     * Get cached script info for a job
+     * Get cached script info for a job, if its copy is on this machine. The
+     * entries are shared by every machine the extension runs on, so one may
+     * be another cluster's job with the same ID, whose copy is over there.
      */
     get(jobId: string, cluster?: string): CachedSubmitScript | undefined {
-        return this.cache.get(SubmitScriptCache.key(jobId, cluster));
+        const entry = this.cache.get(SubmitScriptCache.key(jobId, cluster));
+        return entry && fs.existsSync(entry.cachedPath) ? entry : undefined;
     }
 
     /**
@@ -205,7 +209,7 @@ export class SubmitScriptCache {
      * Check if a job has a cached script
      */
     has(jobId: string, cluster?: string): boolean {
-        return this.cache.has(SubmitScriptCache.key(jobId, cluster));
+        return this.get(jobId, cluster) !== undefined;
     }
 
     /**

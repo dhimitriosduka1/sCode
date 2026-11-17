@@ -126,6 +126,51 @@ describe('SubmitScriptCache array tasks', () => {
     });
 });
 
+describe('SubmitScriptCache copies on other machines', () => {
+    it('offers no copy that is not on this machine, and copies the script here instead', async () => {
+        // The entries are shared by every machine the extension runs on: job 123 on
+        // another cluster has its copy in that machine's folder
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
+        try {
+            const script = path.join(dir, 'job.sh');
+            fs.writeFileSync(script, '#!/bin/bash\n');
+            const { context, store } = fakeContext(dir);
+            const cachedAt = Date.now();
+            store.set('slurmSubmitScriptCache', {
+                '123': { originalPath: '/other/job.sh', cachedPath: `/other-machine/submit-scripts/123_${cachedAt}.sh`, cachedAt },
+            });
+            const cache = new SubmitScriptCache(context);
+
+            assert.equal(cache.has('123'), false);
+            assert.equal(cache.getCachedScriptPath('123'), undefined);
+
+            const copy = await cache.cacheScript('123', script);
+            assert.ok(copy?.startsWith(path.join(dir, 'submit-scripts')));
+            assert.equal(cache.getCachedScriptPath('123'), copy);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('offers no copy once its file is gone', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
+        try {
+            const script = path.join(dir, 'job.sh');
+            fs.writeFileSync(script, '#!/bin/bash\n');
+            const cache = new SubmitScriptCache(fakeContext(dir).context);
+            const copy = await cache.cacheScript('123', script);
+            assert.ok(copy);
+
+            fs.unlinkSync(copy);
+
+            assert.equal(cache.has('123'), false);
+            assert.equal(cache.getCachedScriptPath('123'), undefined);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe('SubmitScriptCache cleanup', () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
 
