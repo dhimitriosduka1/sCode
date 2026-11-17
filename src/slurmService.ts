@@ -865,6 +865,19 @@ function sumGpuAllocations(allocations: ClusterLeaderboardGpuType[]): number {
     return allocations.reduce((total, allocation) => total + allocation.count, 0);
 }
 
+/** Keeps the first of identical repeated entries in a GPU request. */
+function dropRepeatedGpuRequests(allocations: ClusterLeaderboardGpuType[]): ClusterLeaderboardGpuType[] {
+    const seen = new Set<string>();
+    return allocations.filter(allocation => {
+        const key = `${allocation.type}:${allocation.count}`;
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+}
+
 function findGpuAllocationType(allocations: ClusterLeaderboardGpuType[]): string | undefined {
     return allocations.find(allocation => allocation.type !== 'generic')?.type.toUpperCase();
 }
@@ -890,13 +903,31 @@ export function parseJobDetailsOutput(stdout: string): JobDetails & {
     }
 
     // TresPerNode is per node. Multiply by NumNodes when AllocTRES is unavailable.
+    // A request can list the same entry twice (gres/gpu:4,gres/gpu:4), which Slurm allocates once.
     const tresPerNodeMatch = stdout.match(/(?:^|\s)TresPerNode=([^\s]+)/);
-    const tresPerNodeGpuAllocations = parseGpuAllocations(tresPerNodeMatch?.[1] ?? '');
+    const tresPerNodeGpuAllocations = dropRepeatedGpuRequests(parseGpuAllocations(tresPerNodeMatch?.[1] ?? ''));
     if (!gpuType) {
         gpuType = findGpuAllocationType(tresPerNodeGpuAllocations);
     }
     if (!gpuCount && tresPerNodeGpuAllocations.length > 0) {
         gpuCount = sumGpuAllocations(scaleGpuAllocationsByNodeCount(tresPerNodeGpuAllocations, nodeCount));
+    }
+
+    // --gpus asks per job (TresPerJob) and --gpus-per-task per task (TresPerTask, times NumTasks).
+    const tresPerJobGpuAllocations = parseGpuAllocations(stdout.match(/(?:^|\s)TresPerJob=([^\s]+)/)?.[1] ?? '');
+    if (!gpuType) {
+        gpuType = findGpuAllocationType(tresPerJobGpuAllocations);
+    }
+    if (!gpuCount && tresPerJobGpuAllocations.length > 0) {
+        gpuCount = sumGpuAllocations(tresPerJobGpuAllocations);
+    }
+    const tresPerTaskGpuAllocations = parseGpuAllocations(stdout.match(/(?:^|\s)TresPerTask=([^\s]+)/)?.[1] ?? '');
+    if (!gpuType) {
+        gpuType = findGpuAllocationType(tresPerTaskGpuAllocations);
+    }
+    if (!gpuCount && tresPerTaskGpuAllocations.length > 0) {
+        const taskCount = parseNodeCount(stdout.match(/(?:^|\s)NumTasks=(\d+)/)?.[1]);
+        gpuCount = sumGpuAllocations(scaleGpuAllocationsByNodeCount(tresPerTaskGpuAllocations, taskCount));
     }
 
     // Fallback to Gres field (e.g., "Gres=gpu:4" or "Gres=gpu:a100:2"). This is also per node for --gres jobs.
@@ -954,6 +985,9 @@ const SQUEUE_JOB_DETAIL_FIELDS: [squeueField: string, scontrolKey: string][] = [
     ['tres-per-node', 'TresPerNode'],
     ['Gres', 'Gres'],
     ['Dependency', 'Dependency'],
+    ['tres-per-job', 'TresPerJob'],
+    ['tres-per-task', 'TresPerTask'],
+    ['NumTasks', 'NumTasks'],
 ];
 
 /**

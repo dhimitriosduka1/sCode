@@ -4,9 +4,9 @@ import { parseJobDetailsOutput, parseSqueueJobDetails, SlurmService, SQUEUE_JOB_
 
 // As squeue prints SQUEUE_JOB_DETAILS_COMMAND on slurm-submit (Slurm 26.05)
 const ROWS = [
-    '52894729_[7-12%3]|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|3275|',
-    '52894729_4|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|1|',
-    '52891442|/home/ada/l40/train.out|/home/ada/l40/train.err|/home/ada/l40/run job.sbatch|/home/ada/l40|2|cpu=16,mem=64G,node=2,billing=16,gres/gpu=6,gres/gpu:l40=6|gres/gpu:l40:3|N/A|afterok:52891441(unfulfilled)|227|',
+    '52894729_[7-12%3]|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|N/A|N/A|1|3275|',
+    '52894729_4|/home/ada/jobs/%x-%A_%a.out|/home/ada/jobs/%x-%A_%a.err|/home/ada/jobs/test-job.sh|/home/ada/jobs|1|cpu=1,mem=200M,node=1,billing=1|N/A|N/A|(null)|N/A|N/A|1|1|',
+    '52891442|/home/ada/l40/train.out|/home/ada/l40/train.err|/home/ada/l40/run job.sbatch|/home/ada/l40|2|cpu=16,mem=64G,node=2,billing=16,gres/gpu=6,gres/gpu:l40=6|gres/gpu:l40:3|N/A|afterok:52891441(unfulfilled)|N/A|N/A|2|227|',
 ].join('\n');
 
 describe('job details from one squeue request', () => {
@@ -35,6 +35,13 @@ describe('job details from one squeue request', () => {
         ));
         assert.equal(details.get('52891442')?.gpuCount, 6);
         assert.equal(details.get('52891442')?.gpuType, 'L40');
+    });
+
+    it('counts the GPUs of a pending job that asked for them per job', () => {
+        const details = parseSqueueJobDetails('52891443|/home/ada/out|/home/ada/err|/home/ada/run.sbatch|/home/ada|1|N/A|N/A|N/A|(null)|gres/gpu:h200:8|N/A|1|12|\n');
+
+        assert.equal(details.get('52891443')?.gpuCount, 8);
+        assert.equal(details.get('52891443')?.gpuType, 'H200');
     });
 
     it('asks squeue for the time in the queue', () => {
