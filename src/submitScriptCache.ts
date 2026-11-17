@@ -89,15 +89,22 @@ export class SubmitScriptCache {
         // its own folder of copies, so another machine may have dropped the entry
         // of a copy kept here. Copies are therefore aged by the time in their own
         // name (<job>_<time copied>.<ext>), not by the entries.
+        let names: string[] = [];
         try {
-            for (const name of fs.readdirSync(this.cacheDir)) {
-                const copiedAt = /_(\d{13})(\.[^.]*)?$/.exec(name)?.[1];
-                if (copiedAt && Number(copiedAt) < oldest) {
+            names = fs.readdirSync(this.cacheDir);
+        } catch (error) {
+            console.error('Failed to list submit script copies:', error);
+        }
+        for (const name of names) {
+            const copiedAt = /_(\d{13})(\.[^.]*)?$/.exec(name)?.[1];
+            if (copiedAt && Number(copiedAt) < oldest) {
+                try {
                     fs.unlinkSync(path.join(this.cacheDir, name));
+                } catch (error) {
+                    // Another window or machine sharing this folder may have deleted it first
+                    console.error(`Failed to delete old submit script copy ${name}:`, error);
                 }
             }
-        } catch (error) {
-            console.error('Failed to delete old submit script copies:', error);
         }
     }
 

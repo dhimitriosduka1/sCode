@@ -151,6 +151,28 @@ describe('SubmitScriptCache cleanup', () => {
         }
     });
 
+    it('keeps deleting when one old copy cannot be deleted', () => {
+        // Another window or machine sharing the folder may delete a copy first
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
+        const originalConsoleError = console.error;
+        try {
+            const copies = path.join(dir, 'submit-scripts');
+            fs.mkdirSync(copies);
+            const old = Date.now() - 31 * DAY_MS;
+            // Listed first, and a folder, so deleting it fails
+            fs.mkdirSync(path.join(copies, `00_${old}.sh`));
+            fs.writeFileSync(path.join(copies, `123_${old}.sh`), '#!/bin/bash\n');
+
+            console.error = () => undefined;
+            new SubmitScriptCache(fakeContext(dir).context);
+
+            assert.deepEqual(fs.readdirSync(copies), [`00_${old}.sh`]);
+        } finally {
+            console.error = originalConsoleError;
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it('drops an old entry and its copy, and keeps recent ones', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
         try {
