@@ -5,6 +5,7 @@ import * as path from 'path';
 import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { quoteForShell } from './shellQuote';
+import { countJobs } from './jobCount';
 
 import {
     createMockHistoryJobs,
@@ -32,6 +33,8 @@ export function getCurrentUsername(): string | undefined {
     }
 }
 const SACCT_HISTORY_MAX_BUFFER = 16 * 1024 * 1024;
+// Match the full job IDs between queue queries and count every task in a grouped row.
+const FULL_ARRAY_IDS = 'env SLURM_BITSTR_LEN=0';
 
 /**
  * Fair share moves on the order of hours, so a single `sshare` call is shared
@@ -966,7 +969,7 @@ const SQUEUE_JOB_DETAIL_FIELDS: [squeueField: string, scontrolKey: string][] = [
  * zone-free count, where SubmitTime is a local time with no zone, wrong by
  * hours when the cluster is in another zone than VS Code.
  */
-export const SQUEUE_JOB_DETAILS_COMMAND = `squeue -u $USER --noheader -O "${['JobArrayID', ...SQUEUE_JOB_DETAIL_FIELDS.map(([field]) => field), 'PendingTime'].map((field) => `${field}:|`).join(',')}"`;
+export const SQUEUE_JOB_DETAILS_COMMAND = `${FULL_ARRAY_IDS} squeue -u $USER --noheader -O "${['JobArrayID', ...SQUEUE_JOB_DETAIL_FIELDS.map(([field]) => field), 'PendingTime'].map((field) => `${field}:|`).join(',')}"`;
 
 type SqueueJobDetails = ReturnType<typeof parseJobDetailsOutput> & { queuedSeconds?: number };
 
@@ -1058,6 +1061,9 @@ export interface PartitionUsageResult {
     entries: PartitionUsageEntry[];
     clusterAllocatedGpus: number;
     clusterAvailableGpus: number;
+    /** Distinct pending tasks eligible for at least one partition of each kind. */
+    pendingGpuJobs: number;
+    pendingCpuJobs: number;
     /** Partitions without GPUs, which entries leaves out */
     cpuOnlyEntries?: PartitionUsageEntry[];
 }
@@ -1204,18 +1210,19 @@ function addGpuTypes(target: Map<string, number> | undefined, allocations: Clust
  * it at all. The request is read only for the GPU type, which the allocation
  * leaves out on clusters whose accounting does not track GPU types.
  */
-const SQUEUE_RUNNING_GPU_JOBS_COMMAND = 'squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|,Partition:|"';
+const SQUEUE_RUNNING_GPU_JOBS_COMMAND = `${FULL_ARRAY_IDS} squeue --noheader --state=R -O "UserName:|,Account:|,tres-per-node:|,tres-alloc:|,Partition:|,JobArrayID:|"`;
 
 interface RunningGpuJobRow {
     user: string;
     account: string | undefined;
     partition: string | undefined;
+    jobId: string;
     gpuAllocations: ClusterLeaderboardGpuType[];
 }
 
 /** Reads one row of SQUEUE_RUNNING_GPU_JOBS_COMMAND's output; undefined for a row without a user. */
 function parseRunningGpuJobRow(line: string): RunningGpuJobRow | undefined {
-    const [user = '', account = '', tresPerNode = '', tresAlloc = '', partition = ''] = line.split('|').map(field => field.trim());
+    const [user = '', account = '', tresPerNode = '', tresAlloc = '', partition = '', jobId = ''] = line.split('|').map(field => field.trim());
     if (!user) {
         return undefined;
     }
@@ -1224,6 +1231,7 @@ function parseRunningGpuJobRow(line: string): RunningGpuJobRow | undefined {
         user,
         account: normalizeSlurmAccount(account),
         partition: partition || undefined,
+        jobId,
         gpuAllocations: readAllocatedGpus(tresAlloc, tresPerNode),
     };
 }
@@ -1265,11 +1273,11 @@ export function parseClusterLeaderboardOutput(stdout: string): ClusterLeaderboar
         if (!row) {
             continue;
         }
-        const { user, account, partition, gpuAllocations } = row;
+        const { user, account, partition, jobId, gpuAllocations } = row;
 
         if (gpuAllocations.length > 0) {
             const jobGpuCount = sumGpuAllocations(gpuAllocations);
-            gpuJobCounts.set(user, (gpuJobCounts.get(user) || 0) + 1);
+            gpuJobCounts.set(user, (gpuJobCounts.get(user) || 0) + countJobs([jobId]));
             gpuCounts.set(user, (gpuCounts.get(user) || 0) + jobGpuCount);
 
             if (!gpuTypesByUser.has(user)) {
@@ -1322,7 +1330,7 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
         if (!row) {
             continue;
         }
-        const { user, gpuAllocations } = row;
+        const { user, jobId, gpuAllocations } = row;
         const account = row.account ?? 'unknown';
 
         if (gpuAllocations.length === 0) {
@@ -1330,7 +1338,8 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
         }
 
         const jobGpuCount = sumGpuAllocations(gpuAllocations);
-        gpuJobCounts.set(account, (gpuJobCounts.get(account) || 0) + 1);
+        const jobCount = countJobs([jobId]);
+        gpuJobCounts.set(account, (gpuJobCounts.get(account) || 0) + jobCount);
         gpuCounts.set(account, (gpuCounts.get(account) || 0) + jobGpuCount);
 
         if (!gpuTypesByAccount.has(account)) {
@@ -1345,7 +1354,7 @@ export function parseClusterAccountOverviewOutput(stdout: string): ClusterAccoun
         if (accountUsers) {
             const userEntry = accountUsers.get(user) ?? { username: user, gpuCount: 0, gpuJobCount: 0 };
             userEntry.gpuCount += jobGpuCount;
-            userEntry.gpuJobCount += 1;
+            userEntry.gpuJobCount += jobCount;
             accountUsers.set(user, userEntry);
         }
     }
@@ -1561,7 +1570,7 @@ export function getNodeIdleGpusByType(
  * Parses partition usage from:
  *  - sinfoNodeStdout: `sinfo -N --noheader --format="%N|%P|%T|%G"` (one row per node per partition)
  *  - scontrolStdout:  `scontrol show node` (per-node AllocTRES)
- *  - squeueStdout:    `squeue --noheader --format="%P|%t"` (job counts only)
+ *  - squeueStdout:    `squeue --noheader --format="%P|%T|%i"` (job counts only)
  *
  * GPU allocation is sourced from scontrol AllocTRES — the ground truth.
  * This correctly handles:
@@ -1754,26 +1763,31 @@ export function parsePartitionUsageOutput(
     }
 
     // --- Phase 4: Count running and pending jobs from squeue (no GPU counting here) ---
+    const pendingGpuJobIds = new Set<string>();
+    const pendingCpuJobIds = new Set<string>();
     const squeueLines = squeueStdout.trim().split('\n').filter(line => line.trim());
     for (const line of squeueLines) {
-        const parts = line.split('|');
-        if (parts.length < 2) {
+        const [partitions, rawState, jobId] = line.split('|').map(field => field.trim());
+        if (!jobId) {
             continue;
         }
 
-        const state = parts[1].trim().toUpperCase();
-        const partitionInfos = parsePartitionList(parts[0]);
+        const state = rawState.toUpperCase();
+        const partitionInfos = parsePartitionList(partitions);
         if (partitionInfos.length === 0) {
             continue;
         }
 
         if (state === 'R' || state === 'RUNNING') {
             const entry = getEntry(partitionInfos[0].partition, partitionInfos[0].isDefault);
-            entry.runningJobs += 1;
+            entry.runningJobs += countJobs([jobId]);
         } else if (state === 'PD' || state === 'PENDING') {
+            const jobCount = countJobs([jobId]);
             for (const partitionInfo of partitionInfos) {
                 const entry = getEntry(partitionInfo.partition, partitionInfo.isDefault);
-                entry.pendingJobs += 1;
+                entry.pendingJobs += jobCount;
+                const pending = entry.totalGpus > 0 ? pendingGpuJobIds : pendingCpuJobIds;
+                pending.add(jobId);
             }
         }
     }
@@ -1791,6 +1805,8 @@ export function parsePartitionUsageOutput(
         entries: allEntries.filter(entry => entry.totalGpus > 0),
         clusterAllocatedGpus,
         clusterAvailableGpus,
+        pendingGpuJobs: countJobs(pendingGpuJobIds),
+        pendingCpuJobs: countJobs(pendingCpuJobIds),
         cpuOnlyEntries: allEntries.filter(entry => entry.totalGpus === 0),
     };
 }
@@ -1942,7 +1958,8 @@ export class SlurmService {
         try {
             // Format: JobID|Name|State|Time|Partition|NodeList|TimeLimit|StartTime|Reason|Account
             const { stdout } = await this.commandRunner(
-                'squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r|%a"'
+                `${FULL_ARRAY_IDS} squeue -u $USER --noheader --format="%i|%j|%t|%M|%P|%N|%l|%S|%r|%a"`,
+                { maxBuffer: 32 * 1024 * 1024 },
             );
 
             const jobs: SlurmJob[] = [];
@@ -2260,7 +2277,7 @@ export class SlurmService {
             let squeueStdout = '';
             try {
                 const squeueResult = await this.commandRunner(
-                    'squeue --noheader --format="%P|%T" 2>/dev/null',
+                    `${FULL_ARRAY_IDS} squeue --noheader --format="%P|%T|%i" 2>/dev/null`,
                     { maxBuffer: 32 * 1024 * 1024 }
                 );
                 squeueStdout = squeueResult.stdout;
@@ -2275,6 +2292,8 @@ export class SlurmService {
                 entries: [],
                 clusterAllocatedGpus: 0,
                 clusterAvailableGpus: 0,
+                pendingGpuJobs: 0,
+                pendingCpuJobs: 0,
             };
         }
     }
@@ -2332,16 +2351,13 @@ export class SlurmService {
 
         if (this.isMockMode()) {
             this.mockJobs = this.getMutableMockJobs().filter(job =>
-                job.jobId !== cleanId && !job.jobId.startsWith(`${cleanId}_`)
+                job.jobId.replace(/%\d+/, '') !== cleanId && !job.jobId.startsWith(`${cleanId}_`)
             );
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         }
 
         try {
-            // Clean up job ID for scancel compatibility:
-            // squeue may report array IDs with throttle notation (e.g., 12345_[0-100%5])
-            // which scancel does not accept — strip the %N part
-            await this.commandRunner(`scancel '${cleanId}'`);
+            await this.commandRunner(`scancel ${quoteForShell(formatScancelJobId(jobId))}`);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2380,18 +2396,20 @@ export class SlurmService {
      * Cancel what is still pending of several jobs or arrays, in one scancel:
      * a running task of one of the arrays, or a job that has started since,
      * keeps running.
-     * @param jobIds Job or array IDs, as scancel takes them (`123`)
+     * @param jobIds Whole job/array IDs or explicit task IDs and ranges
      */
     async cancelPendingJobs(jobIds: readonly string[]): Promise<{ success: boolean; message: string }> {
         const listed = jobIds.join(', ');
         if (this.isMockMode()) {
+            const ids = jobIds.map(jobId => jobId.replace(/%\d+/, ''));
             this.mockJobs = this.getMutableMockJobs().filter(job => !(job.state === 'PD'
-                && jobIds.some(jobId => job.jobId === jobId || job.jobId.startsWith(`${jobId}_`))));
+                && ids.some(jobId => job.jobId.replace(/%\d+/, '') === jobId || job.jobId.startsWith(`${jobId}_`))));
             return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
         }
 
         try {
-            await this.commandRunner(`scancel --state=PENDING ${jobIds.map(jobId => `'${jobId}'`).join(' ')}`);
+            const targets = jobIds.map(jobId => quoteForShell(formatScancelJobId(jobId)));
+            await this.commandRunner(`scancel --state=PENDING ${targets.join(' ')}`);
             return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2616,7 +2634,7 @@ export class SlurmService {
 
             // sacct format: JobID|JobName|State|ExitCode|Start|End|Elapsed|Partition|NodeList|AllocCPUS|MaxRSS|Timelimit
             const { stdout } = await this.commandRunner(
-                `sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,Timelimit`,
+                `${FULL_ARRAY_IDS} sacct -X -u $USER --starttime=${startDateStr} --noheader --parsable2 --format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,Timelimit`,
                 { maxBuffer: SACCT_HISTORY_MAX_BUFFER }
             );
 
@@ -2929,10 +2947,11 @@ export class SlurmService {
             if (pendingJobs.length === 0) {
                 return { success: true, message: 'No pending jobs to hold.' };
             }
+            const count = countJobs(pendingJobs.map(job => job.jobId));
             pendingJobs.forEach(job => {
                 job.pendingReason = 'JobHeldUser';
             });
-            return { success: true, message: `Successfully held all pending jobs (${pendingJobs.length} jobs) (Mock).` };
+            return { success: true, message: `Successfully held all pending jobs (${count} jobs) (Mock).` };
         }
 
         try {
@@ -2944,8 +2963,9 @@ export class SlurmService {
             }
 
             const ids = pendingNonHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
+            const count = countJobs(pendingNonHeld.map(job => job.jobId));
             await this.commandRunner(`scontrol hold ${ids}`);
-            return { success: true, message: `Successfully held all pending jobs (${pendingNonHeld.length} jobs).` };
+            return { success: true, message: `Successfully held all pending jobs (${count} jobs).` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('Failed to hold all pending jobs:', error);
@@ -2962,10 +2982,11 @@ export class SlurmService {
             if (heldJobs.length === 0) {
                 return { success: true, message: 'No held jobs to release.' };
             }
+            const count = countJobs(heldJobs.map(job => job.jobId));
             heldJobs.forEach(job => {
                 job.pendingReason = 'Priority';
             });
-            return { success: true, message: `Successfully released all held jobs (${heldJobs.length} jobs) (Mock).` };
+            return { success: true, message: `Successfully released all held jobs (${count} jobs) (Mock).` };
         }
 
         try {
@@ -2977,8 +2998,9 @@ export class SlurmService {
             }
 
             const ids = pendingHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
+            const count = countJobs(pendingHeld.map(job => job.jobId));
             await this.commandRunner(`scontrol release ${ids}`);
-            return { success: true, message: `Successfully released all held jobs (${pendingHeld.length} jobs).` };
+            return { success: true, message: `Successfully released all held jobs (${count} jobs).` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('Failed to release all held jobs:', error);
@@ -3094,6 +3116,22 @@ export function isJobHeld(reason: string | undefined): boolean {
         return false;
     }
     return reason.includes('Hold') || reason.includes('Held');
+}
+
+/** Remove Slurm's display throttle and expand stepped ranges for scancel. */
+function formatScancelJobId(jobId: string): string {
+    const id = jobId.replace(/%\d+/, '');
+    if (!/^\d+_?\[.*:/.test(id)) {
+        return id;
+    }
+    countJobs([id]);
+    return id.replace(/(\d+)-(\d+):(\d+)/g, (_range, start, end, step) => {
+        const indices: number[] = [];
+        for (let index = Number(start); index <= Number(end); index += Number(step)) {
+            indices.push(index);
+        }
+        return indices.join(',');
+    });
 }
 
 export function cleanJobIdForScontrol(jobId: string): string {

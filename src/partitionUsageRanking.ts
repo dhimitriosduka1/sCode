@@ -78,9 +78,7 @@ export function formatPartitionUsageTooltipMarkdown(
 export function formatPartitionUsageSummary(result: PartitionUsageResult): string {
     const totalPartitions = result.entries.length;
     const partitionLabel = totalPartitions === 1 ? 'partition' : 'partitions';
-    const totalPendingJobs = result.entries.reduce((total, entry) => total + entry.pendingJobs, 0);
-
-    return `${result.clusterAllocatedGpus}/${result.clusterAvailableGpus} GPUs allocated · ${totalPendingJobs} pending · ${totalPartitions} ${partitionLabel}`;
+    return `${result.clusterAllocatedGpus}/${result.clusterAvailableGpus} GPUs allocated · ${result.pendingGpuJobs} pending · ${totalPartitions} ${partitionLabel}`;
 }
 
 export function getPartitionUsageRatio(entry: PartitionUsageEntry): number {

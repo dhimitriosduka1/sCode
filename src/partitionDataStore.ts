@@ -76,7 +76,7 @@ export class PartitionDataStore {
     private async fetch(generation: number): Promise<PartitionSnapshot> {
         const [usage, cpuUsage] = await this.source.isAvailable()
             ? await Promise.all([this.source.getPartitionUsage(), this.source.getCpuPartitionUsage()])
-            : [{ entries: [], clusterAllocatedGpus: 0, clusterAvailableGpus: 0 }, []];
+            : [{ entries: [], clusterAllocatedGpus: 0, clusterAvailableGpus: 0, pendingGpuJobs: 0, pendingCpuJobs: 0 }, []];
 
         const snapshot: PartitionSnapshot = {
             usage,

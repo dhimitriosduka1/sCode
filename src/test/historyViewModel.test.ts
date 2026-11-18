@@ -50,6 +50,14 @@ describe('history view model', () => {
         ]);
     });
 
+    it('includes every array task in the date count while keeping one grouped record', () => {
+        const now = new Date('2026-04-28T14:00:00');
+        const jobs = [historyJob({ jobId: '1' }), historyJob({ jobId: '2_[1-100]' })];
+        const [group] = groupHistoryJobsByEndDate(jobs, now);
+        assert.equal(group.label, 'Today (101)');
+        assert.deepEqual(group.jobs, jobs);
+    });
+
     it('formats successful history job rows with ended time and compact elapsed time', () => {
         const now = new Date('2026-04-28T14:00:00');
 

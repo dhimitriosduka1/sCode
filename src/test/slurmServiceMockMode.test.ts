@@ -162,7 +162,7 @@ describe('SlurmService mock mode', () => {
     it('can get and update array task throttle in mock mode', async () => {
         const service = createMockService();
 
-        // The mock job array is 91004_[3-10%2]
+        // The mock job array is 91004_[4-10%2]
         const initialThrottle = await service.getArrayThrottle('91004');
         assert.equal(initialThrottle, 2);
 
@@ -233,7 +233,7 @@ describe('SlurmService mock mode', () => {
         // Bulk hold
         const holdAllResult = await service.holdAllPendingJobs();
         assert.equal(holdAllResult.success, true);
-        assert.equal(holdAllResult.message.includes('Successfully held all pending jobs'), true);
+        assert.match(holdAllResult.message, /Successfully held all pending jobs \(13 jobs\)/);
 
         jobs = await service.getJobs();
         pending = jobs.filter(j => j.state === 'PD');
@@ -243,7 +243,7 @@ describe('SlurmService mock mode', () => {
         // Bulk release
         const releaseAllResult = await service.releaseAllPendingJobs();
         assert.equal(releaseAllResult.success, true);
-        assert.equal(releaseAllResult.message.includes('Successfully released all held jobs'), true);
+        assert.match(releaseAllResult.message, /Successfully released all held jobs \(13 jobs\)/);
 
         jobs = await service.getJobs();
         pending = jobs.filter(j => j.state === 'PD');

@@ -84,6 +84,8 @@ describe('partition usage ranking', () => {
             ],
             clusterAvailableGpus: 12,
             clusterAllocatedGpus: 3,
-        }), '3/12 GPUs allocated · 3 pending · 2 partitions');
+            pendingGpuJobs: 2,
+            pendingCpuJobs: 0,
+        }), '3/12 GPUs allocated · 2 pending · 2 partitions');
     });
 });

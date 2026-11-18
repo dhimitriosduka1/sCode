@@ -64,6 +64,19 @@ describe('SlurmService cancellation commands', () => {
         });
     });
 
+    it('converts a grouped array display ID to an exact cancellation target', async () => {
+        const commands: string[] = [];
+        const service = new SlurmService(undefined, undefined, async command => {
+            commands.push(command);
+            return { stdout: '', stderr: '' };
+        });
+
+        const result = await service.cancelPendingJobs(['456_[1-5:2,9%2]']);
+
+        assert.equal(result.success, true);
+        assert.deepEqual(commands, ["scancel --state=PENDING '456_[1,3,5,9]'"]);
+    });
+
     it('reports failures when cancelling the pending part of jobs fails', async () => {
         const commandRunner: SlurmCommandRunner = async () => {
             throw new Error('Invalid job id specified');

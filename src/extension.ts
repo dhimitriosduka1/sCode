@@ -24,7 +24,8 @@ import { ClusterConnection, ClusterConnectionState } from './clusterConnection';
 import { CLUSTER_FILE_SCHEME, clusterFileUri, ClusterFileSystemProvider } from './clusterFileSystem';
 import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
-import { describeStrandedJobs, pendingRowCancelIds, readCancelTarget } from './jobDependencies';
+import { describeStrandedJobs, readCancelTarget } from './jobDependencies';
+import { countJobs } from './jobCount';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -1108,6 +1109,9 @@ export function activate(context: vscode.ExtensionContext) {
                         // Check for single index: just a number
                         if (/^\d+$/.test(value)) {
                             const index = parseInt(value, 10);
+                            if (!Number.isSafeInteger(index)) {
+                                return 'Index is too large';
+                            }
                             if (maxArrayIndex !== undefined && (index < minArrayIndex || index > maxArrayIndex)) {
                                 return `Index out of range (valid: ${minArrayIndex}-${maxArrayIndex})`;
                             }
@@ -1118,6 +1122,9 @@ export function activate(context: vscode.ExtensionContext) {
                         const commaPattern = /^(\d+)(,\d+)+$/;
                         if (commaPattern.test(value)) {
                             const indices = value.split(',').map(n => parseInt(n, 10));
+                            if (!indices.every(Number.isSafeInteger)) {
+                                return 'Index is too large';
+                            }
 
                             // Check for duplicates
                             const uniqueIndices = new Set(indices);
@@ -1133,11 +1140,6 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
                             }
 
-                            // Check max count warning threshold
-                            if (indices.length > 100) {
-                                return `Warning: This will cancel ${indices.length} jobs. Consider using a range instead.`;
-                            }
-
                             return null;
                         }
 
@@ -1150,6 +1152,9 @@ export function activate(context: vscode.ExtensionContext) {
                         const start = parseInt(rangeMatch[1], 10);
                         const end = parseInt(rangeMatch[2], 10);
                         const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+                        if (![start, end, step].every(Number.isSafeInteger)) {
+                            return 'Index or step is too large';
+                        }
 
                         // Validate start <= end
                         if (start > end) {
@@ -1171,14 +1176,6 @@ export function activate(context: vscode.ExtensionContext) {
                             }
                         }
 
-                        // Calculate how many jobs this will cancel
-                        const jobCount = Math.floor((end - start) / step) + 1;
-
-                        // Warn if cancelling many jobs
-                        if (jobCount > 100) {
-                            return `This will cancel ${jobCount} jobs. Are you sure? Re-enter to confirm.`;
-                        }
-
                         return null;
                     }
                 });
@@ -1191,21 +1188,8 @@ export function activate(context: vscode.ExtensionContext) {
                 if (/^\d+$/.test(rangeInput)) {
                     jobIdToCancel = `${baseJobId}_${rangeInput}`;
                 } else {
-                    // Large range warning - show additional confirmation for >100 jobs
-                    const commaPattern = /^(\d+)(,\d+)+$/;
-                    let jobCount = 0;
-                    if (commaPattern.test(rangeInput)) {
-                        jobCount = rangeInput.split(',').length;
-                    } else {
-                        const rangeMatch = rangeInput.match(/^(\d+)-(\d+)(?::(\d+))?$/);
-                        if (rangeMatch) {
-                            const start = parseInt(rangeMatch[1], 10);
-                            const end = parseInt(rangeMatch[2], 10);
-                            const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
-                            jobCount = Math.floor((end - start) / step) + 1;
-                        }
-                    }
-
+                    jobIdToCancel = `${baseJobId}_[${rangeInput}]`;
+                    const jobCount = countJobs([jobIdToCancel]);
                     if (jobCount > 100) {
                         const largeRangeConfirm = await vscode.window.showWarningMessage(
                             `You are about to cancel ${jobCount} jobs. Are you sure?`,
@@ -1216,23 +1200,6 @@ export function activate(context: vscode.ExtensionContext) {
                             return;
                         }
                     }
-
-                    // scancel uses bracket syntax: jobId_[start-end] or jobId_[1,3,5]
-                    // However, scancel does NOT support step notation (e.g., 0-10:2),
-                    // so we expand stepped ranges into comma-separated indices
-                    let scancelRange = rangeInput;
-                    const stepMatch = rangeInput.match(/^(\d+)-(\d+):(\d+)$/);
-                    if (stepMatch) {
-                        const start = parseInt(stepMatch[1], 10);
-                        const end = parseInt(stepMatch[2], 10);
-                        const step = parseInt(stepMatch[3], 10);
-                        const indices: number[] = [];
-                        for (let i = start; i <= end; i += step) {
-                            indices.push(i);
-                        }
-                        scancelRange = indices.join(',');
-                    }
-                    jobIdToCancel = `${baseJobId}_[${scancelRange}]`;
                 }
             }
         }
@@ -1272,7 +1239,8 @@ export function activate(context: vscode.ExtensionContext) {
     const cancelAllJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllJobs', async () => {
         if (checkedJobIds.size > 0) {
             // Cancel only selected jobs
-            const jobCount = checkedJobIds.size;
+            const selectedJobIds = Array.from(checkedJobIds);
+            const jobCount = countJobs(selectedJobIds);
             const confirmation = await vscode.window.showWarningMessage(
                 `Are you sure you want to cancel ${jobCount} selected job${jobCount > 1 ? 's' : ''}? This action cannot be undone.`,
                 { modal: true },
@@ -1284,11 +1252,11 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             const results = await Promise.all(
-                Array.from(checkedJobIds).map(jobId => slurmService.cancelJob(jobId))
+                selectedJobIds.map(jobId => slurmService.cancelJob(jobId))
             );
 
-            const succeeded = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
+            const succeeded = countJobs(selectedJobIds.filter((_jobId, index) => results[index].success));
+            const failed = jobCount - succeeded;
 
             if (failed === 0) {
                 vscode.window.showInformationMessage(`Successfully cancelled ${succeeded} job${succeeded > 1 ? 's' : ''}.`);
@@ -1352,11 +1320,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Cancels the pending jobs the Pending header counts as never running: nothing
     // else clears them, since they would wait in the queue indefinitely
     const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
-        if (!item || item.neverRunJobs.length === 0) {
+        if (!item?.dependencies || item.neverRunJobCount === 0) {
             return;
         }
 
-        const count = item.neverRunJobs.length;
+        const count = item.neverRunJobCount;
         const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
         const confirmation = await vscode.window.showWarningMessage(
             count === 1
@@ -1370,7 +1338,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const result = await slurmService.cancelPendingJobs(pendingRowCancelIds(item.neverRunJobs));
+        const result = await slurmService.cancelPendingJobs(item.dependencies.pendingRowCancelIds(item.neverRunJobs));
         // After a failure too: scancel still cancels the rest when one of the jobs is already gone
         slurmJobProvider.refresh();
         jobHistoryProvider.refresh();
@@ -1917,7 +1885,7 @@ async function confirmJobCancel(
         return choice === confirmLabel ? [] : undefined;
     }
 
-    const count = stranded.length;
+    const count = countJobs(stranded.map(job => job.jobId));
     const withDependents = `${confirmLabel} and ${count} Dependent${count === 1 ? '' : 's'}`;
     const alone = `${confirmLabel} Only`;
     const choice = await vscode.window.showWarningMessage(
@@ -1946,7 +1914,7 @@ async function cancelDependentsAndReport(slurmService: SlurmService, message: st
     // A pending array goes whole, as its dependency holds back every pending
     // task, but only its pending tasks: the ones already running stay
     const result = await slurmService.cancelPendingJobs([...new Set(dependents.map((job) => extractBaseJobId(job.jobId)))]);
-    const count = dependents.length;
+    const count = countJobs(dependents.map(job => job.jobId));
     if (result.success) {
         vscode.window.showInformationMessage(`${message}, along with ${count} dependent job${count === 1 ? '' : 's'}.`);
     } else {

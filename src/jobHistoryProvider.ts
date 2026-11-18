@@ -5,6 +5,7 @@ import { showRefreshTime } from './leaderboardRefreshTime';
 import { SubmitScriptItem } from './slurmJobProvider';
 import { SubmitScriptCache } from './submitScriptCache';
 import { RefreshGate } from './refreshGate';
+import { countJobs } from './jobCount';
 import {
     formatHistoryElapsed,
     formatHistoryJobDescription,
@@ -166,7 +167,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
     private searchFilter: string = '';
     private currentPage: number = 0;
     private itemsPerPage: number = 20;
-    private totalFilteredJobs: number = 0;
+    private filteredRowCount = 0;
+    private filteredJobCount = 0;
     /** Shows when the data was fetched in its title bar */
     view: vscode.TreeView<vscode.TreeItem> | undefined;
 
@@ -243,7 +245,7 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
      * Navigate to next page
      */
     nextPage(): void {
-        const maxPage = Math.max(0, Math.ceil(this.totalFilteredJobs / this.itemsPerPage) - 1);
+        const maxPage = Math.max(0, Math.ceil(this.filteredRowCount / this.itemsPerPage) - 1);
         if (this.currentPage < maxPage) {
             this.currentPage++;
             this._onDidChangeTreeData.fire();
@@ -287,8 +289,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             showRefreshTime(this.view, this.lastRefreshedAt);
             if (this.view) {
                 // Only while searching, so a filtered list isn't taken for the whole history
-                this.view.message = this.hasFetchedJobs
-                    ? formatHistorySearchMessage(this.searchFilter, this.totalFilteredJobs, this.cachedJobs.length)
+                this.view.message = this.hasFetchedJobs && this.searchFilter
+                    ? formatHistorySearchMessage(this.searchFilter, this.filteredJobCount, countJobs(this.cachedJobs.map(job => job.jobId)))
                     : undefined;
             }
             return items;
@@ -321,7 +323,8 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 filteredJobs = this.cachedJobs.filter(job => matchesHistorySearch(job, this.searchFilter));
             }
 
-            this.totalFilteredJobs = filteredJobs.length;
+            this.filteredRowCount = filteredJobs.length;
+            this.filteredJobCount = countJobs(filteredJobs.map(job => job.jobId));
             const items: vscode.TreeItem[] = [];
 
             if (this.cachedJobs.length === 0) {
@@ -335,16 +338,16 @@ export class JobHistoryProvider implements vscode.TreeDataProvider<vscode.TreeIt
             }
 
             // Calculate pagination
-            const totalPages = Math.ceil(this.totalFilteredJobs / this.itemsPerPage);
+            const totalPages = Math.ceil(this.filteredRowCount / this.itemsPerPage);
             this.currentPage = Math.min(this.currentPage, Math.max(0, totalPages - 1));
             const startIndex = this.currentPage * this.itemsPerPage;
-            const endIndex = Math.min(startIndex + this.itemsPerPage, this.totalFilteredJobs);
+            const endIndex = Math.min(startIndex + this.itemsPerPage, this.filteredRowCount);
             const pageJobs = filteredJobs.slice(startIndex, endIndex);
 
             // Add pagination info at the top if there are multiple pages
             if (totalPages > 1) {
                 const pageInfo = new PaginationControlItem(
-                    `Page ${this.currentPage + 1} of ${totalPages} (${this.totalFilteredJobs} jobs${this.searchFilter ? ' filtered' : ''})`,
+                    `Page ${this.currentPage + 1} of ${totalPages} (${this.filteredJobCount} jobs${this.searchFilter ? ' filtered' : ''})`,
                     'list-ordered'
                 );
                 items.push(pageInfo);

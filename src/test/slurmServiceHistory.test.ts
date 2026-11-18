@@ -25,7 +25,7 @@ describe('SlurmService job history', () => {
         const jobs = await service.getJobHistory(3);
 
         assert.equal(commands.length, 1);
-        assert.match(commands[0], /^sacct -X -u \$USER --starttime=\d{4}-\d{2}-\d{2}/);
+        assert.match(commands[0], /^env SLURM_BITSTR_LEN=0 sacct -X -u \$USER --starttime=\d{4}-\d{2}-\d{2}/);
         assert.match(commands[0], /--parsable2/);
         assert.match(commands[0], /--format=JobID,JobName,State,ExitCode,Start,End,Elapsed,Partition,NodeList,AllocCPUS,MaxRSS,Timelimit/);
         assert.equal((optionsSeen[0] as { maxBuffer?: number }).maxBuffer, 16 * 1024 * 1024);

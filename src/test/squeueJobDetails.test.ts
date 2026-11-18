@@ -65,7 +65,7 @@ describe('job details from one squeue request', () => {
             if (command === SQUEUE_JOB_DETAILS_COMMAND) {
                 return { stdout: `${ROWS.split('\n')[1]}\n`, stderr: '' };
             }
-            if (command.startsWith('squeue -u $USER --noheader --format=')) {
+            if (command.startsWith('env SLURM_BITSTR_LEN=0 squeue -u $USER --noheader --format=')) {
                 return { stdout: '52894729_4|scode-array-b|R|0:30|cpu|cpu20-05|20:00|2026-11-04T19:27:50|None|schiele\n52894730|scode-cpu|R|0:10|cpu|cpu20-05|20:00|2026-11-04T19:28:10|None|schiele\n', stderr: '' };
             }
             if (command === 'scontrol show job 52894730') {
@@ -103,7 +103,7 @@ describe('job details from one squeue request', () => {
             if (command === SQUEUE_JOB_DETAILS_COMMAND) {
                 throw Object.assign(new Error('squeue: error: Invalid field specification'), { code: 1 });
             }
-            if (command.startsWith('squeue -u $USER --noheader --format=')) {
+            if (command.startsWith('env SLURM_BITSTR_LEN=0 squeue -u $USER --noheader --format=')) {
                 return { stdout: '7|train|R|0:10|gpu|node1|20:00|N/A|None|lab\n', stderr: '' };
             }
             if (command === 'scontrol show job 7') {
