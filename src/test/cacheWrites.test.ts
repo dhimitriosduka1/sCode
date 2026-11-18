@@ -127,7 +127,7 @@ describe('SubmitScriptCache array tasks', () => {
 });
 
 describe('SubmitScriptCache copies on other machines', () => {
-    it('offers no copy that is not on this machine, and copies the script here instead', async () => {
+    it('offers no copy that is not on this machine, and leaves that machine its entry', async () => {
         // The entries are shared by every machine the extension runs on: job 123 on
         // another cluster has its copy in that machine's folder
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slurm-script-cache-'));
@@ -136,17 +136,19 @@ describe('SubmitScriptCache copies on other machines', () => {
             fs.writeFileSync(script, '#!/bin/bash\n');
             const { context, store } = fakeContext(dir);
             const cachedAt = Date.now();
-            store.set('slurmSubmitScriptCache', {
-                '123': { originalPath: '/other/job.sh', cachedPath: `/other-machine/submit-scripts/123_${cachedAt}.sh`, cachedAt },
-            });
+            const theirs = { originalPath: '/other/job.sh', cachedPath: `/other-machine/submit-scripts/123_${cachedAt}.sh`, cachedAt };
+            store.set('slurmSubmitScriptCache', { '123': theirs });
             const cache = new SubmitScriptCache(context);
 
             assert.equal(cache.has('123'), false);
             assert.equal(cache.getCachedScriptPath('123'), undefined);
 
-            const copy = await cache.cacheScript('123', script);
-            assert.ok(copy?.startsWith(path.join(dir, 'submit-scripts')));
-            assert.equal(cache.getCachedScriptPath('123'), copy);
+            // Copying here would take the entry over, and that machine would take it
+            // back on its next refresh: a new copy on each side every refresh
+            assert.equal(await cache.cacheScript('123', script), undefined);
+            await cache.flush();
+            assert.deepEqual(store.get('slurmSubmitScriptCache'), { '123': theirs });
+            assert.deepEqual(fs.readdirSync(path.join(dir, 'submit-scripts')), []);
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -241,8 +243,7 @@ describe('SubmitScriptCache cleanup', () => {
             const cache = new SubmitScriptCache(context);
             await cache.flush();
 
-            assert.equal(cache.has('123'), false);
-            assert.equal(cache.has('126'), false);
+            assert.deepEqual(Object.keys(store.get('slurmSubmitScriptCache') as object), ['125']);
             assert.equal(cache.has('125'), true);
             assert.deepEqual(fs.readdirSync(copies), [path.basename(index['125'].cachedPath)]);
         } finally {

@@ -18,7 +18,7 @@ All notable changes to the SLURM Cluster Manager extension will be documented in
 ### Fixed
 - **Logs Named With `%a` Outside A Job Array**: A job that isn't part of an array but names its log with `%a` (`%A_%a_%x.out`) now opens it. Slurm writes `4294967294`, its "no array task" value, for `%a` there, and `4` for `%b`; the extension wrote `0` for both, so it looked for a file that didn't exist and said the job might not have started. It affected Active Jobs and Job History, on this machine and over SSH.
 - **Old Submit Script Copies Are Deleted Again**: Copies of submit scripts older than 30 days could stay on disk for good. The list of copies is shared by every machine the extension runs on, while each machine keeps its own folder of them, so a machine could drop a copy's entry without being able to delete the file. Each machine now clears old copies from its own folder by the time in their name, which also removes the ones already left behind.
-- **Submit Script Copies From Another Machine**: Active Jobs and Job History could offer a saved submit script whose copy was on another machine the extension runs on, or had been deleted, so it didn't open. With the same job ID on two clusters, a job could even show the other cluster's script. A copy is now offered only when it is on this machine, and a running job whose copy is missing gets a new one.
+- **Submit Script Copies From Another Machine**: Active Jobs and Job History could offer a saved submit script whose copy was on another machine the extension runs on, or had been deleted, so it didn't open. With the same job ID on two clusters, a job could even show the other cluster's script. A copy is now offered only when it is on this machine.
 
 ## [1.9.0] - 2026-11-13
 

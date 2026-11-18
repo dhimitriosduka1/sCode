@@ -116,10 +116,11 @@ export class SubmitScriptCache {
      */
     async cacheScript(jobId: string, originalScriptPath: string, cluster?: string): Promise<string | undefined> {
         const key = SubmitScriptCache.key(jobId, cluster);
-        // Skip if already cached
-        const cached = this.get(jobId, cluster);
-        if (cached) {
-            return cached.cachedPath;
+        // Skip if already cached, even when the copy is on another machine sharing
+        // these entries: copying it here would take the entry over, and that machine
+        // would take it back on its next refresh
+        if (this.cache.has(key)) {
+            return this.get(jobId, cluster)?.cachedPath;
         }
 
         // Skip if original path is not available
