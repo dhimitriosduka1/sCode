@@ -83,10 +83,10 @@ export class StatusCategoryItem extends vscode.TreeItem {
         const jobCount = countJobs(jobs.map(job => job.jobId));
         super(
             `${info.label} (${jobCount})`,
-            jobs.length === 0
-                // An empty group has nothing to expand
-                ? vscode.TreeItemCollapsibleState.None
-                : category === 'held' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded
+            // Empty groups stay collapsible so their labels line up with the others
+            jobs.length === 0 || category === 'held'
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.Expanded
         );
 
         this.jobCount = jobCount;
@@ -670,6 +670,9 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
         // The category's own jobs, not the cache: a refresh asked for while it loaded
         // may have dropped the cache by the time VS Code asks for its children
         const jobs = [...category.jobs];
+        if (jobs.length === 0) {
+            return [new MessageItem(`No ${CATEGORIES[category.category].label.toLowerCase()} jobs`, 'info')];
+        }
 
         // Sort jobs by job ID (descending - newest first)
         jobs.sort((a, b) => parseInt(b.jobId) - parseInt(a.jobId));
