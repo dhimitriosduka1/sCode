@@ -1294,31 +1294,53 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register cancel all pending jobs command
-    const cancelAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllPendingJobs', async () => {
-        const confirmation = await vscode.window.showWarningMessage(
-            'Are you sure you want to cancel ALL your pending jobs? Running jobs will be kept.',
-            { modal: true },
-            'Cancel Pending Jobs'
-        );
-
-        if (confirmation !== 'Cancel Pending Jobs') {
+    async function cancelQueuedJobs(item?: StatusCategoryItem): Promise<void> {
+        const targets = item?.dependencies?.pendingRowCancelIds(item.jobs);
+        if (item && !targets?.length) {
             return;
         }
 
-        const result = await slurmService.cancelAllPendingJobs();
+        const group = item?.category === 'held' ? 'Held' : 'Pending';
+        const count = item?.jobCount ?? 0;
+        const jobs = `${count} job${count === 1 ? '' : 's'}`;
+        const confirmLabel = `Cancel ${group} Jobs`;
+        const confirmation = await vscode.window.showWarningMessage(
+            item ? `Cancel ${jobs} in the ${group} group?` : 'Cancel all your queued jobs, including held jobs?',
+            { modal: true },
+            confirmLabel
+        );
 
-        if (result.success) {
-            vscode.window.showInformationMessage(result.message);
+        if (confirmation !== confirmLabel) {
+            return;
+        }
+
+        const result = targets
+            ? await slurmService.cancelPendingJobs(targets)
+            : await slurmService.cancelAllPendingJobs();
+
+        if (result.success || targets) {
             slurmJobProvider.refresh();
             jobHistoryProvider.refresh();
+        }
+        if (result.success) {
+            vscode.window.showInformationMessage(item ? `Cancelled ${jobs} in the ${group} group.` : result.message);
         } else {
             vscode.window.showErrorMessage(result.message);
         }
+    }
+
+    const cancelAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllPendingJobs', (item?: StatusCategoryItem) => {
+        if (!item || item.category === 'pending') {
+            return cancelQueuedJobs(item);
+        }
+    });
+    const cancelAllHeldJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelAllHeldJobs', (item?: StatusCategoryItem) => {
+        if (item?.category === 'held') {
+            return cancelQueuedJobs(item);
+        }
     });
 
-    // Cancels the pending jobs the Pending header counts as never running: nothing
-    // else clears them, since they would wait in the queue indefinitely
+    // Cancels the jobs that the Pending or Held header counts as never running.
     const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
         if (!item?.dependencies || item.neverRunJobCount === 0) {
             return;
@@ -1703,18 +1725,22 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     // Register release all pending jobs command
-    const releaseAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.releaseAllPendingJobs', async () => {
+    const releaseAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.releaseAllPendingJobs', async (item?: StatusCategoryItem) => {
+        if (item && item.category !== 'pending' && item.category !== 'held') {
+            return;
+        }
+        const jobIds = item?.jobs.map(job => job.jobId);
         const confirmation = await vscode.window.showWarningMessage(
-            'Are you sure you want to release ALL your held pending jobs?',
+            item ? 'Release the held jobs shown in this group?' : 'Release all your held jobs?',
             { modal: true },
-            'Release Pending Jobs'
+            'Release Held Jobs'
         );
 
-        if (confirmation !== 'Release Pending Jobs') {
+        if (confirmation !== 'Release Held Jobs') {
             return;
         }
 
-        const result = await slurmService.releaseAllPendingJobs();
+        const result = await slurmService.releaseAllPendingJobs(jobIds);
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
             slurmJobProvider.refresh();
@@ -1818,6 +1844,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(cancelJobCommand);
     context.subscriptions.push(cancelAllJobsCommand);
     context.subscriptions.push(cancelAllPendingJobsCommand);
+    context.subscriptions.push(cancelAllHeldJobsCommand);
     context.subscriptions.push(cancelNeverRunJobsCommand);
     context.subscriptions.push(cancelAllRunningJobsCommand);
     context.subscriptions.push(submitJobCommand);

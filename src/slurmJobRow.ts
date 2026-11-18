@@ -7,11 +7,36 @@ import {
     generateProgressBar,
     getPendingReasonInfo,
     getStateDescription,
+    isJobHeld,
     isNearTimeLimit,
     SlurmJob,
 } from './slurmService';
 
 import type { DependencyStatus } from './jobDependencies';
+
+export type ActiveJobCategory = 'running' | 'pending' | 'held' | 'completing' | 'other';
+
+export function getActiveJobCategory(job: Pick<SlurmJob, 'jobId' | 'state' | 'pendingReason'>): ActiveJobCategory | undefined {
+    switch (job.state) {
+        case 'R':
+        case 'CF':
+            return 'running';
+        case 'PD':
+            return !job.jobId.includes('_') && !job.jobId.includes('[') && isJobHeld(job.pendingReason)
+                ? 'held'
+                : 'pending';
+        case 'CG':
+            return 'completing';
+        case 'CD':
+        case 'F':
+        case 'TO':
+        case 'CA':
+        case 'NF':
+        case 'PR':
+        case 'S':
+            return 'other';
+    }
+}
 
 export interface SlurmJobRowParts {
     label: string;
@@ -50,7 +75,7 @@ export function getSlurmJobRowParts(job: SlurmJob, dependency?: DependencyStatus
     };
 }
 
-/** What the Pending group's header says about `count` of its jobs never running, in the rows' own words. */
+/** What a group header says about its jobs that can never run. */
 export function describeNeverRunCount(count: number): string | undefined {
     if (count === 0) {
         return undefined;

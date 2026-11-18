@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { describeNeverRunCount, getSlurmJobRowParts } from '../slurmJobRow';
+import { describeNeverRunCount, getActiveJobCategory, getSlurmJobRowParts } from '../slurmJobRow';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -21,6 +21,27 @@ function job(overrides: Partial<SlurmJob>): SlurmJob {
         ...overrides,
     };
 }
+
+describe('Active Jobs groups', () => {
+    it('puts standalone jobs in Held for user and admin holds and in Pending after release', () => {
+        for (const pendingReason of ['JobHeldUser', 'JobHeldAdmin', 'JobHoldMaxRequeue']) {
+            assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason })), 'held');
+        }
+        assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason: 'Priority' })), 'pending');
+        assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason: 'Resources' })), 'pending');
+    });
+
+    it('keeps grouped arrays and individual array tasks in Pending when held', () => {
+        for (const jobId of ['91004_[4-10%2]', '91004_3', '91004[4-10]']) {
+            assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'JobHeldUser' })), 'pending');
+        }
+    });
+
+    it('groups a running or completing job by state even if its last reason was a hold', () => {
+        assert.equal(getActiveJobCategory(job({ state: 'R', pendingReason: 'JobHeldAdmin' })), 'running');
+        assert.equal(getActiveJobCategory(job({ state: 'CG', pendingReason: 'JobHeldUser' })), 'completing');
+    });
+});
 
 describe('Slurm job row formatting', () => {
     it('puts running job progress in the trailing description', () => {

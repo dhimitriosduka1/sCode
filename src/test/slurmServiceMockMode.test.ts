@@ -251,6 +251,18 @@ describe('SlurmService mock mode', () => {
         assert.equal(pending.every(j => !isJobHeld(j.pendingReason)), true);
     });
 
+    it('releases only the held jobs in the requested group', async () => {
+        const service = createMockService();
+        await service.holdAllPendingJobs();
+
+        const result = await service.releaseAllPendingJobs(['91002']);
+        const jobs = await service.getJobs();
+        assert.deepEqual(result, { success: true, message: 'Released 1 held job (Mock).' });
+        assert.equal(jobs.find(job => job.jobId === '91002')?.pendingReason, 'Priority');
+        assert.equal(jobs.find(job => job.jobId === '91003')?.pendingReason, 'JobHeldUser');
+        assert.equal(jobs.find(job => job.jobId === '91004_3')?.pendingReason, 'JobHeldUser');
+    });
+
     it('can cancel all running jobs in mock mode', async () => {
         const service = createMockService();
 

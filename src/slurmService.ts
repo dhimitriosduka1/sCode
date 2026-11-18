@@ -2943,7 +2943,7 @@ export class SlurmService {
      */
     async holdAllPendingJobs(): Promise<{ success: boolean; message: string }> {
         if (this.isMockMode()) {
-            const pendingJobs = this.getMutableMockJobs().filter(job => job.state === 'PD');
+            const pendingJobs = this.getMutableMockJobs().filter(job => job.state === 'PD' && !isJobHeld(job.pendingReason));
             if (pendingJobs.length === 0) {
                 return { success: true, message: 'No pending jobs to hold.' };
             }
@@ -2974,11 +2974,17 @@ export class SlurmService {
     }
 
     /**
-     * Release all held pending jobs of the user
+     * Release the user's held jobs, optionally limited to rows shown in a tree group.
      */
-    async releaseAllPendingJobs(): Promise<{ success: boolean; message: string }> {
+    async releaseAllPendingJobs(jobIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
+        const selected = jobIds === undefined ? undefined : new Set(jobIds);
+        const canRelease = (job: SlurmJob) =>
+            job.state === 'PD' && isJobHeld(job.pendingReason) && (!selected || selected.has(job.jobId));
+        const successMessage = (count: number) => selected
+            ? `Released ${count} held job${count === 1 ? '' : 's'}`
+            : `Successfully released all held jobs (${count} jobs)`;
         if (this.isMockMode()) {
-            const heldJobs = this.getMutableMockJobs().filter(job => job.state === 'PD' && isJobHeld(job.pendingReason));
+            const heldJobs = this.getMutableMockJobs().filter(canRelease);
             if (heldJobs.length === 0) {
                 return { success: true, message: 'No held jobs to release.' };
             }
@@ -2986,13 +2992,13 @@ export class SlurmService {
             heldJobs.forEach(job => {
                 job.pendingReason = 'Priority';
             });
-            return { success: true, message: `Successfully released all held jobs (${count} jobs) (Mock).` };
+            return { success: true, message: `${successMessage(count)} (Mock).` };
         }
 
         try {
             const jobs = await this.getJobs();
             // Filter pending jobs that are held
-            const pendingHeld = jobs.filter(job => job.state === 'PD' && isJobHeld(job.pendingReason));
+            const pendingHeld = jobs.filter(canRelease);
             if (pendingHeld.length === 0) {
                 return { success: true, message: 'No held jobs to release.' };
             }
@@ -3000,7 +3006,7 @@ export class SlurmService {
             const ids = pendingHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
             const count = countJobs(pendingHeld.map(job => job.jobId));
             await this.commandRunner(`scontrol release ${ids}`);
-            return { success: true, message: `Successfully released all held jobs (${count} jobs).` };
+            return { success: true, message: `${successMessage(count)}.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('Failed to release all held jobs:', error);
