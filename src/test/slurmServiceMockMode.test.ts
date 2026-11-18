@@ -46,7 +46,7 @@ describe('SlurmService mock mode', () => {
     it('updates mock array jobs when cancelling by state', async () => {
         const service = createMockService();
 
-        assert.deepEqual(await service.getJobArrayInfo('91004'), { minIndex: 3, maxIndex: 3 });
+        assert.deepEqual(await service.getJobArrayInfo('91004'), { minIndex: 3, maxIndex: 10 });
 
         const result = await service.cancelJobByState('91004', 'PENDING');
         const jobs = await service.getJobs();

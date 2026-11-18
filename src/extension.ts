@@ -15,7 +15,7 @@ import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvide
 import { SlurmScriptCompletionProvider, SLURM_SCRIPT_COMPLETION_TRIGGER_CHARACTERS } from './slurmScriptCompletionProvider';
 import { SlurmScriptDiagnostics } from './slurmScriptDiagnostics';
 import { PartitionDataStore } from './partitionDataStore';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId, isJobHeld } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -26,6 +26,7 @@ import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
 import { describeStrandedJobs, readCancelTarget } from './jobDependencies';
 import { countJobs } from './jobCount';
+import { arrayTaskJobId, readArrayTaskList, validateArrayTaskSelection } from './jobArrayTasks';
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -1096,111 +1097,11 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 return; // Early return since we handled everything
             } else {
-                // Get job array info for upper bound validation
-                const arrayInfo = await slurmService.getJobArrayInfo(baseJobId);
-                const maxArrayIndex = arrayInfo?.maxIndex;
-                const minArrayIndex = arrayInfo?.minIndex ?? 0;
-
-                // Ask for job indices with comprehensive validation
-                const rangeInput = await vscode.window.showInputBox({
-                    prompt: `Enter indices to cancel. Formats: single (3), range (0-5), step (0-10:2), or list (1,3,5)${maxArrayIndex !== undefined ? ` [Array range: ${minArrayIndex}-${maxArrayIndex}]` : ''}`,
-                    placeHolder: '3 or 0-10 or 0-20:2 or 1,3,5,7',
-                    validateInput: (value) => {
-                        // Check for single index: just a number
-                        if (/^\d+$/.test(value)) {
-                            const index = parseInt(value, 10);
-                            if (!Number.isSafeInteger(index)) {
-                                return 'Index is too large';
-                            }
-                            if (maxArrayIndex !== undefined && (index < minArrayIndex || index > maxArrayIndex)) {
-                                return `Index out of range (valid: ${minArrayIndex}-${maxArrayIndex})`;
-                            }
-                            return null;
-                        }
-
-                        // Check for comma-separated indices format: 1,3,5,7
-                        const commaPattern = /^(\d+)(,\d+)+$/;
-                        if (commaPattern.test(value)) {
-                            const indices = value.split(',').map(n => parseInt(n, 10));
-                            if (!indices.every(Number.isSafeInteger)) {
-                                return 'Index is too large';
-                            }
-
-                            // Check for duplicates
-                            const uniqueIndices = new Set(indices);
-                            if (uniqueIndices.size !== indices.length) {
-                                return 'Duplicate indices detected';
-                            }
-
-                            // Check upper bound
-                            if (maxArrayIndex !== undefined) {
-                                const outOfBounds = indices.filter(i => i < minArrayIndex || i > maxArrayIndex);
-                                if (outOfBounds.length > 0) {
-                                    return `Indices out of range (valid: ${minArrayIndex}-${maxArrayIndex}): ${outOfBounds.join(', ')}`;
-                                }
-                            }
-
-                            return null;
-                        }
-
-                        // Check for range with optional step format: start-end or start-end:step
-                        const rangeMatch = value.match(/^(\d+)-(\d+)(?::(\d+))?$/);
-                        if (!rangeMatch) {
-                            return 'Invalid format. Use: single (3), range (0-5), step (0-10:2), or list (1,3,5)';
-                        }
-
-                        const start = parseInt(rangeMatch[1], 10);
-                        const end = parseInt(rangeMatch[2], 10);
-                        const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
-                        if (![start, end, step].every(Number.isSafeInteger)) {
-                            return 'Index or step is too large';
-                        }
-
-                        // Validate start <= end
-                        if (start > end) {
-                            return 'Start index must be less than or equal to end index';
-                        }
-
-                        // Validate step > 0
-                        if (step <= 0) {
-                            return 'Step must be a positive number';
-                        }
-
-                        // Check upper bound against actual array
-                        if (maxArrayIndex !== undefined) {
-                            if (start < minArrayIndex) {
-                                return `Start index ${start} is below array minimum (${minArrayIndex})`;
-                            }
-                            if (end > maxArrayIndex) {
-                                return `End index ${end} exceeds array maximum (${maxArrayIndex})`;
-                            }
-                        }
-
-                        return null;
-                    }
-                });
-
-                if (!rangeInput) {
-                    return; // User cancelled the input
+                const target = await promptForArrayTaskSelection(slurmService, baseJobId, 'cancel');
+                if (!target) {
+                    return;
                 }
-
-                // Check if it's a single index (no brackets needed)
-                if (/^\d+$/.test(rangeInput)) {
-                    jobIdToCancel = `${baseJobId}_${rangeInput}`;
-                } else {
-                    jobIdToCancel = `${baseJobId}_[${rangeInput}]`;
-                    const jobCount = countJobs([jobIdToCancel]);
-                    if (jobCount > 100) {
-                        const largeRangeConfirm = await vscode.window.showWarningMessage(
-                            `You are about to cancel ${jobCount} jobs. Are you sure?`,
-                            { modal: true },
-                            'Yes, Cancel All'
-                        );
-                        if (largeRangeConfirm !== 'Yes, Cancel All') {
-                            return;
-                        }
-                    }
-                }
+                jobIdToCancel = target;
             }
         }
 
@@ -1669,39 +1570,55 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register hold job command
-    const holdJobCommand = vscode.commands.registerCommand('slurmJobs.holdJob', async (item: any) => {
+    async function updateJobHold(item: { job?: SlurmJob } | undefined, action: 'hold' | 'release'): Promise<void> {
         if (!item?.job?.jobId) {
             vscode.window.showWarningMessage('No job selected');
             return;
         }
 
         const jobId = item.job.jobId;
-        const result = await slurmService.holdJob(jobId);
+        const verb = action === 'hold' ? 'Hold' : 'Release';
+        let result: { success: boolean; message: string };
+        if (readArrayTaskList(jobId) !== undefined) {
+            const arrayJobId = extractBaseJobId(jobId);
+            const icon = action === 'hold' ? 'lock' : 'unlock';
+            const state = action === 'hold' ? 'pending' : 'held';
+            const choice = await vscode.window.showQuickPick([
+                { label: `$(${icon}) ${verb} all ${state} tasks`, description: `Array ${arrayJobId}`, value: 'all' },
+                { label: `$(edit) ${verb} specific tasks`, description: 'Choose indices, a list, or a range', value: 'specific' },
+            ], { title: `${verb} Job Array: ${item.job.name}`, placeHolder: `Choose which array tasks to ${action}` });
+            if (!choice) {
+                return;
+            }
+            if (choice.value === 'specific') {
+                const target = await promptForArrayTaskSelection(slurmService, arrayJobId, action);
+                if (!target) {
+                    return;
+                }
+                result = action === 'hold'
+                    ? await slurmService.holdJob(target)
+                    : await slurmService.releaseJob(target);
+            } else {
+                result = action === 'hold'
+                    ? await slurmService.holdArrayTasks(arrayJobId)
+                    : await slurmService.releaseArrayTasks(arrayJobId);
+            }
+        } else {
+            result = action === 'hold'
+                ? await slurmService.holdJob(jobId)
+                : await slurmService.releaseJob(jobId);
+        }
+        // A command can partially succeed if task states change while it runs.
+        slurmJobProvider.refresh();
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
-            slurmJobProvider.refresh();
         } else {
             vscode.window.showErrorMessage(result.message);
         }
-    });
+    }
 
-    // Register release job command
-    const releaseJobCommand = vscode.commands.registerCommand('slurmJobs.releaseJob', async (item: any) => {
-        if (!item?.job?.jobId) {
-            vscode.window.showWarningMessage('No job selected');
-            return;
-        }
-
-        const jobId = item.job.jobId;
-        const result = await slurmService.releaseJob(jobId);
-        if (result.success) {
-            vscode.window.showInformationMessage(result.message);
-            slurmJobProvider.refresh();
-        } else {
-            vscode.window.showErrorMessage(result.message);
-        }
-    });
+    const holdJobCommand = vscode.commands.registerCommand('slurmJobs.holdJob', (item?: SlurmJobItem) => updateJobHold(item, 'hold'));
+    const releaseJobCommand = vscode.commands.registerCommand('slurmJobs.releaseJob', (item?: SlurmJobItem) => updateJobHold(item, 'release'));
 
     // Register hold all pending jobs command
     const holdAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.holdAllPendingJobs', async () => {
@@ -1716,9 +1633,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const result = await slurmService.holdAllPendingJobs();
+        slurmJobProvider.refresh();
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
-            slurmJobProvider.refresh();
         } else {
             vscode.window.showErrorMessage(result.message);
         }
@@ -1729,7 +1646,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (item && item.category !== 'pending' && item.category !== 'held') {
             return;
         }
-        const jobIds = item?.jobs.map(job => job.jobId);
+        const jobIds = item?.jobs.filter(job => isJobHeld(job.pendingReason)).map(job => job.jobId);
         const confirmation = await vscode.window.showWarningMessage(
             item ? 'Release the held jobs shown in this group?' : 'Release all your held jobs?',
             { modal: true },
@@ -1741,9 +1658,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const result = await slurmService.releaseAllPendingJobs(jobIds);
+        slurmJobProvider.refresh();
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
-            slurmJobProvider.refresh();
         } else {
             vscode.window.showErrorMessage(result.message);
         }
@@ -1887,6 +1804,37 @@ export async function deactivate(): Promise<void> {
     // Ends a sign-in in progress. A connection stays open, for a reloaded window to find
     await activeClusterConnection?.shutdown();
     console.log('SLURM Cluster Manager deactivated');
+}
+
+async function promptForArrayTaskSelection(
+    slurmService: SlurmService,
+    arrayJobId: string,
+    action: 'cancel' | 'hold' | 'release',
+): Promise<string | undefined> {
+    const bounds = await slurmService.getJobArrayInfo(arrayJobId);
+    const range = bounds ? ` [Array range: ${bounds.minIndex}-${bounds.maxIndex}]` : '';
+    const input = await vscode.window.showInputBox({
+        prompt: `Enter indices to ${action}${range}`,
+        placeHolder: '3 or 1,3,5 or 0-10 or 0-20:2',
+        validateInput: value => validateArrayTaskSelection(value, bounds),
+    });
+    if (!input) {
+        return undefined;
+    }
+    const target = arrayTaskJobId(arrayJobId, input);
+    const count = countJobs([target]);
+    if (count > 100) {
+        const label = { hold: 'Hold Tasks', release: 'Release Tasks', cancel: 'Yes, Cancel All' }[action];
+        const choice = await vscode.window.showWarningMessage(
+            `You are about to ${action} ${count} tasks in array ${arrayJobId}.`,
+            { modal: true },
+            label,
+        );
+        if (choice !== label) {
+            return undefined;
+        }
+    }
+    return target;
 }
 
 /**

@@ -6,6 +6,7 @@ import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { quoteForShell } from './shellQuote';
 import { countJobs } from './jobCount';
+import { arrayTaskIndices, arrayTaskJobId, ArrayTaskRange, formatArrayTaskList, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
 
 import {
     createMockHistoryJobs,
@@ -1881,9 +1882,9 @@ function slurmStateNameToCode(state: string): string {
     return states[state] || state;
 }
 
-/**
- * Service for interacting with SLURM cluster
- */
+type QueueHoldRow = Pick<SlurmJob, 'jobId' | 'pendingReason'>;
+
+/** Service for interacting with the Slurm cluster. */
 export class SlurmService {
     private pathCache?: JobPathCache;
     private scriptCache?: SubmitScriptCache;
@@ -2007,8 +2008,17 @@ export class SlurmService {
             // Detailed info (stdout, stderr, command) for all jobs in one request; scontrol
             // per job only for jobs squeue did not report it for (e.g. an older Slurm)
             const detailsById = await this.getAllJobDetails();
-            await Promise.all(jobs.map(async (job) => {
-                const details = detailsById.get(job.jobId) ?? await this.getJobDetails(job.jobId);
+            const splitRows = await this.getMixedArrayRows(jobs);
+            const rows = jobs.flatMap(source => {
+                const queued = detailsById.get(source.jobId);
+                const details = queued ?? this.getJobDetails(source.jobId);
+                return (splitRows.get(source.jobId) ?? [source]).map(row => ({
+                    job: { ...source, ...row }, details, queuedSeconds: queued?.queuedSeconds,
+                }));
+            });
+            await Promise.all(rows.map(async row => {
+                const job = row.job;
+                const details = await row.details;
                 // Expand any remaining placeholders in paths
                 job.stdoutPath = expandPathPlaceholders(details.stdoutPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
                 job.stderrPath = expandPathPlaceholders(details.stderrPath, job.jobId, job.name, job.nodes, details.workDir, this.getAccount());
@@ -2018,7 +2028,7 @@ export class SlurmService {
                 job.gpuType = details.gpuType;
                 job.memory = details.memory;
                 job.dependency = details.dependency;
-                job.queuedSeconds = detailsById.get(job.jobId)?.queuedSeconds;
+                job.queuedSeconds = row.queuedSeconds;
 
                 // Cache the paths for later use in history
                 await this.cacheJobPaths(job.jobId, details.stdoutPath, details.stderrPath, details.workDir);
@@ -2029,7 +2039,7 @@ export class SlurmService {
                 }
             }));
 
-            return jobs;
+            return rows.map(row => row.job);
         } catch (error) {
             // If squeue is not available or fails, return empty array
             // This allows the extension to work gracefully when not on a cluster
@@ -2357,7 +2367,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner(`scancel ${quoteForShell(formatScancelJobId(jobId))}`);
+            await this.commandRunner(`scancel ${quoteForShell(formatJobTaskTarget(jobId))}`);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2408,7 +2418,7 @@ export class SlurmService {
         }
 
         try {
-            const targets = jobIds.map(jobId => quoteForShell(formatScancelJobId(jobId)));
+            const targets = jobIds.map(jobId => quoteForShell(formatJobTaskTarget(jobId)));
             await this.commandRunner(`scancel --state=PENDING ${targets.join(' ')}`);
             return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
         } catch (error) {
@@ -2483,63 +2493,24 @@ export class SlurmService {
      * @returns Object with min/max array indices, or null if not a job array or not found
      */
     async getJobArrayInfo(jobId: string): Promise<{ minIndex: number; maxIndex: number } | null> {
-        if (this.isMockMode()) {
-            const indices = this.getMutableMockJobs()
-                .map(job => job.jobId.match(new RegExp(`^${jobId}_(\\d+)$`))?.[1])
-                .filter((index): index is string => index !== undefined)
-                .map(index => parseInt(index, 10));
-
-            if (indices.length > 0) {
-                return {
-                    minIndex: Math.min(...indices),
-                    maxIndex: Math.max(...indices),
-                };
-            }
-
-            return null;
-        }
-
         try {
-            const { stdout } = await this.commandRunner(`scontrol show job ${jobId}`);
-
-            // Parse the full ArrayTaskId value
-            // Possible formats: "0-99", "0-99%10", "0,2,4,6-10", "1,3,5", "0-10:2", etc.
-            const arrayFieldMatch = stdout.match(/ArrayTaskId=([^\s]+)/);
-            if (!arrayFieldMatch) {
-                return null;
+            let taskLists: string[];
+            if (this.isMockMode()) {
+                taskLists = this.getMutableMockJobs()
+                    .filter(job => extractBaseJobId(job.jobId) === jobId)
+                    .map(job => readArrayTaskList(job.jobId))
+                    .filter((tasks): tasks is string => tasks !== undefined);
+            } else {
+                const { stdout } = await this.commandRunner(`${FULL_ARRAY_IDS} scontrol show job ${quoteForShell(jobId)}`);
+                taskLists = Array.from(stdout.matchAll(/\bArrayTaskId=([\d,:-]+)(?:%\d+)?(?=\s|$)/g), match => match[1]);
             }
-
-            // Strip throttle suffix (e.g., "%10") if present
-            const rawValue = arrayFieldMatch[1].replace(/%\d+$/, '');
-
-            let globalMin = Infinity;
-            let globalMax = -Infinity;
-
-            // Split by comma and process each component
-            const components = rawValue.split(',');
-            for (const component of components) {
-                // Match range with optional step: "0-10" or "0-10:2"
-                const rangeMatch = component.match(/^(\d+)-(\d+)(?::(\d+))?$/);
-                if (rangeMatch) {
-                    const start = parseInt(rangeMatch[1], 10);
-                    const end = parseInt(rangeMatch[2], 10);
-                    globalMin = Math.min(globalMin, start);
-                    globalMax = Math.max(globalMax, end);
-                } else {
-                    // Single index: "5"
-                    const index = parseInt(component, 10);
-                    if (!isNaN(index)) {
-                        globalMin = Math.min(globalMin, index);
-                        globalMax = Math.max(globalMax, index);
-                    }
-                }
+            let minIndex = Infinity;
+            let maxIndex = -Infinity;
+            for (const { start, end } of taskLists.flatMap(parseArrayTaskRanges)) {
+                minIndex = Math.min(minIndex, start);
+                maxIndex = Math.max(maxIndex, end);
             }
-
-            if (globalMin !== Infinity && globalMax !== -Infinity) {
-                return { minIndex: globalMin, maxIndex: globalMax };
-            }
-
-            return null;
+            return minIndex === Infinity ? null : { minIndex, maxIndex };
         } catch {
             return null;
         }
@@ -2890,10 +2861,16 @@ export class SlurmService {
      * @returns Object with success status and message
      */
     async holdJob(jobId: string): Promise<{ success: boolean; message: string }> {
-        const cleanId = cleanJobIdForScontrol(jobId);
+        const tasks = readArrayTaskList(jobId);
+        if (tasks !== undefined) {
+            return this.holdArrayTasks(extractBaseJobId(jobId), tasks);
+        }
+        if (jobId.includes('[') || jobId.includes('_')) {
+            return { success: false, message: `Invalid or incomplete array job ID: ${jobId}` };
+        }
 
         if (this.isMockMode()) {
-            const job = this.getMutableMockJobs().find(j => j.jobId === jobId || j.jobId.startsWith(`${cleanId}_`));
+            const job = this.getMutableMockJobs().find(j => j.jobId === jobId);
             if (job) {
                 job.pendingReason = 'JobHeldUser';
                 return { success: true, message: `Job ${jobId} held successfully (Mock)` };
@@ -2902,12 +2879,187 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner(`scontrol hold ${cleanId}`);
+            await this.runJobHoldAction([jobId], 'hold');
             return { success: true, message: `Job ${jobId} held successfully.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error(`Failed to hold job ${jobId}:`, error);
             return { success: false, message: `Failed to hold job ${jobId}: ${errorMessage}` };
+        }
+    }
+
+    /** Hold the currently unheld pending tasks of one array, with an optional task selection. */
+    async holdArrayTasks(arrayJobId: string, taskList?: string): Promise<{ success: boolean; message: string }> {
+        return this.updateArrayTaskHold(arrayJobId, 'hold', taskList);
+    }
+
+    /** Release the currently held tasks of one array, with an optional task selection. */
+    async releaseArrayTasks(arrayJobId: string, taskList?: string): Promise<{ success: boolean; message: string }> {
+        return this.updateArrayTaskHold(arrayJobId, 'release', taskList);
+    }
+
+    private async updateArrayTaskHold(
+        arrayJobId: string,
+        action: 'hold' | 'release',
+        taskList?: string,
+    ): Promise<{ success: boolean; message: string }> {
+        try {
+            const requested = taskList === undefined ? undefined : parseArrayTaskRanges(taskList);
+            const pending = new Map<string, ArrayTaskRange[]>();
+            for (const { jobId } of await this.getPendingJobsByHold(action === 'release')) {
+                if (extractBaseJobId(jobId) === arrayJobId) {
+                    const tasks = readArrayTaskList(jobId);
+                    if (tasks !== undefined) {
+                        pending.set(jobId, parseArrayTaskRanges(tasks));
+                    }
+                }
+            }
+            if (pending.size === 0) {
+                const state = action === 'hold' ? 'pending' : 'held';
+                return { success: false, message: `No ${state} tasks are available to ${action} in array ${arrayJobId}.` };
+            }
+
+            if (requested) {
+                const eligible = Array.from(pending.values()).flat();
+                const seen = new Set<number>();
+                for (const index of arrayTaskIndices(requested)) {
+                    if (seen.has(index)) {
+                        return { success: false, message: 'Duplicate indices detected' };
+                    }
+                    if (!includesArrayTask(eligible, index)) {
+                        return { success: false, message: `Task ${index} in array ${arrayJobId} must be pending and available to ${action}.` };
+                    }
+                    seen.add(index);
+                }
+            }
+            const targets = taskList === undefined ? [...pending.keys()] : [arrayTaskJobId(arrayJobId, taskList)];
+            const count = countJobs(targets);
+            if (this.isMockMode()) {
+                this.updateMockArrayTaskHold(arrayJobId, pending, requested, action === 'hold' ? 'JobHeldUser' : 'Priority');
+            } else {
+                await this.runJobHoldAction(targets, action);
+            }
+            const verb = action === 'hold' ? 'Held' : 'Released';
+            return { success: true, message: `${verb} ${count} task${count === 1 ? '' : 's'} in array ${arrayJobId}.` };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to ${action} tasks in array ${arrayJobId}:`, error);
+            return { success: false, message: `Failed to ${action} tasks in array ${arrayJobId}: ${message}` };
+        }
+    }
+
+    private updateMockArrayTaskHold(
+        arrayJobId: string,
+        pending: Map<string, ArrayTaskRange[]>,
+        requested: ArrayTaskRange[] | undefined,
+        reason: string,
+    ): void {
+        this.mockJobs = this.getMutableMockJobs().flatMap(job => {
+            const ranges = pending.get(job.jobId);
+            if (!ranges) {
+                return [job];
+            }
+            if (!requested) {
+                job.pendingReason = reason;
+                return [job];
+            }
+
+            const selected: number[] = [];
+            const remaining: number[] = [];
+            for (const index of arrayTaskIndices(ranges)) {
+                (includesArrayTask(requested, index) ? selected : remaining).push(index);
+            }
+            if (selected.length === 0) {
+                return [job];
+            }
+            if (remaining.length === 0) {
+                job.pendingReason = reason;
+                return [job];
+            }
+
+            const throttle = /%\d+(?=\])/.exec(job.jobId)?.[0] ?? '';
+            const remainingId = `${arrayJobId}_[${remaining.join(',')}${throttle}]`;
+            return [
+                { ...job, jobId: remainingId },
+                ...selected.map(index => ({ ...job, jobId: arrayTaskJobId(arrayJobId, String(index)), pendingReason: reason })),
+            ];
+        });
+    }
+
+    // Compact squeue can merge pending tasks with different reasons into one mask.
+    // Only these ambiguous rows need a second, per-task queue snapshot.
+    private async getMixedArrayRows(rows: QueueHoldRow[]): Promise<Map<string, QueueHoldRow[]>> {
+        const mixed = rows.filter(({ jobId, pendingReason }) => jobId.includes('[')
+            && pendingReason?.includes(',') && isJobHeld(pendingReason));
+        const result = new Map<string, QueueHoldRow[]>();
+        if (!mixed.length) {
+            return result;
+        }
+
+        const { stdout } = await this.commandRunner(
+            `${FULL_ARRAY_IDS} squeue -u $USER --states=PD --array --noheader --format="%i|%r"`,
+            { maxBuffer: 32 * 1024 * 1024 },
+        );
+        const byTask = new Map(parseQueueHoldRows(stdout).map(row => [row.jobId, row.pendingReason]));
+        for (const { jobId } of mixed) {
+            const base = extractBaseJobId(jobId);
+            const ranges = parseArrayTaskRanges(readArrayTaskList(jobId) ?? '');
+            const byReason = new Map<string | undefined, number[]>();
+            for (const index of arrayTaskIndices(ranges)) {
+                const id = arrayTaskJobId(base, String(index));
+                if (!byTask.has(id)) {
+                    continue; // No longer pending in the newer snapshot.
+                }
+                const reason = byTask.get(id);
+                const group = byReason.get(reason);
+                if (group) {
+                    group.push(index);
+                } else {
+                    byReason.set(reason, [index]);
+                }
+            }
+            const throttle = /%\d+(?=\])/.exec(jobId)?.[0] ?? '';
+            result.set(jobId, Array.from(byReason, ([pendingReason, indices]) => ({
+                jobId: indices.length === 1 ? arrayTaskJobId(base, String(indices[0]))
+                    : `${base}_[${formatArrayTaskList(indices)}${throttle}]`,
+                pendingReason,
+            })));
+        }
+        return result;
+    }
+
+    private async getPendingJobsByHold(held: boolean): Promise<QueueHoldRow[]> {
+        if (this.isMockMode()) {
+            return this.getMutableMockJobs().filter(job => job.state === 'PD' && isJobHeld(job.pendingReason) === held);
+        }
+        const { stdout } = await this.commandRunner(
+            `${FULL_ARRAY_IDS} squeue -u $USER --states=PD --noheader --format="%i|%r"`,
+            { maxBuffer: 32 * 1024 * 1024 },
+        );
+        const rows = parseQueueHoldRows(stdout);
+        const split = await this.getMixedArrayRows(rows);
+        return rows.flatMap(row => split.get(row.jobId) ?? [row]).filter(row => isJobHeld(row.pendingReason) === held);
+    }
+
+    private async runJobHoldAction(jobIds: readonly string[], action: 'hold' | 'release'): Promise<void> {
+        // The local or remote shell receives the command as a single argument.
+        // A large stepped mask alone can exceed its argument size limit.
+        const prefix = `scontrol ${action}`;
+        const maxLength = 32 * 1024;
+        let command = prefix;
+        for (const jobId of jobIds) {
+            const target = formatJobTaskTarget(jobId);
+            for (const id of splitJobTaskTarget(target, maxLength - prefix.length - 3)) {
+                const argument = ' ' + quoteForShell(id);
+                if (command.length + argument.length > maxLength) {
+                    await this.commandRunner(command);
+                    command = prefix;
+                }
+                command += argument;
+            }
+        }
+        if (command !== prefix) {
+            await this.commandRunner(command);
         }
     }
 
@@ -2917,10 +3069,16 @@ export class SlurmService {
      * @returns Object with success status and message
      */
     async releaseJob(jobId: string): Promise<{ success: boolean; message: string }> {
-        const cleanId = cleanJobIdForScontrol(jobId);
+        const tasks = readArrayTaskList(jobId);
+        if (tasks !== undefined) {
+            return this.releaseArrayTasks(extractBaseJobId(jobId), tasks);
+        }
+        if (jobId.includes('[') || jobId.includes('_')) {
+            return { success: false, message: `Invalid or incomplete array job ID: ${jobId}` };
+        }
 
         if (this.isMockMode()) {
-            const job = this.getMutableMockJobs().find(j => j.jobId === jobId || j.jobId.startsWith(`${cleanId}_`));
+            const job = this.getMutableMockJobs().find(j => j.jobId === jobId);
             if (job) {
                 job.pendingReason = 'Priority';
                 return { success: true, message: `Job ${jobId} released successfully (Mock)` };
@@ -2929,7 +3087,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner(`scontrol release ${cleanId}`);
+            await this.runJobHoldAction([jobId], 'release');
             return { success: true, message: `Job ${jobId} released successfully.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2942,29 +3100,19 @@ export class SlurmService {
      * Hold all pending jobs of the user
      */
     async holdAllPendingJobs(): Promise<{ success: boolean; message: string }> {
-        if (this.isMockMode()) {
-            const pendingJobs = this.getMutableMockJobs().filter(job => job.state === 'PD' && !isJobHeld(job.pendingReason));
-            if (pendingJobs.length === 0) {
-                return { success: true, message: 'No pending jobs to hold.' };
-            }
-            const count = countJobs(pendingJobs.map(job => job.jobId));
-            pendingJobs.forEach(job => {
-                job.pendingReason = 'JobHeldUser';
-            });
-            return { success: true, message: `Successfully held all pending jobs (${count} jobs) (Mock).` };
-        }
-
         try {
-            const jobs = await this.getJobs();
-            // Filter pending jobs that are not already held
-            const pendingNonHeld = jobs.filter(job => job.state === 'PD' && !isJobHeld(job.pendingReason));
-            if (pendingNonHeld.length === 0) {
+            const jobs = await this.getPendingJobsByHold(false);
+            if (jobs.length === 0) {
                 return { success: true, message: 'No pending jobs to hold.' };
             }
 
-            const ids = pendingNonHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
-            const count = countJobs(pendingNonHeld.map(job => job.jobId));
-            await this.commandRunner(`scontrol hold ${ids}`);
+            const ids = jobs.map(job => job.jobId);
+            const count = countJobs(ids);
+            if (this.isMockMode()) {
+                jobs.forEach(job => { job.pendingReason = 'JobHeldUser'; });
+                return { success: true, message: `Successfully held all pending jobs (${count} jobs) (Mock).` };
+            }
+            await this.runJobHoldAction(ids, 'hold');
             return { success: true, message: `Successfully held all pending jobs (${count} jobs).` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2978,34 +3126,59 @@ export class SlurmService {
      */
     async releaseAllPendingJobs(jobIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
         const selected = jobIds === undefined ? undefined : new Set(jobIds);
-        const canRelease = (job: SlurmJob) =>
-            job.state === 'PD' && isJobHeld(job.pendingReason) && (!selected || selected.has(job.jobId));
         const successMessage = (count: number) => selected
             ? `Released ${count} held job${count === 1 ? '' : 's'}`
             : `Successfully released all held jobs (${count} jobs)`;
-        if (this.isMockMode()) {
-            const heldJobs = this.getMutableMockJobs().filter(canRelease);
-            if (heldJobs.length === 0) {
-                return { success: true, message: 'No held jobs to release.' };
-            }
-            const count = countJobs(heldJobs.map(job => job.jobId));
-            heldJobs.forEach(job => {
-                job.pendingReason = 'Priority';
-            });
-            return { success: true, message: `${successMessage(count)} (Mock).` };
-        }
-
         try {
-            const jobs = await this.getJobs();
-            // Filter pending jobs that are held
-            const pendingHeld = jobs.filter(canRelease);
-            if (pendingHeld.length === 0) {
-                return { success: true, message: 'No held jobs to release.' };
+            const held = await this.getPendingJobsByHold(true);
+            const selectedTasks = new Map<string, ArrayTaskRange[]>();
+            for (const id of selected ?? []) {
+                const tasks = readArrayTaskList(id);
+                if (tasks !== undefined) {
+                    const base = extractBaseJobId(id);
+                    const ranges = selectedTasks.get(base) ?? [];
+                    for (const range of parseArrayTaskRanges(tasks)) {
+                        ranges.push(range);
+                    }
+                    selectedTasks.set(base, ranges);
+                }
             }
 
-            const ids = pendingHeld.map(job => cleanJobIdForScontrol(job.jobId)).join(' ');
-            const count = countJobs(pendingHeld.map(job => job.jobId));
-            await this.commandRunner(`scontrol release ${ids}`);
+            const targets: string[] = [];
+            for (const job of held) {
+                if (!selected || selected.has(job.jobId)) {
+                    targets.push(job.jobId);
+                    if (this.isMockMode()) {
+                        job.pendingReason = 'Priority';
+                    }
+                    continue;
+                }
+                // A regroup or throttle change between display and confirmation can
+                // change the row ID. Release the intersection with the shown tasks.
+                const base = extractBaseJobId(job.jobId);
+                const selection = selectedTasks.get(base);
+                const tasks = readArrayTaskList(job.jobId);
+                if (!selection || tasks === undefined) {
+                    continue;
+                }
+                const current = parseArrayTaskRanges(tasks);
+                const indices = Array.from(arrayTaskIndices(current)).filter(index => includesArrayTask(selection, index));
+                if (indices.length) {
+                    const list = formatArrayTaskList(indices);
+                    targets.push(arrayTaskJobId(base, list));
+                    if (this.isMockMode()) {
+                        this.updateMockArrayTaskHold(base, new Map([[job.jobId, current]]), parseArrayTaskRanges(list), 'Priority');
+                    }
+                }
+            }
+            if (targets.length === 0) {
+                return { success: true, message: 'No held jobs to release.' };
+            }
+            const count = countJobs(targets);
+            if (this.isMockMode()) {
+                return { success: true, message: `${successMessage(count)} (Mock).` };
+            }
+            await this.runJobHoldAction(targets, 'release');
             return { success: true, message: `${successMessage(count)}.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -3121,23 +3294,47 @@ export function isJobHeld(reason: string | undefined): boolean {
     if (!reason) {
         return false;
     }
-    return reason.includes('Hold') || reason.includes('Held');
+    return reason.includes('Hold') || reason.includes('Held') || /\brequeued held\b/i.test(reason);
 }
 
-/** Remove Slurm's display throttle and expand stepped ranges for scancel. */
-function formatScancelJobId(jobId: string): string {
-    const id = jobId.replace(/%\d+/, '');
+function parseQueueHoldRows(stdout: string): QueueHoldRow[] {
+    return stdout.split('\n').flatMap(line => {
+        const [id, reason] = line.split('|');
+        return id.trim() && reason !== undefined ? [{ jobId: id.trim(), pendingReason: normalizePendingReason(reason) }] : [];
+    });
+}
+
+/** Remove Slurm's display throttle and translate stepped ranges for job actions. */
+function formatJobTaskTarget(jobId: string): string {
+    const id = jobId.replace(/%\d+/, '').replace(/^(\d+)\[/, '$1_[');
     if (!/^\d+_?\[.*:/.test(id)) {
         return id;
     }
     countJobs([id]);
     return id.replace(/(\d+)-(\d+):(\d+)/g, (_range, start, end, step) => {
-        const indices: number[] = [];
-        for (let index = Number(start); index <= Number(end); index += Number(step)) {
-            indices.push(index);
-        }
-        return indices.join(',');
+        return [...arrayTaskIndices([{ start: Number(start), end: Number(end), step: Number(step) }])].join(',');
     });
+}
+
+function* splitJobTaskTarget(target: string, maxLength: number): Iterable<string> {
+    if (target.length <= maxLength) {
+        yield target;
+        return;
+    }
+    const base = extractBaseJobId(target);
+    const tasks = readArrayTaskList(target);
+    if (!tasks) {
+        throw new RangeError('Invalid Slurm array task target');
+    }
+    let chunk = '';
+    for (const part of tasks.split(',')) {
+        if (chunk && base.length + 4 + chunk.length + part.length > maxLength) {
+            yield arrayTaskJobId(base, chunk);
+            chunk = '';
+        }
+        chunk += (chunk ? ',' : '') + part;
+    }
+    yield arrayTaskJobId(base, chunk);
 }
 
 export function cleanJobIdForScontrol(jobId: string): string {
