@@ -1,4 +1,5 @@
-import { extractBaseJobId, FairShareEntry, JobPriorityFactors } from './slurmService';
+import { extractBaseJobId, FairShareEntry, JobPriorityFactors, SlurmJob } from './slurmService';
+import { countJobs } from './jobCount';
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
 /** A user's fair share in one of their accounts. */
@@ -97,11 +98,11 @@ export function getFairShareSummary(
  * Accounts ordered by how many of the given jobs run under each, so the
  * account most of a user's work is charged to comes first.
  */
-export function rankJobAccounts(jobs: { account?: string }[]): string[] {
+export function rankJobAccounts(jobs: readonly Pick<SlurmJob, 'account' | 'jobId'>[]): string[] {
     const counts = new Map<string, number>();
-    for (const { account } of jobs) {
+    for (const { account, jobId } of jobs) {
         if (account) {
-            counts.set(account, (counts.get(account) ?? 0) + 1);
+            counts.set(account, (counts.get(account) ?? 0) + countJobs([jobId]));
         }
     }
     return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([account]) => account);

@@ -1,4 +1,5 @@
 import { getHistoryStateInfo, HistoryJob } from './slurmService';
+import { countJobs } from './jobCount';
 
 export interface HistoryDateGroup {
     key: string;
@@ -20,7 +21,7 @@ export function groupHistoryJobsByEndDate(jobs: HistoryJob[], now: Date = new Da
 
     return Array.from(groups.entries()).map(([key, groupedJobs]) => ({
         key,
-        label: formatHistoryDateGroupLabel(key, groupedJobs.length, now),
+        label: formatHistoryDateGroupLabel(key, countJobs(groupedJobs.map(job => job.jobId)), now),
         jobs: groupedJobs,
     }));
 }

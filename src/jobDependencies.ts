@@ -1,4 +1,5 @@
 import { cleanJobIdForScontrol, extractBaseJobId, SlurmJob } from './slurmService';
+import { countJobs } from './jobCount';
 
 /**
  * Dependencies between the user's queued jobs, read from the `Dependency`
@@ -96,23 +97,15 @@ export function readCancelTarget(jobId: string): CancelTarget {
 
 /** Whether `task` is in `tasks`, a task list as the cancel command writes it (`1-3,7`). */
 function taskListIncludes(tasks: string, task: number): boolean {
-    return tasks.split(',').some((part) => {
-        const [start, end = start] = part.split('-').map(Number);
-        return task >= start && task <= end;
+    return tasks.replace(/%\d+$/, '').split(',').some((part) => {
+        const [bounds, step = 1] = part.split(':');
+        const [start, end = start] = bounds.split('-').map(Number);
+        return task >= start && task <= end && (task - start) % Number(step) === 0;
     });
 }
 
 /** How many stranded jobs the cancel dialog names before counting the rest. */
 const MAX_LISTED_STRANDED_JOBS = 10;
-
-/**
- * The IDs that cancel exactly these pending rows: a job's or task's own ID, so
- * the other tasks of its array stay, and the array's ID for its pending row
- * (`123_[4-9]`), which scancel would otherwise cancel one task at a time.
- */
-export function pendingRowCancelIds(rows: readonly SlurmJob[]): string[] {
-    return unique(rows.map((row) => cleanJobIdForScontrol(row.jobId)));
-}
 
 /**
  * The cancel dialog's explanation of what cancelling `cancelledName` strands.
@@ -122,14 +115,16 @@ export function pendingRowCancelIds(rows: readonly SlurmJob[]): string[] {
  */
 export function describeStrandedJobs(cancelledName: string, stranded: readonly SlurmJob[]): string {
     const condition = `would never run without "${cancelledName}" finishing successfully`;
-    if (stranded.length === 1) {
+    const count = countJobs(stranded.map(job => job.jobId));
+    if (count === 1) {
         return `"${stranded[0].name}" (${stranded[0].jobId}) ${condition}.`;
     }
     const listed = stranded.slice(0, MAX_LISTED_STRANDED_JOBS).map((job) => `• ${job.name} (${job.jobId})`);
     if (stranded.length > MAX_LISTED_STRANDED_JOBS) {
-        listed.push(`…and ${stranded.length - MAX_LISTED_STRANDED_JOBS} more`);
+        const remaining = stranded.slice(MAX_LISTED_STRANDED_JOBS);
+        listed.push(`…and ${countJobs(remaining.map(job => job.jobId))} more`);
     }
-    return `These ${stranded.length} pending jobs ${condition}:\n\n${listed.join('\n')}`;
+    return `These ${count} pending jobs ${condition}:\n\n${listed.join('\n')}`;
 }
 
 type Outcome = 'open' | 'broken' | 'brokenByCancel';
@@ -156,6 +151,23 @@ export class QueueDependencies {
         }
         this.pending = jobs.filter((job) => job.state === 'PD');
         this.findStranded();
+    }
+
+    /** Use the base ID for a whole pending array, and exact IDs for a subset. */
+    pendingRowCancelIds(rows: readonly SlurmJob[]): string[] {
+        const selected = new Set(rows.map(job => job.jobId));
+        const wholeArrays = new Set<string>();
+        for (const { jobId } of rows) {
+            const base = cleanJobIdForScontrol(jobId);
+            const arrayRows = this.byBase.get(base);
+            if (base !== jobId && arrayRows?.every(job => job.state !== 'PD' || selected.has(job.jobId))) {
+                wholeArrays.add(base);
+            }
+        }
+        return unique(rows.map(({ jobId }) => {
+            const base = extractBaseJobId(jobId);
+            return wholeArrays.has(base) ? base : jobId;
+        }));
     }
 
     /** What `job`'s row should say about its dependency, if anything. */
@@ -203,10 +215,14 @@ export class QueueDependencies {
                     continue;
                 }
                 const outcomes = this.outcomes(job, parsed, targets);
-                // Only jobs the cancel itself strands: one stranded already for
-                // another reason is not this cancel's doing
+                // An already broken dependency does not trigger cancellation.
                 if (isNeverMet(parsed.anyOf, outcomes) && outcomes.includes('brokenByCancel')) {
-                    result.push(job);
+                    // The offered cancellation covers every pending row of a dependent array.
+                    for (const row of this.byBase.get(base) ?? []) {
+                        if (row.state === 'PD') {
+                            result.push(row);
+                        }
+                    }
                     targets.push({ base, whole: true });
                     changed = true;
                 }

@@ -298,9 +298,9 @@ describe('parsePartitionUsageOutput', () => {
 
         // squeue --noheader --format="%P|%t" (counts only)
         const squeue = [
-            'gpu|R',
-            'gpu|PD',
-            'h200|R',
+            'gpu|R|123',
+            'gpu|PD|124',
+            'h200|R|125',
         ].join('\n');
 
         const { entries, clusterAllocatedGpus, clusterAvailableGpus } = parsePartitionUsageOutput(sinfoNode, scontrol, squeue);
@@ -408,10 +408,10 @@ describe('parsePartitionUsageOutput', () => {
             'NodeName=c01 Arch=x86_64\n CfgTRES=cpu=64,mem=512G\n AllocTRES=cpu=32,mem=256G',
             'NodeName=c02 Arch=x86_64\n CfgTRES=cpu=64,mem=512G\n AllocTRES=',
         ].join('\n');
-        assert.deepEqual(parsePartitionUsageOutput(sinfoNode, scontrol, 'cpu|R\ncpu|PD').entries, []);
+        assert.deepEqual(parsePartitionUsageOutput(sinfoNode, scontrol, 'cpu|R|123\ncpu|PD|124').entries, []);
     });
 
-    it('counts pending jobs across comma-separated GPU partition choices', () => {
+    it('counts pending tasks in each eligible partition and once in each summary', () => {
         const sinfoNode = [
             'n01|gpu|idle|gpu:a100:4',
             'n02|gpu|idle|gpu:a100:4',
@@ -423,12 +423,15 @@ describe('parsePartitionUsageOutput', () => {
             scontrolBlock('h01', 0, 'h200'), scontrolBlock('h02', 0, 'h200'),
         ].join('\n');
 
-        const { entries } = parsePartitionUsageOutput(sinfoNode, scontrol, 'gpu,h200|PD');
+        const queue = 'gpu,h200,cpu,cpu2|PD|123_[1-5:2%2]\ngpu|PD|123_6\ncpu|PD|124';
+        const { entries, cpuOnlyEntries, pendingGpuJobs, pendingCpuJobs } = parsePartitionUsageOutput(sinfoNode, scontrol, queue);
 
         assert.deepEqual(entries.map(e => ({ partition: e.partition, pendingJobs: e.pendingJobs, runningJobs: e.runningJobs })), [
-            { partition: 'gpu', pendingJobs: 1, runningJobs: 0 },
-            { partition: 'h200', pendingJobs: 1, runningJobs: 0 },
+            { partition: 'gpu', pendingJobs: 4, runningJobs: 0 },
+            { partition: 'h200', pendingJobs: 3, runningJobs: 0 },
         ]);
+        assert.deepEqual(cpuOnlyEntries?.map(e => [e.partition, e.pendingJobs]), [['cpu', 4], ['cpu2', 3]]);
+        assert.deepEqual([pendingGpuJobs, pendingCpuJobs], [4, 4]);
     });
 
     it('attributes overlapping-partition node GPU allocation to all partitions', () => {
@@ -439,7 +442,7 @@ describe('parsePartitionUsageOutput', () => {
             'n01|gpudev|allocated|gpu:a100:4',
         ].join('\n');
         const scontrol = scontrolBlock('n01', 4);
-        const squeue = 'gpu|R\ngpudev|R';
+        const squeue = 'gpu|R|123\ngpudev|R|124';
 
         const result = parsePartitionUsageOutput(sinfoNode, scontrol, squeue);
         const gpu = result.entries.find(e => e.partition === 'gpu')!;
@@ -466,7 +469,7 @@ describe('parsePartitionUsageOutput', () => {
             scontrolBlock('n02', 0, 'a100'),
         ].join('\n');
 
-        const { entries } = parsePartitionUsageOutput(sinfoNode, scontrol, 'gpu|R');
+        const { entries } = parsePartitionUsageOutput(sinfoNode, scontrol, 'gpu|R|123');
         assert.equal(entries.length, 1);
         assert.equal(entries[0].totalNodes, 2);
         assert.equal(entries[0].totalGpus, 6); // 4 + 2, not 4+4+2
@@ -491,7 +494,7 @@ describe('parsePartitionUsageOutput', () => {
             'NodeName=c02 RealMemory=1024 AllocMem=0',
             'NodeName=c03 RealMemory=1024 AllocMem=0',
         ].join('\n');
-        const squeue = ['cpu|R', 'cpu|PD', 'cpu|PD'].join('\n');
+        const squeue = ['cpu|R|123', 'cpu|PD|124', 'cpu|PD|125'].join('\n');
 
         const { entries, cpuOnlyEntries } = parsePartitionUsageOutput(sinfoNode, scontrol, squeue);
 

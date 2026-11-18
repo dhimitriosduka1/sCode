@@ -108,8 +108,7 @@ export class CpuPartitionUsageProvider implements vscode.TreeDataProvider<vscode
             }
 
             const entries = new Map((snapshot.usage.cpuOnlyEntries ?? []).map(entry => [entry.partition, entry]));
-            // No CPU total: partitions can share nodes, so summing them would double count
-            const pending = cpuLoads.reduce((total, load) => total + (entries.get(load.partition)?.pendingJobs ?? 0), 0);
+            const pending = snapshot.usage.pendingCpuJobs;
             const summary = new vscode.TreeItem('CPU partitions');
             summary.description = `${pending} pending · ${cpuLoads.length} ${cpuLoads.length === 1 ? 'partition' : 'partitions'}`;
             summary.iconPath = new vscode.ThemeIcon('server-environment');

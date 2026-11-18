@@ -1,4 +1,5 @@
 import type { SlurmJob } from './slurmService';
+import { countJobs } from './jobCount';
 
 /** States in which a job holds its GPUs: running, or its nodes being set up. */
 const GPU_HOLDING_STATES = new Set(['R', 'CF']);
@@ -14,7 +15,7 @@ export interface UserGpuUsage {
  * The GPUs the user's running jobs hold, from what Slurm allocated each one.
  * Pending jobs hold nothing yet.
  */
-export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'state' | 'gpuCount' | 'gpuType'>[]): UserGpuUsage {
+export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'jobId' | 'state' | 'gpuCount' | 'gpuType'>[]): UserGpuUsage {
     const byType = new Map<string, { type: string; gpuCount: number; jobCount: number }>();
     let gpuCount = 0;
     let jobCount = 0;
@@ -23,12 +24,13 @@ export function summarizeRunningGpus(jobs: Pick<SlurmJob, 'state' | 'gpuCount' |
         if (!GPU_HOLDING_STATES.has(job.state) || !job.gpuCount) {
             continue;
         }
+        const countedJobs = countJobs([job.jobId]);
         gpuCount += job.gpuCount;
-        jobCount += 1;
+        jobCount += countedJobs;
         const type = job.gpuType || 'GPU';
         const entry = byType.get(type) ?? { type, gpuCount: 0, jobCount: 0 };
         entry.gpuCount += job.gpuCount;
-        entry.jobCount += 1;
+        entry.jobCount += countedJobs;
         byType.set(type, entry);
     }
 

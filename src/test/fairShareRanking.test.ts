@@ -135,10 +135,11 @@ describe('choosing the account whose fair share applies', () => {
 });
 
 describe('rankJobAccounts', () => {
-    it('orders accounts by how many jobs run under each', () => {
+    it('orders accounts by the jobs and array tasks that run under each', () => {
         assert.deepEqual(rankJobAccounts([
-            { account: 'b' }, { account: 'a' }, { account: 'b' }, {}, { account: 'c' },
-        ]), ['b', 'a', 'c']);
+            { jobId: '1', account: 'b' }, { jobId: '2', account: 'b' },
+            { jobId: '3_[0-7%2]', account: 'a' }, { jobId: '4' }, { jobId: '5', account: 'c' },
+        ]), ['a', 'b', 'c']);
     });
 });
 

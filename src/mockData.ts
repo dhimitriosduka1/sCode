@@ -162,7 +162,7 @@ export function createMockJobs(): SlurmJob[] {
             pendingReason: 'Dependency',
         },
         {
-            jobId: '91004_[3-10%2]',
+            jobId: '91004_[4-10%2]',
             queuedSeconds: 600,
             name: 'array-postprocess',
             state: 'PD',
@@ -490,22 +490,22 @@ export const MOCK_SCONTROL_NODE_OUTPUT = [
     ' AllocTRES=cpu=8,mem=32G',
 ].join('\n');
 
-// squeue --noheader --format="%P|%t" (job counts only)
+// squeue --noheader --format="%P|%T|%i" (job counts only)
 export const MOCK_SQUEUE_PARTITION_JOBS_OUTPUT = [
-    'h200|R',
-    'h200|R',
-    'h200|PD',
-    'a100-long|R',
-    'a100-long|R',
-    'a100-long|PD',
-    'a100-short,h200|PD',
-    'a100-short|R',
-    'a100-short|PD',
-    'l40s|R',
-    'l40s|PD',
-    'debug-gpu|PD',
-    'cpu|R',
-    'cpu|PD',
+    'h200|R|92001',
+    'h200|R|92002',
+    'h200|PD|92003',
+    'a100-long|R|92004',
+    'a100-long|R|92005',
+    'a100-long|PD|92006',
+    'a100-short,h200|PD|92007',
+    'a100-short|R|92008',
+    'a100-short|PD|92009',
+    'l40s|R|92010',
+    'l40s|PD|92011',
+    'debug-gpu|PD|91004_[4-10%2]',
+    'cpu|R|92012',
+    'cpu|PD|92013',
 ].join('\n');
 
 // sshare -a -n -P -o Account,User,FairShare

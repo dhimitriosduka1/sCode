@@ -18,6 +18,7 @@ import { RefreshGate } from './refreshGate';
 import { showRefreshTime } from './leaderboardRefreshTime';
 import { SubmitScriptCache } from './submitScriptCache';
 import { formatGpuTypeBreakdown, summarizeRunningGpus, UserGpuUsage } from './userGpuUsage';
+import { countJobs } from './jobCount';
 
 import { formatTooltipMarkdown, TooltipDetail } from './tooltipMarkdown';
 
@@ -77,6 +78,7 @@ export const neverRunsDecorationProvider: vscode.FileDecorationProvider = {
 export class StatusCategoryItem extends vscode.TreeItem {
     /** The group's jobs that can never start, which its header counts and offers to cancel. */
     public readonly neverRunJobs: SlurmJob[];
+    public readonly neverRunJobCount: number;
 
     constructor(
         public readonly category: StatusCategory,
@@ -93,7 +95,8 @@ export class StatusCategoryItem extends vscode.TreeItem {
 
         this.iconPath = info.icon;
         this.neverRunJobs = (jobs ?? []).filter((job) => dependencies?.describe(job)?.kind === 'never');
-        this.description = describeNeverRunCount(this.neverRunJobs.length);
+        this.neverRunJobCount = countJobs(this.neverRunJobs.map(job => job.jobId));
+        this.description = describeNeverRunCount(this.neverRunJobCount);
         if (category === 'pending' && jobCount > 0) {
             let context = 'statusCategoryPending';
             if (jobs) {
@@ -655,7 +658,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 const jobsInCat = filteredJobs.filter(job =>
                     info.states.includes(job.state)
                 );
-                const jobCount = jobsInCat.length;
+                const jobCount = countJobs(jobsInCat.map(job => job.jobId));
 
                 if (jobCount > 0) {
                     const item = new StatusCategoryItem(categoryKey, jobCount, jobsInCat, this.cachedDependencies);

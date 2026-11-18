@@ -5,7 +5,7 @@ import { CpuPartitionUsage, PartitionUsageResult } from '../slurmService';
 
 const cpu = (partition: string, allocatedCpus: number): CpuPartitionUsage =>
     ({ partition, allocatedCpus, idleCpus: 100 - allocatedCpus, otherCpus: 0, totalCpus: 100 });
-const noGpus: PartitionUsageResult = { entries: [], clusterAllocatedGpus: 0, clusterAvailableGpus: 0 };
+const noGpus: PartitionUsageResult = { entries: [], clusterAllocatedGpus: 0, clusterAvailableGpus: 0, pendingGpuJobs: 0, pendingCpuJobs: 0 };
 
 /** A fake Slurm whose answers the test controls; counts how often it is queried */
 function fakeSource(answers: { cpu: CpuPartitionUsage[]; available?: boolean }) {
