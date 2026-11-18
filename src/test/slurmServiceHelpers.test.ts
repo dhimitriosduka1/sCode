@@ -189,6 +189,25 @@ describe('Slurm service helper functions', () => {
         assert.equal(details.gpuType, 'A100');
     });
 
+    it('counts a TresPerNode entry listed twice only once', () => {
+        const details = parseJobDetailsOutput('JobId=791 JobState=PENDING NumNodes=64 TresPerNode=gres/gpu:4,gres/gpu:4');
+
+        assert.equal(details.gpuCount, 256);
+    });
+
+    it('reads GPUs requested per job from TresPerJob', () => {
+        const details = parseJobDetailsOutput('JobId=792 JobState=PENDING NumNodes=2 TresPerNode=N/A TresPerJob=gres/gpu:a100:8');
+
+        assert.equal(details.gpuCount, 8);
+        assert.equal(details.gpuType, 'A100');
+    });
+
+    it('multiplies TresPerTask GPUs by NumTasks', () => {
+        const details = parseJobDetailsOutput('JobId=793 JobState=PENDING NumNodes=2 NumTasks=4 TresPerTask=gres/gpu:2');
+
+        assert.equal(details.gpuCount, 8);
+    });
+
     it('parses unavailable scontrol path values consistently', () => {
         const details = parseJobDetailsOutput([
             'JobId=456 JobName=pending',
