@@ -89,6 +89,10 @@ export class StatusCategoryItem extends vscode.TreeItem {
                 : vscode.TreeItemCollapsibleState.Expanded
         );
 
+        // Without an ID VS Code knows a group by its label, which carries the
+        // count, so holding or releasing a job made Held look like a new group
+        // and reopened it in its default state. The ID keeps it as the user left it.
+        this.id = `slurmJobs.category.${category}`;
         this.jobCount = jobCount;
         this.iconPath = info.icon;
         this.neverRunJobs = jobs.filter(job => dependencies?.describe(job)?.kind === 'never');

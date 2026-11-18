@@ -31,9 +31,11 @@ describe('Active Jobs groups', () => {
         assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason: 'Resources' })), 'pending');
     });
 
-    it('keeps grouped arrays and individual array tasks in Pending when held', () => {
-        for (const jobId of ['91004_[4-10%2]', '91004_3', '91004[4-10]']) {
-            assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'JobHeldUser' })), 'pending');
+    it('puts held array rows and array tasks in Held, and unheld ones in Pending', () => {
+        // A whole held array, held tasks split from their array, and a single held task
+        for (const jobId of ['91004_[0-9]', '91004_[1,3,5]', '91004_[4-10%2]', '91004_3', '91004[4-10]']) {
+            assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'JobHeldUser' })), 'held');
+            assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'BeginTime' })), 'pending');
         }
     });
 

@@ -22,9 +22,9 @@ export function getActiveJobCategory(job: Pick<SlurmJob, 'jobId' | 'state' | 'pe
         case 'CF':
             return 'running';
         case 'PD':
-            return !job.jobId.includes('_') && !job.jobId.includes('[') && isJobHeld(job.pendingReason)
-                ? 'held'
-                : 'pending';
+            // A held array row (`123_[4-9]`, or a task like `123_4`) goes to Held
+            // too: holding some tasks splits them into a row of their own
+            return isJobHeld(job.pendingReason) ? 'held' : 'pending';
         case 'CG':
             return 'completing';
         case 'CD':
