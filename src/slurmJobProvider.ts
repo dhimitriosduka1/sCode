@@ -46,6 +46,9 @@ const CATEGORIES: Record<ActiveJobCategory, { label: string; icon: vscode.ThemeI
     },
 };
 
+/** Groups listed even when they hold no jobs, so the view keeps its shape between refreshes. */
+const ALWAYS_SHOWN_CATEGORIES: ReadonlySet<ActiveJobCategory> = new Set(['running', 'held', 'pending']);
+
 const NEVER_RUNS_SCHEME = 'slurm-job-never-runs';
 
 /**
@@ -80,7 +83,10 @@ export class StatusCategoryItem extends vscode.TreeItem {
         const jobCount = countJobs(jobs.map(job => job.jobId));
         super(
             `${info.label} (${jobCount})`,
-            category === 'held' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded
+            jobs.length === 0
+                // An empty group has nothing to expand
+                ? vscode.TreeItemCollapsibleState.None
+                : category === 'held' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded
         );
 
         this.jobCount = jobCount;
@@ -89,7 +95,10 @@ export class StatusCategoryItem extends vscode.TreeItem {
         this.neverRunJobCount = countJobs(this.neverRunJobs.map(job => job.jobId));
         this.description = describeNeverRunCount(this.neverRunJobCount);
         const neverRun = this.neverRunJobCount > 0 ? 'HasNeverRun' : '';
-        if (category === 'pending') {
+        if (jobs.length === 0) {
+            // No group actions apply to an empty group
+            this.contextValue = 'statusCategoryEmpty';
+        } else if (category === 'pending') {
             const hasNonHeld = jobs.some(job => !isJobHeld(job.pendingReason));
             const hasHeld = jobs.some(job => isJobHeld(job.pendingReason));
             this.contextValue = `statusCategoryPending${hasNonHeld ? 'HasNonHeld' : ''}${hasHeld ? 'HasHeld' : ''}${neverRun}`;
@@ -616,24 +625,6 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             // All of the user's jobs, whatever the search shows
             const gpuUsageItem = new UserGpuUsageItem(summarizeRunningGpus(this.cachedJobs));
 
-            if (this.cachedJobs.length === 0) {
-                const items: vscode.TreeItem[] = [];
-                if (maintenanceItem) { items.push(maintenanceItem); }
-                items.push(gpuUsageItem);
-                if (fairShareItem) { items.push(fairShareItem); }
-                items.push(new MessageItem('No jobs found', 'info'));
-                return items;
-            }
-
-            if (filteredJobs.length === 0 && this.searchFilter) {
-                const items: vscode.TreeItem[] = [];
-                if (maintenanceItem) { items.push(maintenanceItem); }
-                items.push(gpuUsageItem);
-                if (fairShareItem) { items.push(fairShareItem); }
-                items.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
-                return items;
-            }
-
             // Create category items
             const categories: vscode.TreeItem[] = [];
 
@@ -641,6 +632,10 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (maintenanceItem) { categories.push(maintenanceItem); }
             categories.push(gpuUsageItem);
             if (fairShareItem) { categories.push(fairShareItem); }
+
+            if (filteredJobs.length === 0 && this.searchFilter && this.cachedJobs.length > 0) {
+                categories.push(new MessageItem(`No jobs matching "${this.searchFilter}"`, 'search'));
+            }
 
             const jobsByCategory = new Map<ActiveJobCategory, SlurmJob[]>();
             for (const job of filteredJobs) {
@@ -657,8 +652,8 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
             }
             for (const category of Object.keys(CATEGORIES) as ActiveJobCategory[]) {
                 const jobs = jobsByCategory.get(category);
-                if (jobs) {
-                    categories.push(new StatusCategoryItem(category, jobs, this.cachedDependencies));
+                if (jobs || ALWAYS_SHOWN_CATEGORIES.has(category)) {
+                    categories.push(new StatusCategoryItem(category, jobs ?? [], this.cachedDependencies));
                 }
             }
 
