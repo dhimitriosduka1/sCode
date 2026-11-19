@@ -280,6 +280,21 @@ describe('Hold and release across queue snapshots', () => {
         assert.deepEqual(actions, ["scontrol hold '700_1' '700_4'", "scontrol release '700_[2-3]'"]);
     });
 
+    it('keeps a mixed row when none of its tasks are pending any more in the per-task snapshot', async () => {
+        const service = new SlurmService(undefined, undefined, async command => {
+            let stdout = '';
+            if (command.includes('%j|%t')) {
+                stdout = '800_[0-3]|sweep|PD|0:00|gpu||1:00|N/A|Priority,DependencyNeverSatisfied|lab';
+            }
+            // The per-task squeue (--array) finds none of them pending: they started meanwhile
+            return { stdout, stderr: '' };
+        });
+        const rows = await service.getJobs();
+        assert.deepEqual(rows.map(row => [row.jobId, row.pendingReason]), [
+            ['800_[0-3]', 'Priority,DependencyNeverSatisfied'],
+        ]);
+    });
+
     it('splits a mixed row so tasks that will never run get rows of their own', async () => {
         const service = new SlurmService(undefined, undefined, async command => {
             let stdout = '';

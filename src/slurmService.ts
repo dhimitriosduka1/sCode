@@ -2016,7 +2016,9 @@ export class SlurmService {
             const rows = jobs.flatMap(source => {
                 const queued = detailsById.get(source.jobId);
                 const details = queued ?? this.getJobDetails(source.jobId);
-                return (splitRows.get(source.jobId) ?? [source]).map(row => ({
+                // A split that found none of its tasks still pending keeps the row: the next refresh shows where they went
+                const split = splitRows.get(source.jobId);
+                return (split?.length ? split : [source]).map(row => ({
                     job: { ...source, ...row }, details, queuedSeconds: queued?.queuedSeconds,
                 }));
             });
