@@ -6,7 +6,7 @@ import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { quoteForShell } from './shellQuote';
 import { countJobs } from './jobCount';
-import { arrayTaskIndices, arrayTaskJobId, ArrayTaskRange, formatArrayTaskList, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
+import { arrayTaskIndices, arrayTaskJobId, ArrayTaskRange, formatArrayTaskList, includesArrayTask, lastArrayTaskIndex, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
 
 import {
     createMockHistoryJobs,
@@ -2511,9 +2511,10 @@ export class SlurmService {
             }
             let minIndex = Infinity;
             let maxIndex = -Infinity;
-            for (const { start, end } of taskLists.flatMap(parseArrayTaskRanges)) {
-                minIndex = Math.min(minIndex, start);
-                maxIndex = Math.max(maxIndex, end);
+            for (const range of taskLists.flatMap(parseArrayTaskRanges)) {
+                minIndex = Math.min(minIndex, range.start);
+                // A stepped range stops short of its end (`0-10:3` reaches 9)
+                maxIndex = Math.max(maxIndex, lastArrayTaskIndex(range));
             }
             return minIndex === Infinity ? null : { minIndex, maxIndex };
         } catch {

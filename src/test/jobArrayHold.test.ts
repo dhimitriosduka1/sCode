@@ -158,6 +158,11 @@ describe('Array hold commands', () => {
         }
     });
 
+    it('takes the last index a stepped range reaches as the array\'s upper bound', async () => {
+        const service = new SlurmService(undefined, undefined, async () => ({ stdout: 'JobId=700 ArrayTaskId=0-10:3\n', stderr: '' }));
+        assert.deepEqual(await service.getJobArrayInfo('700'), { minIndex: 0, maxIndex: 9 });
+    });
+
     it('reads array bounds from grouped rows and separate tasks', async () => {
         const service = new SlurmService(undefined, undefined, async () => ({
             stdout: 'JobId=700 ArrayTaskId=3\nJobId=701 ArrayTaskId=4-20:2%3\n', stderr: '',
