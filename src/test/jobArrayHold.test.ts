@@ -17,6 +17,27 @@ describe('Array task selection', () => {
     });
 });
 
+describe('Array task selection lists', () => {
+    it('accepts lists that mix single indices, ranges and stepped ranges', () => {
+        for (const input of ['1-3,5', '0-10:2,15', '2,4-6', '0-4:2,1-5:2']) {
+            assert.equal(validateArrayTaskSelection(input, { minIndex: 0, maxIndex: 20 }), undefined, input);
+        }
+    });
+
+    it('rejects indices that appear twice, also inside ranges', () => {
+        for (const input of ['1-3,2', '0-10:2,4', '1-5,5-9', '3,3']) {
+            assert.equal(validateArrayTaskSelection(input), 'Duplicate indices detected', input);
+        }
+        // 5 is odd, so not among 0-10:2
+        assert.equal(validateArrayTaskSelection('0-10:2,5'), undefined);
+    });
+
+    it('checks bounds against the last index a stepped range reaches', () => {
+        assert.equal(validateArrayTaskSelection('1-9:3', { minIndex: 0, maxIndex: 8 }), undefined);
+        assert.ok(validateArrayTaskSelection('1-12:3', { minIndex: 0, maxIndex: 8 }));
+    });
+});
+
 function serviceWithPendingRows(stdout: string) {
     const commands: string[] = [];
     const service = new SlurmService(undefined, undefined, async command => {

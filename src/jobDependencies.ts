@@ -1,6 +1,6 @@
 import { cleanJobIdForScontrol, extractBaseJobId, SlurmJob } from './slurmService';
 import { countJobs } from './jobCount';
-import { ArrayTaskRange, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
+import { ArrayTaskRange, includesArrayTask, lastArrayTaskIndex, parseArrayTaskRanges, rangesOverlap, readArrayTaskList } from './jobArrayTasks';
 
 /**
  * Dependencies between the user's queued jobs, read from the `Dependency`
@@ -137,29 +137,6 @@ function hasSeveralTasks(ranges: readonly ArrayTaskRange[]): boolean {
     return ranges.length > 1 || (ranges.length === 1 && ranges[0].start + ranges[0].step <= ranges[0].end);
 }
 
-/** The last index a range reaches, which a step can leave short of its end (`1-9:3` reaches 7). */
-function lastIndex({ start, end, step }: ArrayTaskRange): number {
-    return end - ((end - start) % step);
-}
-
-/** Whether two ranges share an index, without listing them. */
-function rangesOverlap(a: ArrayTaskRange, b: ArrayTaskRange): boolean {
-    const low = Math.max(a.start, b.start);
-    const high = Math.min(lastIndex(a), lastIndex(b));
-    if (low > high) {
-        return false;
-    }
-    // Walk the sparser range: the indices of both repeat after the denser one's step
-    const [sparse, dense] = a.step >= b.step ? [a, b] : [b, a];
-    let index = sparse.start + Math.ceil((low - sparse.start) / sparse.step) * sparse.step;
-    for (let tries = 0; tries < dense.step && index <= high; tries++, index += sparse.step) {
-        if ((index - dense.start) % dense.step === 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /** Whether any task of `a` is in `b`. */
 function anyOverlap(a: readonly ArrayTaskRange[], b: readonly ArrayTaskRange[]): boolean {
     return a.some((range) => b.some((other) => rangesOverlap(range, other)));
@@ -172,7 +149,7 @@ function anyOverlap(a: readonly ArrayTaskRange[], b: readonly ArrayTaskRange[]):
  */
 function rangesCover(inner: readonly ArrayTaskRange[], outer: readonly ArrayTaskRange[]): boolean {
     for (const range of inner) {
-        const last = lastIndex(range);
+        const last = lastArrayTaskIndex(range);
         let index = range.start;
         while (index <= last) {
             let next: number | undefined;
@@ -182,7 +159,7 @@ function rangesCover(inner: readonly ArrayTaskRange[], outer: readonly ArrayTask
                 }
                 // A range whose step divides ours holds our tasks up to its last index; any other, only this one
                 const reach = range.step % other.step === 0
-                    ? index + Math.floor((lastIndex(other) - index) / range.step) * range.step
+                    ? index + Math.floor((lastArrayTaskIndex(other) - index) / range.step) * range.step
                     : index;
                 next = Math.max(next ?? reach, reach);
             }

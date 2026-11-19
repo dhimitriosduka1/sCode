@@ -1836,7 +1836,7 @@ async function promptForArrayTaskSelection(
     const range = bounds ? ` [Array range: ${bounds.minIndex}-${bounds.maxIndex}]` : '';
     const input = await vscode.window.showInputBox({
         prompt: `Enter indices to ${action}${range}`,
-        placeHolder: '3 or 1,3,5 or 0-10 or 0-20:2',
+        placeHolder: '3 or 1,3,5 or 0-10 or 0-20:2 or 1-3,8-12:2',
         validateInput: value => validateArrayTaskSelection(value, bounds),
     });
     if (!input) {
