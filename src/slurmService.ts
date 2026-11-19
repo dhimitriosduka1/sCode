@@ -6,7 +6,7 @@ import { JobPathCache } from './jobPathCache';
 import { SubmitScriptCache } from './submitScriptCache';
 import { quoteForShell } from './shellQuote';
 import { countJobs } from './jobCount';
-import { arrayTaskIndices, arrayTaskJobId, ArrayTaskRange, formatArrayTaskList, includesArrayTask, lastArrayTaskIndex, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
+import { arrayTaskIndices, arrayTaskJobId, ArrayTaskRange, formatArrayTaskList, includesArrayTask, lastArrayTaskIndex, parseArrayTaskRanges, rangesOverlap, readArrayTaskList } from './jobArrayTasks';
 
 import {
     createMockHistoryJobs,
@@ -2916,23 +2916,35 @@ export class SlurmService {
     ): Promise<{ success: boolean; message: string }> {
         try {
             const requested = taskList === undefined ? undefined : parseArrayTaskRanges(taskList);
-            const pending = new Map<string, ArrayTaskRange[]>();
-            const skipped = new Set(skipRowIds);
+            // By task, not row ID: the queue may have regrouped a skipped row since it was shown
+            const skipped = skipRowIds.flatMap(id => {
+                const tasks = extractBaseJobId(id) === arrayJobId ? readArrayTaskList(id) : undefined;
+                return tasks === undefined ? [] : parseArrayTaskRanges(tasks);
+            });
+            const rows: { id: string; source: string; ranges: ArrayTaskRange[]; kept?: ArrayTaskRange[] }[] = [];
             for (const { jobId } of await this.getPendingJobsByHold(action === 'release')) {
-                if (extractBaseJobId(jobId) === arrayJobId && !skipped.has(jobId)) {
-                    const tasks = readArrayTaskList(jobId);
-                    if (tasks !== undefined) {
-                        pending.set(jobId, parseArrayTaskRanges(tasks));
-                    }
+                const tasks = extractBaseJobId(jobId) === arrayJobId ? readArrayTaskList(jobId) : undefined;
+                if (tasks === undefined) {
+                    continue;
+                }
+                const ranges = parseArrayTaskRanges(tasks);
+                if (!skipped.some(skip => ranges.some(range => rangesOverlap(range, skip)))) {
+                    rows.push({ id: jobId, source: jobId, ranges });
+                    continue;
+                }
+                const left = Array.from(arrayTaskIndices(ranges)).filter(index => !includesArrayTask(skipped, index));
+                if (left.length > 0) {
+                    const list = formatArrayTaskList(left);
+                    rows.push({ id: arrayTaskJobId(arrayJobId, list), source: jobId, ranges, kept: parseArrayTaskRanges(list) });
                 }
             }
-            if (pending.size === 0) {
+            if (rows.length === 0) {
                 const state = action === 'hold' ? 'pending' : 'held';
                 return { success: false, message: `No ${state} tasks are available to ${action} in array ${arrayJobId}.` };
             }
 
             if (requested) {
-                const eligible = Array.from(pending.values()).flat();
+                const eligible = rows.flatMap(row => row.kept ?? row.ranges);
                 const seen = new Set<number>();
                 for (const index of arrayTaskIndices(requested)) {
                     if (seen.has(index)) {
@@ -2944,10 +2956,13 @@ export class SlurmService {
                     seen.add(index);
                 }
             }
-            const targets = taskList === undefined ? [...pending.keys()] : [arrayTaskJobId(arrayJobId, taskList)];
+            const targets = taskList === undefined ? rows.map(row => row.id) : [arrayTaskJobId(arrayJobId, taskList)];
             const count = countJobs(targets);
             if (this.isMockMode()) {
-                this.updateMockArrayTaskHold(arrayJobId, pending, requested, action === 'hold' ? 'JobHeldUser' : 'Priority');
+                const reason = action === 'hold' ? 'JobHeldUser' : 'Priority';
+                for (const row of rows) {
+                    this.updateMockArrayTaskHold(arrayJobId, new Map([[row.source, row.ranges]]), requested ?? row.kept, reason);
+                }
             } else {
                 await this.runJobHoldAction(targets, action);
             }

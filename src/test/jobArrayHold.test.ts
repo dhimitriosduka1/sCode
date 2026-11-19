@@ -90,6 +90,15 @@ describe('Array hold commands', () => {
         assert.equal(commands[1], "scontrol hold '700_[0-3]' '700_6'");
     });
 
+    it('skips the tasks of a skipped row even when the queue has regrouped them since', async () => {
+        // The view showed 700_[5-9] under Will Never Run; task 7 was held elsewhere meanwhile
+        const { service, commands } = serviceWithPendingRows('700_[0-4]|Priority\n700_[5-6,8-9]|Dependency\n700_7|JobHeldUser');
+        assert.deepEqual(await service.holdArrayTasks('700', undefined, ['700_[5-9]']), {
+            success: true, message: 'Held 5 tasks in array 700.',
+        });
+        assert.equal(commands[1], "scontrol hold '700_[0-4]'");
+    });
+
     it('says there is nothing to hold when every pending row is skipped', async () => {
         const { service, commands } = serviceWithPendingRows('700_[4-5]|Dependency');
         assert.equal((await service.holdArrayTasks('700', undefined, ['700_[4-5]'])).success, false);
