@@ -53,21 +53,6 @@ const CATEGORIES: Record<ActiveJobCategory, { label: string; icon: vscode.ThemeI
 /** Groups listed even when they hold no jobs, so the view keeps its shape between refreshes. */
 const ALWAYS_SHOWN_CATEGORIES: ReadonlySet<ActiveJobCategory> = new Set(['running', 'held', 'pending']);
 
-const NEVER_RUNS_SCHEME = 'slurm-job-never-runs';
-
-/**
- * Turns the name of a job that can never start red, like its icon. A file
- * decoration is the one way to colour a row's label, so such a row goes by a
- * URI of its own.
- */
-export const neverRunsDecorationProvider: vscode.FileDecorationProvider = {
-    provideFileDecoration(uri) {
-        return uri.scheme === NEVER_RUNS_SCHEME
-            ? { color: new vscode.ThemeColor('list.errorForeground') }
-            : undefined;
-    },
-};
-
 /**
  * Category item representing a group of jobs by status
  */
@@ -131,9 +116,6 @@ export class SlurmJobItem extends vscode.TreeItem {
         this.description = rowParts.description;
         this.tooltip = this.createTooltip();
         this.iconPath = this.getStateIcon(dependency);
-        if (dependency?.kind === 'never') {
-            this.resourceUri = vscode.Uri.from({ scheme: NEVER_RUNS_SCHEME, path: `/${job.jobId}` });
-        }
         // Use pending-specific context values so package.json can show the right inline actions
         const isMainJobArray = job.jobId.includes('[');
         const isHeld = isJobHeld(job.pendingReason);
@@ -229,10 +211,10 @@ export class SlurmJobItem extends vscode.TreeItem {
     }
 
     private getStateIcon(dependency: DependencyStatus | undefined): vscode.ThemeIcon {
-        // A job that can never start is the one to act on, held or not: releasing
-        // it would not help, and left alone it waits in the queue forever
+        // A job that can never start, held or not: releasing it would not help.
+        // Its group's header is red already, so the rows aren't
         if (dependency?.kind === 'never') {
-            return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'));
+            return new vscode.ThemeIcon('circle-slash');
         }
 
         // Held pending jobs take priority — show lock icon

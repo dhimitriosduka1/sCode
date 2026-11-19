@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJobProvider, SlurmJobItem, StatusCategoryItem, neverRunsDecorationProvider } from './slurmJobProvider';
+import { SlurmJobProvider, SlurmJobItem, StatusCategoryItem } from './slurmJobProvider';
 import { JobHistoryProvider } from './jobHistoryProvider';
 import { PartitionUsageProvider } from './partitionUsageProvider';
 import { CpuPartitionUsageProvider } from './cpuPartitionUsageProvider';
@@ -552,7 +552,6 @@ export function activate(context: vscode.ExtensionContext) {
         manageCheckboxStateManually: true,
     });
     slurmJobProvider.view = treeView;
-    context.subscriptions.push(vscode.window.registerFileDecorationProvider(neverRunsDecorationProvider));
 
     treeView.onDidChangeCheckboxState((e) => {
         for (const [item, state] of e.items) {

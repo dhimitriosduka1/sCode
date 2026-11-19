@@ -70,7 +70,7 @@ Connecting relies on OpenSSH connection sharing (`ControlMaster`), available on 
 
 ![Active Jobs with running and pending jobs expanded to show resources, pending reasons, submit scripts, and logs](screenshots/active_jobs.png)
 
-Jobs are grouped by state, with progress bars showing elapsed time against the requested time limit. Pending jobs show readable reasons such as “Waiting for resources” and estimated start times when available. A job waiting on others names them with their IDs (`after train-a (1002) + train-b (1003)`), and one whose dependency can never be met says why, in red (`never runs: 998 failed`). Such jobs go in a Will Never Run group of their own, held or not, whose header cancels them all at once. Held jobs, including held array tasks, have a Held group with Release Held and Cancel All Held.
+Jobs are grouped by state, with progress bars showing elapsed time against the requested time limit. Pending jobs show readable reasons such as “Waiting for resources” and estimated start times when available. A job waiting on others names them with their IDs (`after train-a (1002) + train-b (1003)`), and one whose dependency can never be met says why (`never runs: 998 failed`). Such jobs go in a Will Never Run group of their own, held or not, whose header cancels them all at once. Held jobs, including held array tasks, have a Held group with Release Held and Cancel All Held.
 
 The top of the view shows how many GPUs your running jobs hold, by type, for example `GPUs in use: 6   4× A100, 2× H200`, or `GPUs in use: 0` when they hold none.
 
