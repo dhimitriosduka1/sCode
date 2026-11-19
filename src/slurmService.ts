@@ -2894,26 +2894,32 @@ export class SlurmService {
         }
     }
 
-    /** Hold the currently unheld pending tasks of one array, with an optional task selection. */
-    async holdArrayTasks(arrayJobId: string, taskList?: string): Promise<{ success: boolean; message: string }> {
-        return this.updateArrayTaskHold(arrayJobId, 'hold', taskList);
+    /**
+     * Hold the currently unheld pending tasks of one array, with an optional
+     * task selection. `skipRowIds` are rows to leave as they are, such as tasks
+     * that will never run.
+     */
+    async holdArrayTasks(arrayJobId: string, taskList?: string, skipRowIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
+        return this.updateArrayTaskHold(arrayJobId, 'hold', taskList, skipRowIds);
     }
 
-    /** Release the currently held tasks of one array, with an optional task selection. */
-    async releaseArrayTasks(arrayJobId: string, taskList?: string): Promise<{ success: boolean; message: string }> {
-        return this.updateArrayTaskHold(arrayJobId, 'release', taskList);
+    /** Release the currently held tasks of one array, with an optional task selection, leaving `skipRowIds`. */
+    async releaseArrayTasks(arrayJobId: string, taskList?: string, skipRowIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
+        return this.updateArrayTaskHold(arrayJobId, 'release', taskList, skipRowIds);
     }
 
     private async updateArrayTaskHold(
         arrayJobId: string,
         action: 'hold' | 'release',
         taskList?: string,
+        skipRowIds: readonly string[] = [],
     ): Promise<{ success: boolean; message: string }> {
         try {
             const requested = taskList === undefined ? undefined : parseArrayTaskRanges(taskList);
             const pending = new Map<string, ArrayTaskRange[]>();
+            const skipped = new Set(skipRowIds);
             for (const { jobId } of await this.getPendingJobsByHold(action === 'release')) {
-                if (extractBaseJobId(jobId) === arrayJobId) {
+                if (extractBaseJobId(jobId) === arrayJobId && !skipped.has(jobId)) {
                     const tasks = readArrayTaskList(jobId);
                     if (tasks !== undefined) {
                         pending.set(jobId, parseArrayTaskRanges(tasks));

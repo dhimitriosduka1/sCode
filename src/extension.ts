@@ -1593,13 +1593,18 @@ export function activate(context: vscode.ExtensionContext) {
             const icon = action === 'hold' ? 'lock' : 'unlock';
             const state = action === 'hold' ? 'pending' : 'held';
             const choice = await vscode.window.showQuickPick([
+                { label: `$(${icon}) ${verb} this row only`, description: jobId, value: 'row' },
                 { label: `$(${icon}) ${verb} all ${state} tasks`, description: `Array ${arrayJobId}`, value: 'all' },
                 { label: `$(edit) ${verb} specific tasks`, description: 'Choose indices, a list, or a range', value: 'specific' },
             ], { title: `${verb} Job Array: ${item.job.name}`, placeHolder: `Choose which array tasks to ${action}` });
             if (!choice) {
                 return;
             }
-            if (choice.value === 'specific') {
+            if (choice.value === 'row') {
+                result = action === 'hold'
+                    ? await slurmService.holdJob(jobId)
+                    : await slurmService.releaseJob(jobId);
+            } else if (choice.value === 'specific') {
                 const target = await promptForArrayTaskSelection(slurmService, arrayJobId, action);
                 if (!target) {
                     return;
@@ -1608,9 +1613,11 @@ export function activate(context: vscode.ExtensionContext) {
                     ? await slurmService.holdJob(target)
                     : await slurmService.releaseJob(target);
             } else {
+                // Rows under Will Never Run stay as they are, as the Pending header's Hold leaves them
+                const skip = slurmJobProvider.getNeverRunRowIds(arrayJobId);
                 result = action === 'hold'
-                    ? await slurmService.holdArrayTasks(arrayJobId)
-                    : await slurmService.releaseArrayTasks(arrayJobId);
+                    ? await slurmService.holdArrayTasks(arrayJobId, undefined, skip)
+                    : await slurmService.releaseArrayTasks(arrayJobId, undefined, skip);
             }
         } else {
             result = action === 'hold'

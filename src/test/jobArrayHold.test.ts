@@ -61,6 +61,20 @@ describe('Array hold commands', () => {
         assert.equal(commands[1], "scontrol hold '700_[0-8]' '700_9'");
     });
 
+    it('leaves the rows it is told to skip, such as tasks that will never run, when holding all', async () => {
+        const { service, commands } = serviceWithPendingRows('700_[0-3]|Priority\n700_[4-5]|Dependency\n700_6|Resources');
+        assert.deepEqual(await service.holdArrayTasks('700', undefined, ['700_[4-5]']), {
+            success: true, message: 'Held 5 tasks in array 700.',
+        });
+        assert.equal(commands[1], "scontrol hold '700_[0-3]' '700_6'");
+    });
+
+    it('says there is nothing to hold when every pending row is skipped', async () => {
+        const { service, commands } = serviceWithPendingRows('700_[4-5]|Dependency');
+        assert.equal((await service.holdArrayTasks('700', undefined, ['700_[4-5]'])).success, false);
+        assert.equal(commands.some(command => command.startsWith('scontrol hold ')), false);
+    });
+
     it('accepts a Slurm row containing mixed task ranges and a throttle', async () => {
         const { service, commands } = serviceWithPendingRows('700_[0,2-6:2,9%2]|Resources');
         const result = await service.holdJob('700_[0,2-6:2,9%2]');
@@ -191,6 +205,12 @@ describe('Array release commands', () => {
             success: true, message: 'Released 8 tasks in array 700.',
         });
         assert.equal(commands[1], "scontrol release '700_[0-6]' '700_7'");
+    });
+
+    it('leaves the held rows it is told to skip when releasing all', async () => {
+        const { service, commands } = serviceWithPendingRows('700_[0-3]|JobHeldUser\n700_[4-5]|JobHeldUser');
+        assert.equal((await service.releaseArrayTasks('700', undefined, ['700_[4-5]'])).message, 'Released 4 tasks in array 700.');
+        assert.equal(commands[1], "scontrol release '700_[0-3]'");
     });
 
     it('rejects missing or unheld indices before sending the release', async () => {

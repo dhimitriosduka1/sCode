@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SlurmJob, SlurmService, MaintenanceWindow, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, formatDuration, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit } from './slurmService';
+import { SlurmJob, SlurmService, MaintenanceWindow, JobPriorityFactors, getStateDescription, getPendingReasonInfo, calculateProgress, calculateRemainingSeconds, formatRemainingTime, formatDuration, generateProgressBar, formatStartTime, isJobHeld, isNearTimeLimit, extractBaseJobId } from './slurmService';
 import {
     buildFairShareLookup,
     FairShareSummary,
@@ -477,6 +477,17 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
      */
     getQueueDependencies(): QueueDependencies | undefined {
         return this.cachedDependencies;
+    }
+
+    /** The rows of array `arrayJobId` the view lists under Will Never Run, which "all tasks" actions leave alone. */
+    getNeverRunRowIds(arrayJobId: string): string[] {
+        const dependencies = this.cachedDependencies;
+        if (!dependencies) {
+            return [];
+        }
+        return this.cachedJobs
+            .filter(job => extractBaseJobId(job.jobId) === arrayJobId && dependencies.describe(job)?.kind === 'never')
+            .map(job => job.jobId);
     }
 
     /**
