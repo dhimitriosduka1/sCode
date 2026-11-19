@@ -2981,11 +2981,14 @@ export class SlurmService {
                 return [job];
             }
 
+            // As squeue lists them: one compressed row per reason, each keeping the array's throttle
             const throttle = /%\d+(?=\])/.exec(job.jobId)?.[0] ?? '';
-            const remainingId = `${arrayJobId}_[${remaining.join(',')}${throttle}]`;
+            const row = (indices: number[]) => indices.length === 1
+                ? arrayTaskJobId(arrayJobId, String(indices[0]))
+                : `${arrayJobId}_[${formatArrayTaskList(indices)}${throttle}]`;
             return [
-                { ...job, jobId: remainingId },
-                ...selected.map(index => ({ ...job, jobId: arrayTaskJobId(arrayJobId, String(index)), pendingReason: reason })),
+                { ...job, jobId: row(remaining) },
+                { ...job, jobId: row(selected), pendingReason: reason },
             ];
         });
     }

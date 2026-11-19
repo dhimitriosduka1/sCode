@@ -141,13 +141,28 @@ describe('Array hold in mock mode', () => {
 
         const array = after.filter(job => job.jobId.startsWith('91004_'));
         const held = array.filter(job => isJobHeld(job.pendingReason));
-        assert.deepEqual(held.map(job => job.jobId), ['91004_4', '91004_6', '91004_8']);
-        assert.equal(array.find(job => job.jobId.includes('['))?.jobId, '91004_[5,7,9,10%2]');
+        assert.deepEqual(held.map(job => job.jobId), ['91004_[4,6,8%2]']);
+        assert.equal(array.find(job => !isJobHeld(job.pendingReason))?.jobId, '91004_[5,7,9-10%2]');
         assert.equal(countJobs(after.map(job => job.jobId)), countBefore);
         assert.deepEqual(after.filter(job => job.state === 'R'), before.filter(job => job.state === 'R'));
 
         await service.holdAllPendingJobs();
         assert.equal((await service.getJobs()).filter(job => job.state === 'PD').every(job => isJobHeld(job.pendingReason)), true);
+    });
+});
+
+describe('Array hold in mock mode, as squeue lists it', () => {
+    it('puts the selected tasks in one compressed row with the throttle, as squeue does', async () => {
+        const service = new SlurmService(undefined, undefined, undefined, () => true);
+        const [template] = await service.getJobs();
+        (service as unknown as { mockJobs: unknown[] }).mockJobs = [
+            { ...template, jobId: '700_[0-20%2]', state: 'PD', pendingReason: 'Priority' },
+        ];
+        assert.equal((await service.holdArrayTasks('700', '1-19')).success, true);
+        assert.deepEqual((await service.getJobs()).map(job => [job.jobId, job.pendingReason]), [
+            ['700_[0,20%2]', 'Priority'],
+            ['700_[1-19%2]', 'JobHeldUser'],
+        ]);
     });
 });
 
@@ -224,11 +239,9 @@ describe('Array release in mock mode', () => {
         assert.equal((await service.releaseArrayTasks('91004', '4-8:2')).success, true);
         const after = await service.getJobs();
         const array = after.filter(job => job.jobId.startsWith('91004_'));
-        assert.deepEqual(array.filter(job => !isJobHeld(job.pendingReason)).map(job => job.jobId), [
-            '91004_4', '91004_6', '91004_8',
-        ]);
+        assert.deepEqual(array.filter(job => !isJobHeld(job.pendingReason)).map(job => job.jobId), ['91004_[4,6,8%2]']);
         assert.equal(isJobHeld(array.find(job => job.jobId === '91004_3')?.pendingReason), true);
-        assert.equal(isJobHeld(array.find(job => job.jobId === '91004_[5,7,9,10%2]')?.pendingReason), true);
+        assert.equal(isJobHeld(array.find(job => job.jobId === '91004_[5,7,9-10%2]')?.pendingReason), true);
         assert.equal(isJobHeld(after.find(job => job.jobId === '91002')?.pendingReason), true);
         assert.equal(countJobs(after.map(job => job.jobId)), countJobs(before.map(job => job.jobId)));
 
