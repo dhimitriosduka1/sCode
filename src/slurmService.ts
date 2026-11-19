@@ -3020,26 +3020,34 @@ export class SlurmService {
         for (const { jobId } of mixed) {
             const base = extractBaseJobId(jobId);
             const ranges = parseArrayTaskRanges(readArrayTaskList(jobId) ?? '');
-            const byReason = new Map<string | undefined, number[]>();
+            // Only holds (one row per kind) and tasks that will never run get rows of
+            // their own; the rest stay together, as squeue keeps them. A task just
+            // released reads None until the scheduler's next pass, and would otherwise
+            // show on a row of its own until then.
+            const groups = new Map<string, { indices: number[]; reasons: (string | undefined)[] }>();
             for (const index of arrayTaskIndices(ranges)) {
                 const id = arrayTaskJobId(base, String(index));
                 if (!byTask.has(id)) {
                     continue; // No longer pending in the newer snapshot.
                 }
                 const reason = byTask.get(id);
-                const group = byReason.get(reason);
-                if (group) {
-                    group.push(index);
-                } else {
-                    byReason.set(reason, [index]);
+                const key = isJobHeld(reason) || reason === 'DependencyNeverSatisfied' ? `own:${reason}` : 'rest';
+                const group = groups.get(key) ?? { indices: [], reasons: [] };
+                group.indices.push(index);
+                if (!group.reasons.includes(reason)) {
+                    group.reasons.push(reason);
                 }
+                groups.set(key, group);
             }
             const throttle = /%\d+(?=\])/.exec(jobId)?.[0] ?? '';
-            result.set(jobId, Array.from(byReason, ([pendingReason, indices]) => ({
-                jobId: indices.length === 1 ? arrayTaskJobId(base, String(indices[0]))
-                    : `${base}_[${formatArrayTaskList(indices)}${throttle}]`,
-                pendingReason,
-            })));
+            result.set(jobId, Array.from(groups.values(), ({ indices, reasons }) => {
+                const known = reasons.filter((reason): reason is string => reason !== undefined && reason !== 'None');
+                return {
+                    jobId: indices.length === 1 ? arrayTaskJobId(base, String(indices[0]))
+                        : `${base}_[${formatArrayTaskList(indices)}${throttle}]`,
+                    pendingReason: known.length > 0 ? known.join(',') : reasons[0],
+                };
+            }));
         }
         return result;
     }

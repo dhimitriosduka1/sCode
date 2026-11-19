@@ -312,13 +312,62 @@ describe('Hold and release across queue snapshots', () => {
         // Task 5 left the pending queue between the compact and expanded reads.
         const rows = await service.getJobs();
         assert.deepEqual(rows.map(row => [row.jobId, row.pendingReason]), [
-            ['700_1', 'Resources'], ['700_[2-3%2]', 'JobHeldUser'], ['700_4', 'Priority'],
+            ['700_[1,4%2]', 'Resources,Priority'], ['700_[2-3%2]', 'JobHeldUser'],
         ]);
         assert.equal((await service.releaseArrayTasks('700', '1')).success, false);
         assert.equal((await service.holdArrayTasks('700', '2')).success, false);
         assert.equal((await service.holdAllPendingJobs()).success, true);
         assert.equal((await service.releaseArrayTasks('700')).success, true);
-        assert.deepEqual(actions, ["scontrol hold '700_1' '700_4'", "scontrol release '700_[2-3]'"]);
+        assert.deepEqual(actions, ["scontrol hold '700_[1,4]'", "scontrol release '700_[2-3]'"]);
+    });
+
+    // Recorded on Slurm 26.05.3 right after `scontrol release 53509182_[1,3]`: released tasks read None until the next scheduler pass
+    it('keeps just-released tasks in the array\'s pending row rather than a row of their own', async () => {
+        const actions: string[] = [];
+        const service = new SlurmService(undefined, undefined, async command => {
+            let stdout = '';
+            if (command.includes('--array --noheader')) {
+                stdout = [
+                    '53509182_7|BeginTime', '53509182_9|BeginTime', '53509182_0|BeginTime', '53509182_5|BeginTime',
+                    '53509182_3|None', '53509182_1|None', '53509182_8|JobHeldUser', '53509182_6|JobHeldUser',
+                    '53509182_2|JobHeldUser', '53509182_4|JobHeldUser',
+                ].join('\n');
+            } else if (command.includes('--states=PD')) {
+                stdout = '53509182_[0-9]|BeginTime,JobHeldUser,None';
+            } else if (command.includes('%j|%t')) {
+                stdout = '53509182_[0-9]|scode-test-gpu-array|PD|0:00|gpu-a100||1:00|N/A|BeginTime,JobHeldUser,None|lab';
+            } else if (command.startsWith('scontrol hold ') || command.startsWith('scontrol release ')) {
+                actions.push(command);
+            }
+            return { stdout, stderr: '' };
+        });
+
+        const rows = await service.getJobs();
+        assert.deepEqual(rows.map(row => [row.jobId, row.pendingReason]), [
+            ['53509182_[0-1,3,5,7,9]', 'BeginTime'], ['53509182_[2,4,6,8]', 'JobHeldUser'],
+        ]);
+        assert.equal(isJobHeld(rows[0].pendingReason), false);
+
+        assert.equal((await service.holdAllPendingJobs()).success, true);
+        assert.equal((await service.releaseArrayTasks('53509182')).success, true);
+        assert.deepEqual(actions, ["scontrol hold '53509182_[0-1,3,5,7,9]'", "scontrol release '53509182_[2,4,6,8]'"]);
+    });
+
+    it('keeps tasks with different reasons that are neither held nor stuck in one row, reasons joined', async () => {
+        const service = new SlurmService(undefined, undefined, async command => {
+            let stdout = '';
+            if (command.includes('--array --noheader')) {
+                stdout = '900_0|Priority\n900_1|Resources\n900_2|JobHeldAdmin\n900_3|JobHeldUser\n900_4|None';
+            } else if (command.includes('%j|%t')) {
+                stdout = '900_[0-4]|sweep|PD|0:00|gpu||1:00|N/A|Priority,Resources,JobHeldAdmin,JobHeldUser,None|lab';
+            }
+            return { stdout, stderr: '' };
+        });
+        const rows = await service.getJobs();
+        assert.deepEqual(rows.map(row => [row.jobId, row.pendingReason]), [
+            ['900_[0-1,4]', 'Priority,Resources'], ['900_2', 'JobHeldAdmin'], ['900_3', 'JobHeldUser'],
+        ]);
+        assert.equal(isJobHeld('BeginTime,Priority'), false);
     });
 
     it('keeps a mixed row when none of its tasks are pending any more in the per-task snapshot', async () => {
