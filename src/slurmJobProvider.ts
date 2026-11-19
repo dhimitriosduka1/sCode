@@ -11,7 +11,7 @@ import {
     getFairShareSummary,
     rankJobAccounts,
 } from './fairShareRanking';
-import { ActiveJobCategory, getActiveJobCategory, getSlurmJobRowParts } from './slurmJobRow';
+import { ActiveJobCategory, getActiveJobCategory, getCategoryGroupState, getSlurmJobRowParts } from './slurmJobRow';
 import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
@@ -67,18 +67,13 @@ export class StatusCategoryItem extends vscode.TreeItem {
     ) {
         const info = CATEGORIES[category];
         const jobCount = countJobs(jobs.map(job => job.jobId));
+        const group = getCategoryGroupState(category, jobs.length);
         super(
             `${info.label} (${jobCount})`,
-            // Empty groups stay collapsible so their labels line up with the others
-            jobs.length === 0 || category === 'held'
-                ? vscode.TreeItemCollapsibleState.Collapsed
-                : vscode.TreeItemCollapsibleState.Expanded
+            group.expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed
         );
 
-        // Without an ID VS Code knows a group by its label, which carries the
-        // count, so holding or releasing a job made Held look like a new group
-        // and reopened it in its default state. The ID keeps it as the user left it.
-        this.id = `slurmJobs.category.${category}`;
+        this.id = group.id;
         this.jobCount = jobCount;
         this.iconPath = info.icon;
         if (jobs.length === 0) {

@@ -16,6 +16,22 @@ import type { DependencyStatus } from './jobDependencies';
 
 export type ActiveJobCategory = 'running' | 'pending' | 'held' | 'neverRuns' | 'completing' | 'other';
 
+/**
+ * The tree ID and default open state of an Active Jobs group. Without an ID
+ * VS Code knows a group by its label, which carries the count, so holding or
+ * releasing a job made Held look like a new group and reopened it in its
+ * default state; the ID keeps it as the user left it. An empty group, which
+ * shows collapsed so its label lines up with the others, has an ID of its own,
+ * so the group opens in its default state (Held closed, the rest open) once
+ * jobs arrive rather than staying closed.
+ */
+export function getCategoryGroupState(category: ActiveJobCategory, jobCount: number): { id: string; expanded: boolean } {
+    const id = `slurmJobs.category.${category}`;
+    return jobCount === 0
+        ? { id: `${id}.empty`, expanded: false }
+        : { id, expanded: category !== 'held' };
+}
+
 /** `dependency` is what the rest of the queue says about the job's dependency, as for its row. */
 export function getActiveJobCategory(
     job: Pick<SlurmJob, 'jobId' | 'state' | 'pendingReason'>,

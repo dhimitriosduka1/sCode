@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { getActiveJobCategory, getSlurmJobRowParts } from '../slurmJobRow';
+import { getActiveJobCategory, getCategoryGroupState, getSlurmJobRowParts } from '../slurmJobRow';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -177,3 +177,19 @@ describe('Slurm job row dependencies', () => {
     });
 });
 
+
+describe('getCategoryGroupState', () => {
+    it('gives an empty group its own ID, so it opens in its default state once jobs arrive', () => {
+        const empty = getCategoryGroupState('pending', 0);
+        const filled = getCategoryGroupState('pending', 3);
+        assert.notEqual(empty.id, filled.id);
+        assert.equal(empty.expanded, false);
+        assert.equal(filled.expanded, true);
+    });
+
+    it('keeps one ID for a group with jobs whatever its count, so it keeps its open state', () => {
+        assert.equal(getCategoryGroupState('held', 1).id, getCategoryGroupState('held', 5).id);
+        assert.equal(getCategoryGroupState('held', 1).expanded, false);
+        assert.equal(getCategoryGroupState('running', 2).expanded, true);
+    });
+});
