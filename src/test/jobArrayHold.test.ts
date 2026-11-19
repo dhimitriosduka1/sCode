@@ -283,6 +283,19 @@ describe('Hold and release across queue snapshots', () => {
         ]);
     });
 
+    it('still lists the jobs when the per-task snapshot fails', async () => {
+        const service = new SlurmService(undefined, undefined, async command => {
+            if (command.includes('--array --noheader')) {
+                throw new Error('squeue: slurm_load_jobs error: Socket timed out');
+            }
+            const stdout = command.includes('%j|%t')
+                ? '800_[0-3]|sweep|PD|0:00|gpu||1:00|N/A|Priority,JobHeldUser|lab\n801|eval|R|0:10|gpu|n1|1:00|N/A|None|lab'
+                : '';
+            return { stdout, stderr: '' };
+        });
+        assert.deepEqual((await service.getJobs()).map(row => row.jobId), ['800_[0-3]', '801']);
+    });
+
     it('holds only the jobs shown in the Pending group', async () => {
         const { service, commands } = serviceWithPendingRows([
             '700_[0-3]|Priority', '701|Resources', '702|DependencyNeverSatisfied',

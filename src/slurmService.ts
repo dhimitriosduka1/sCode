@@ -2008,7 +2008,11 @@ export class SlurmService {
             // Detailed info (stdout, stderr, command) for all jobs in one request; scontrol
             // per job only for jobs squeue did not report it for (e.g. an older Slurm)
             const detailsById = await this.getAllJobDetails();
-            const splitRows = await this.getMixedArrayRows(jobs);
+            // Without the per-task snapshot, show the compact rows rather than no jobs at all
+            const splitRows = await this.getMixedArrayRows(jobs).catch((error) => {
+                console.error('Failed to split mixed array rows:', error);
+                return new Map<string, QueueHoldRow[]>();
+            });
             const rows = jobs.flatMap(source => {
                 const queued = detailsById.get(source.jobId);
                 const details = queued ?? this.getJobDetails(source.jobId);
