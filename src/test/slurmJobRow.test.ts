@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { getActiveJobCategory, getCategoryGroupState, getGroupCancelRows, getSlurmJobRowParts } from '../slurmJobRow';
+import { ActiveJobCategory, getActiveJobCategory, getCategoryContextValue, getCategoryGroupState, getGroupCancelRows, getSlurmJobRowParts } from '../slurmJobRow';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -205,5 +207,36 @@ describe('getGroupCancelRows', () => {
     it('keeps rows whose reasons are all of one kind', () => {
         const waiting = job({ jobId: '703_[0-3]', state: 'PD', pendingReason: 'Priority,Resources' });
         assert.deepEqual(getGroupCancelRows([waiting]), { cancel: [waiting], skipped: [] });
+    });
+});
+
+describe('getCategoryContextValue', () => {
+    const categories: ActiveJobCategory[] = ['running', 'pending', 'held', 'neverRuns', 'completing', 'other'];
+
+    it('names each group header, with no actions for an empty group', () => {
+        assert.deepEqual(categories.map(category => getCategoryContextValue(category, 2)), [
+            'statusCategoryRunning', 'statusCategoryPending', 'statusCategoryHeld', 'statusCategoryNeverRuns',
+            'statusCategory', 'statusCategory',
+        ]);
+        assert.equal(getCategoryContextValue('held', 0), 'statusCategoryEmpty');
+    });
+
+    it('matches every group header condition in package.json menus to a header the view shows', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'));
+        const produced = categories.flatMap(category => [getCategoryContextValue(category, 0), getCategoryContextValue(category, 1)]);
+        const conditions = (manifest.contributes.menus['view/item/context'] as { when: string }[])
+            .flatMap(({ when }) => Array.from(when.matchAll(/viewItem (==|=~) (\/[^/]+\/|\S+)/g)))
+            .filter(([, , value]) => value.includes('statusCategory'));
+        assert.ok(conditions.length > 0);
+        for (const [condition, operator, value] of conditions) {
+            const matches = (header: string) => operator === '=='
+                ? header === value
+                : new RegExp(value.slice(1, -1)).test(header);
+            assert.ok(produced.some(matches), condition);
+            // Each alternative of a pattern must match a header too, or it is dead
+            for (const alternative of /^\/\^statusCategory\((.*)\)\/$/.exec(value)?.[1].split('|') ?? []) {
+                assert.ok(produced.some(header => new RegExp(`^statusCategory${alternative}`).test(header)), `${condition}: ${alternative}`);
+            }
+        }
     });
 });

@@ -33,6 +33,24 @@ export function getCategoryGroupState(category: ActiveJobCategory, jobCount: num
 }
 
 /**
+ * The `contextValue` of an Active Jobs group header, which package.json's
+ * menus match to offer its actions. An empty group offers none. Held jobs
+ * always go to Held, so Pending only ever holds jobs that can be held.
+ */
+export function getCategoryContextValue(category: ActiveJobCategory, jobCount: number): string {
+    if (jobCount === 0) {
+        return 'statusCategoryEmpty';
+    }
+    const headers: Partial<Record<ActiveJobCategory, string>> = {
+        running: 'statusCategoryRunning',
+        pending: 'statusCategoryPending',
+        held: 'statusCategoryHeld',
+        neverRuns: 'statusCategoryNeverRuns',
+    };
+    return headers[category] ?? 'statusCategory';
+}
+
+/**
  * Which of a group's rows its Cancel All may cancel. When Active Jobs could not
  * split an array row per task, the row keeps squeue's joined reasons
  * (`Priority,JobHeldUser`): some of its tasks are held and some only wait, and

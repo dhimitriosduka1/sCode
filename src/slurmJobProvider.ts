@@ -11,7 +11,7 @@ import {
     getFairShareSummary,
     rankJobAccounts,
 } from './fairShareRanking';
-import { ActiveJobCategory, getActiveJobCategory, getCategoryGroupState, getSlurmJobRowParts } from './slurmJobRow';
+import { ActiveJobCategory, getActiveJobCategory, getCategoryContextValue, getCategoryGroupState, getSlurmJobRowParts } from './slurmJobRow';
 import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
@@ -76,22 +76,7 @@ export class StatusCategoryItem extends vscode.TreeItem {
         this.id = group.id;
         this.jobCount = jobCount;
         this.iconPath = info.icon;
-        if (jobs.length === 0) {
-            // No group actions apply to an empty group
-            this.contextValue = 'statusCategoryEmpty';
-        } else if (category === 'pending') {
-            const hasNonHeld = jobs.some(job => !isJobHeld(job.pendingReason));
-            const hasHeld = jobs.some(job => isJobHeld(job.pendingReason));
-            this.contextValue = `statusCategoryPending${hasNonHeld ? 'HasNonHeld' : ''}${hasHeld ? 'HasHeld' : ''}`;
-        } else if (category === 'held') {
-            this.contextValue = 'statusCategoryHeld';
-        } else if (category === 'neverRuns') {
-            this.contextValue = 'statusCategoryNeverRuns';
-        } else if (category === 'running') {
-            this.contextValue = 'statusCategoryRunning';
-        } else {
-            this.contextValue = 'statusCategory';
-        }
+        this.contextValue = getCategoryContextValue(category, jobs.length);
     }
 }
 

@@ -15,7 +15,7 @@ import { SlurmHoverProvider, SlurmDecorationProvider } from './slurmHoverProvide
 import { SlurmScriptCompletionProvider, SLURM_SCRIPT_COMPLETION_TRIGGER_CHARACTERS } from './slurmScriptCompletionProvider';
 import { SlurmScriptDiagnostics } from './slurmScriptDiagnostics';
 import { PartitionDataStore } from './partitionDataStore';
-import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId, isJobHeld } from './slurmService';
+import { hasUnresolvedSlurmPathPlaceholders, normalizeOpenableFilePath, SlurmService, SlurmJob, getStateDescription, extractBaseJobId } from './slurmService';
 import { JobPathCache } from './jobPathCache';
 import { AutoRefreshScheduler } from './autoRefreshScheduler';
 import { SubmitScriptCache } from './submitScriptCache';
@@ -1672,10 +1672,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register release all pending jobs command
     const releaseAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.releaseAllPendingJobs', async (item?: StatusCategoryItem) => {
-        if (item && item.category !== 'pending' && item.category !== 'held') {
+        if (item && item.category !== 'held') {
             return;
         }
-        const jobIds = item?.jobs.filter(job => isJobHeld(job.pendingReason)).map(job => job.jobId);
+        const jobIds = item?.jobs.map(job => job.jobId);
         const confirmation = await vscode.window.showWarningMessage(
             item ? 'Release the held jobs shown in this group?' : 'Release all your held jobs?',
             { modal: true },
