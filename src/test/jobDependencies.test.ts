@@ -315,6 +315,17 @@ describe('array tasks inside compressed rows', () => {
         assert.equal(new QueueDependencies([...parents, child]).describe(child)?.kind, 'waiting');
     });
 
+    it('respects steps when pairing a compressed aftercorr row with stuck partners', () => {
+        const stuck = (id: string) => job(id, 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
+        const child = job('300_[0-10:2]', 'eval', { dependency: 'aftercorr:200(unfulfilled)' });
+        // 0, 4 and 8 stuck; 2, 6 and 10 are not, so the row can still run
+        assert.equal(new QueueDependencies([stuck('200_[0-10:4]'), child]).describe(child)?.kind, 'waiting');
+        // 0-10:2 all stuck, by two rows between them
+        assert.equal(new QueueDependencies([stuck('200_[0-10:4]'), stuck('200_[2-10:4]'), child]).describe(child)?.kind, 'never');
+        // Odd partners are none of the row's tasks, so being stuck doesn't strand it
+        assert.equal(new QueueDependencies([stuck('200_[1-11:2]'), child]).describe(child)?.kind, 'waiting');
+    });
+
     it('finds a task waiting on one that never runs inside a compressed row', () => {
         const blocked = job('200_[0-3]', 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
         const child = job('301', 'eval', { dependency: 'afterok:200_1(unfulfilled)' });
@@ -417,5 +428,22 @@ describe('pendingRowCancelIds', () => {
         const queue = new QueueDependencies([grouped, single]);
         assert.deepEqual(queue.pendingRowCancelIds([grouped]), ['500_[1-3%2]']);
         assert.deepEqual(queue.pendingRowCancelIds([grouped, single]), ['500']);
+    });
+});
+
+describe('QueueDependencies performance', () => {
+    it('handles a 10k-task aftercorr row against a 500-row parent array without expanding tasks', () => {
+        const parents = Array.from({ length: 500 }, (_unused, index) =>
+            job(`200_${index * 20}`, 'train', { dependency: 'afterok:998(unfulfilled)' }));
+        const child = job('300_[0-9999]', 'eval', { dependency: 'aftercorr:200(unfulfilled)' });
+        const jobs = [...parents, child];
+        const started = performance.now();
+        const queue = new QueueDependencies(jobs);
+        for (const each of jobs) {
+            queue.describe(each);
+        }
+        queue.strandedByCancel(readCancelTarget('200'));
+        const elapsed = performance.now() - started;
+        assert.ok(elapsed < 100, `took ${elapsed.toFixed(1)} ms`);
     });
 });

@@ -1,6 +1,6 @@
 import { cleanJobIdForScontrol, extractBaseJobId, SlurmJob } from './slurmService';
 import { countJobs } from './jobCount';
-import { arrayTaskIndices, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
+import { ArrayTaskRange, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
 
 /**
  * Dependencies between the user's queued jobs, read from the `Dependency`
@@ -96,39 +96,103 @@ export function readCancelTarget(jobId: string): CancelTarget {
     return rest ? { base, whole: false, tasks: rest.replace(/^\[(.*)\]$/, '$1') } : { base, whole: true };
 }
 
-/** Whether `task` is in `tasks`, a task list as the cancel command writes it (`1-3,7`). */
-function taskListIncludes(tasks: string, task: number): boolean {
-    return tasks.replace(/%\d+$/, '').split(',').some((part) => {
-        const [bounds, step = 1] = part.split(':');
-        const [start, end = start] = bounds.split('-').map(Number);
-        return task >= start && task <= end && (task - start) % Number(step) === 0;
-    });
+/** Parsed task lists, by the list as written, so each row's ranges are read once. */
+const parsedTaskLists = new Map<string, ArrayTaskRange[]>();
+
+/** The ranges of a task list (`1-3,7`, `0-9:2%4`), or none when it doesn't parse. */
+function taskListRanges(tasks: string): ArrayTaskRange[] {
+    let ranges = parsedTaskLists.get(tasks);
+    if (!ranges) {
+        try {
+            ranges = parseArrayTaskRanges(tasks.replace(/%\d+$/, ''));
+        } catch {
+            ranges = [];
+        }
+        if (parsedTaskLists.size >= 10_000) {
+            parsedTaskLists.clear();
+        }
+        parsedTaskLists.set(tasks, ranges);
+    }
+    return ranges;
 }
 
-/** The task indices of an array row (`123_4`, `123_[0-3,7]`), or none for a job that isn't one. */
-function rowTaskIndices(jobId: string): number[] {
+/** The task ranges of an array row (`123_4`, `123_[0-3,7]`), or none for a job that isn't one. */
+function rowRanges(jobId: string): ArrayTaskRange[] {
     const tasks = readArrayTaskList(jobId);
-    if (tasks === undefined) {
-        return [];
-    }
-    try {
-        return Array.from(arrayTaskIndices(parseArrayTaskRanges(tasks)));
-    } catch {
-        return [];
-    }
+    return tasks === undefined ? [] : taskListRanges(tasks);
+}
+
+/** Whether `task` is in `tasks`, a task list as the cancel command writes it (`1-3,7`). */
+function taskListIncludes(tasks: string, task: number): boolean {
+    return includesArrayTask(taskListRanges(tasks), task);
 }
 
 /** Whether array row `jobId` holds task `index`, also inside a compressed range (`200_[0-3]` holds 1). */
 function rowHasTask(jobId: string, index: number): boolean {
-    const tasks = readArrayTaskList(jobId);
-    if (tasks === undefined) {
+    return includesArrayTask(rowRanges(jobId), index);
+}
+
+/** Whether a row holds more than one task. */
+function hasSeveralTasks(ranges: readonly ArrayTaskRange[]): boolean {
+    return ranges.length > 1 || (ranges.length === 1 && ranges[0].start + ranges[0].step <= ranges[0].end);
+}
+
+/** The last index a range reaches, which a step can leave short of its end (`1-9:3` reaches 7). */
+function lastIndex({ start, end, step }: ArrayTaskRange): number {
+    return end - ((end - start) % step);
+}
+
+/** Whether two ranges share an index, without listing them. */
+function rangesOverlap(a: ArrayTaskRange, b: ArrayTaskRange): boolean {
+    const low = Math.max(a.start, b.start);
+    const high = Math.min(lastIndex(a), lastIndex(b));
+    if (low > high) {
         return false;
     }
-    try {
-        return includesArrayTask(parseArrayTaskRanges(tasks), index);
-    } catch {
-        return false;
+    // Walk the sparser range: the indices of both repeat after the denser one's step
+    const [sparse, dense] = a.step >= b.step ? [a, b] : [b, a];
+    let index = sparse.start + Math.ceil((low - sparse.start) / sparse.step) * sparse.step;
+    for (let tries = 0; tries < dense.step && index <= high; tries++, index += sparse.step) {
+        if ((index - dense.start) % dense.step === 0) {
+            return true;
+        }
     }
+    return false;
+}
+
+/** Whether any task of `a` is in `b`. */
+function anyOverlap(a: readonly ArrayTaskRange[], b: readonly ArrayTaskRange[]): boolean {
+    return a.some((range) => b.some((other) => rangesOverlap(range, other)));
+}
+
+/**
+ * Whether every task of `inner` is in one of `outer`. Runs of tasks one outer
+ * range holds are skipped in one go, so a range of thousands of tasks costs
+ * about as much as the ranges it is checked against.
+ */
+function rangesCover(inner: readonly ArrayTaskRange[], outer: readonly ArrayTaskRange[]): boolean {
+    for (const range of inner) {
+        const last = lastIndex(range);
+        let index = range.start;
+        while (index <= last) {
+            let next: number | undefined;
+            for (const other of outer) {
+                if (!includesArrayTask([other], index)) {
+                    continue;
+                }
+                // A range whose step divides ours holds our tasks up to its last index; any other, only this one
+                const reach = range.step % other.step === 0
+                    ? index + Math.floor((lastIndex(other) - index) / range.step) * range.step
+                    : index;
+                next = Math.max(next ?? reach, reach);
+            }
+            if (next === undefined) {
+                return false;
+            }
+            index = next + range.step;
+        }
+    }
+    return true;
 }
 
 /** Whether cancelling `target` cancels all of `row`, so that the job is over. */
@@ -142,9 +206,8 @@ function coversRow(target: CancelTarget, row: SlurmJob): boolean {
     if (target.tasks === undefined) {
         return row.state === 'PD';
     }
-    const tasks = target.tasks;
-    const indices = rowTaskIndices(row.jobId);
-    return indices.length > 0 && indices.every((index) => taskListIncludes(tasks, index));
+    const ranges = rowRanges(row.jobId);
+    return ranges.length > 0 && rangesCover(ranges, taskListRanges(target.tasks));
 }
 
 /** How many stranded jobs the cancel dialog names before counting the rest. */
@@ -363,13 +426,13 @@ export class QueueDependencies {
             }
         }
         const cancelled = (parent: SlurmJob) => targets.some((target) => coversRow(target, parent));
-        const ownTasks = condition.type === 'aftercorr' && !condition.jobId?.includes('_') ? rowTaskIndices(job.jobId) : [];
+        const ownTasks = condition.type === 'aftercorr' && !condition.jobId?.includes('_') ? rowRanges(job.jobId) : [];
         // aftercorr needs each task's own partner to succeed, so cancelling the
         // partners of all of a row's tasks fails it. A task whose partner has
         // left the queue has none here, and runs or has failed already
         if (ownTasks.length > 0 && targets.length > 0) {
-            const partners = this.jobsFor(job, condition);
-            if (ownTasks.every((index) => partners.some((parent) => rowHasTask(parent.jobId, index) && cancelled(parent)))) {
+            const partners = this.jobsFor(job, condition).filter(cancelled);
+            if (rangesCover(ownTasks, partners.flatMap((parent) => rowRanges(parent.jobId)))) {
                 return 'brokenByCancel';
             }
         }
@@ -377,9 +440,9 @@ export class QueueDependencies {
         // singleton wait for (afternotok counts a cancel as a failure)
         const parents = this.jobsFor(job, condition).filter((parent) => !cancelled(parent));
         const stuck = (parent: SlurmJob) => this.stranded.has(parent.jobId) && !freed?.has(parent.jobId);
-        if (ownTasks.length > 1) {
+        if (hasSeveralTasks(ownTasks)) {
             // A compressed row of tasks: never, only if every task's own partner never starts
-            return ownTasks.every((index) => parents.some((parent) => rowHasTask(parent.jobId, index) && stuck(parent)))
+            return rangesCover(ownTasks, parents.filter(stuck).flatMap((parent) => rowRanges(parent.jobId)))
                 ? 'broken'
                 : 'open';
         }
@@ -405,9 +468,9 @@ export class QueueDependencies {
         }
         // aftercorr pairs task with task: a task waits only for the one with its own
         // index. One no longer in the queue has ended, so there is nothing to wait for
-        const ownTasks = condition.type === 'aftercorr' ? rowTaskIndices(job.jobId) : [];
+        const ownTasks = condition.type === 'aftercorr' ? rowRanges(job.jobId) : [];
         if (ownTasks.length > 0) {
-            return rows.filter((row) => ownTasks.some((index) => rowHasTask(row.jobId, index)));
+            return rows.filter((row) => anyOverlap(ownTasks, rowRanges(row.jobId)));
         }
         return rows;
     }
