@@ -294,6 +294,77 @@ describe('QueueDependencies.strandedByCancel', () => {
     });
 });
 
+describe('array tasks inside compressed rows', () => {
+    // 200_4 can never run; tasks 0-3 still can, listed together as 200_[0-3]
+    const parents = [
+        job('200_[0-3]', 'train', { pendingReason: 'Priority' }),
+        job('200_4', 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' }),
+    ];
+
+    it('pairs an aftercorr task with its own index inside a compressed parent row', () => {
+        const child = job('300_1', 'eval', { dependency: 'aftercorr:200(unfulfilled)' });
+        const stuck = job('300_4', 'eval', { dependency: 'aftercorr:200(unfulfilled)' });
+        const queue = new QueueDependencies([...parents, child, stuck]);
+        assert.deepEqual(queue.describe(child), { kind: 'waiting', jobs: ['train (200)'], anyOf: false });
+        assert.equal(queue.describe(stuck)?.kind, 'never');
+        assert.deepEqual(ids(queue.neverRunCancelPlan([parents[1], stuck]).cancel), ['200_4', '300_4']);
+    });
+
+    it('leaves a compressed aftercorr row runnable while some of its partners can run', () => {
+        const child = job('300_[1-4]', 'eval', { dependency: 'aftercorr:200(unfulfilled)' });
+        assert.equal(new QueueDependencies([...parents, child]).describe(child)?.kind, 'waiting');
+    });
+
+    it('finds a task waiting on one that never runs inside a compressed row', () => {
+        const blocked = job('200_[0-3]', 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
+        const child = job('301', 'eval', { dependency: 'afterok:200_1(unfulfilled)' });
+        assert.equal(new QueueDependencies([blocked, child]).describe(child)?.kind, 'never');
+    });
+});
+
+describe('QueueDependencies.neverRunCancelPlan', () => {
+    it('keeps a job that only waits for a cancelled one to end, since cancelling lets it run', () => {
+        const blocked = job('100', 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
+        const cleanup = job('101', 'cleanup', { dependency: 'afterany:100(unfulfilled)' });
+        const report = job('102', 'report', { dependency: 'afterok:100(unfulfilled)' });
+        const queue = new QueueDependencies([blocked, cleanup, report]);
+        assert.equal(queue.describe(cleanup)?.kind, 'never');
+        const plan = queue.neverRunCancelPlan([blocked, cleanup, report]);
+        assert.deepEqual(ids(plan.cancel), ['100', '102']);
+        assert.deepEqual(ids(plan.freed), ['101']);
+    });
+
+    it('keeps the whole chain below a job that cancelling frees', () => {
+        const blocked = job('100', 'train', { dependency: 'afterok:998(failed)', pendingReason: 'DependencyNeverSatisfied' });
+        const cleanup = job('101', 'cleanup', { dependency: 'afterany:100(unfulfilled)' });
+        const notify = job('102', 'notify', { dependency: 'afterok:101(unfulfilled)' });
+        const plan = new QueueDependencies([blocked, cleanup, notify]).neverRunCancelPlan([blocked, cleanup, notify]);
+        assert.deepEqual(ids(plan.cancel), ['100']);
+        assert.deepEqual(ids(plan.freed), ['101', '102']);
+    });
+});
+
+describe('cancel preview with part of an array depending', () => {
+    it('offers only the tasks that depend on the cancelled job', () => {
+        const queue = new QueueDependencies([
+            job('100', 'train'),
+            job('201_0', 'eval', { dependency: 'afterok:100(unfulfilled)' }),
+            job('201_[1-3]', 'eval', { pendingReason: 'Priority' }),
+        ]);
+        assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('100'))), ['201_0']);
+    });
+
+    it('offers the aftercorr task whose own partner is cancelled, and not its siblings', () => {
+        const queue = new QueueDependencies([
+            job('200_1', 'train', { pendingReason: 'JobHeldUser' }),
+            job('200_[2-3]', 'train', { pendingReason: 'Priority' }),
+            job('300_1', 'eval', { dependency: 'aftercorr:200(unfulfilled)' }),
+            job('300_[2-3]', 'eval', { dependency: 'aftercorr:200(unfulfilled)' }),
+        ]);
+        assert.deepEqual(ids(queue.strandedByCancel(readCancelTarget('200_1'))), ['300_1']);
+    });
+});
+
 describe('describeStrandedJobs', () => {
     // Names the cancelled job: "it" read as the pending job itself
     it('puts one stranded job in a sentence naming the cancelled job', () => {

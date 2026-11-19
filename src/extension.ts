@@ -1247,12 +1247,21 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const count = item.jobCount;
+        // A job that only waits for another of them to end runs once that one is cancelled
+        const plan = item.dependencies.neverRunCancelPlan(item.jobs);
+        const count = countJobs(plan.cancel.map(job => job.jobId));
+        if (count === 0) {
+            return;
+        }
+        const freedCount = countJobs(plan.freed.map(job => job.jobId));
+        const freed = freedCount === 0 ? '' : freedCount === 1
+            ? ' 1 other job in the group will be able to run once they are cancelled, so it is kept.'
+            : ` ${freedCount} other jobs in the group will be able to run once they are cancelled, so they are kept.`;
         const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
         const confirmation = await vscode.window.showWarningMessage(
-            count === 1
+            (count === 1
                 ? 'Are you sure you want to cancel the pending job that will never run?'
-                : `Are you sure you want to cancel the ${count} pending jobs that will never run?`,
+                : `Are you sure you want to cancel the ${count} pending jobs that will never run?`) + freed,
             { modal: true },
             confirmLabel
         );
@@ -1261,7 +1270,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const result = await slurmService.cancelPendingJobs(item.dependencies.pendingRowCancelIds(item.jobs));
+        const result = await slurmService.cancelPendingJobs(item.dependencies.pendingRowCancelIds(plan.cancel));
         // After a failure too: scancel still cancels the rest when one of the jobs is already gone
         slurmJobProvider.refresh();
         jobHistoryProvider.refresh();
@@ -1621,9 +1630,14 @@ export function activate(context: vscode.ExtensionContext) {
     const releaseJobCommand = vscode.commands.registerCommand('slurmJobs.releaseJob', (item?: SlurmJobItem) => updateJobHold(item, 'release'));
 
     // Register hold all pending jobs command
-    const holdAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.holdAllPendingJobs', async () => {
+    const holdAllPendingJobsCommand = vscode.commands.registerCommand('slurmJobs.holdAllPendingJobs', async (item?: StatusCategoryItem) => {
+        if (item && item.category !== 'pending') {
+            return;
+        }
+        // From the Pending header, only the jobs it shows: not the ones that will never run
+        const jobIds = item?.jobs.map(job => job.jobId);
         const confirmation = await vscode.window.showWarningMessage(
-            'Are you sure you want to hold ALL your pending jobs?',
+            item ? 'Hold the pending jobs shown in this group?' : 'Are you sure you want to hold ALL your pending jobs?',
             { modal: true },
             'Hold Pending Jobs'
         );
@@ -1632,7 +1646,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const result = await slurmService.holdAllPendingJobs();
+        const result = await slurmService.holdAllPendingJobs(jobIds);
         slurmJobProvider.refresh();
         if (result.success) {
             vscode.window.showInformationMessage(result.message);
@@ -1886,9 +1900,9 @@ async function cancelDependentsAndReport(slurmService: SlurmService, message: st
         return;
     }
 
-    // A pending array goes whole, as its dependency holds back every pending
-    // task, but only its pending tasks: the ones already running stay
-    const result = await slurmService.cancelPendingJobs([...new Set(dependents.map((job) => extractBaseJobId(job.jobId)))]);
+    // Exactly the rows offered, and only while pending: other tasks of the same
+    // array may not depend on the cancelled job, and running ones stay
+    const result = await slurmService.cancelPendingJobs([...new Set(dependents.map((job) => job.jobId))]);
     const count = countJobs(dependents.map(job => job.jobId));
     if (result.success) {
         vscode.window.showInformationMessage(`${message}, along with ${count} dependent job${count === 1 ? '' : 's'}.`);

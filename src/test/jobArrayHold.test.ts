@@ -267,6 +267,32 @@ describe('Hold and release across queue snapshots', () => {
         assert.deepEqual(actions, ["scontrol hold '700_1' '700_4'", "scontrol release '700_[2-3]'"]);
     });
 
+    it('splits a mixed row so tasks that will never run get rows of their own', async () => {
+        const service = new SlurmService(undefined, undefined, async command => {
+            let stdout = '';
+            if (command.includes('--array --noheader')) {
+                stdout = '800_0|Priority\n800_1|DependencyNeverSatisfied\n800_2|Priority\n800_3|DependencyNeverSatisfied';
+            } else if (command.includes('%j|%t')) {
+                stdout = '800_[0-3]|sweep|PD|0:00|gpu||1:00|N/A|Priority,DependencyNeverSatisfied|lab';
+            }
+            return { stdout, stderr: '' };
+        });
+        const rows = await service.getJobs();
+        assert.deepEqual(rows.map(row => [row.jobId, row.pendingReason]), [
+            ['800_[0,2]', 'Priority'], ['800_[1,3]', 'DependencyNeverSatisfied'],
+        ]);
+    });
+
+    it('holds only the jobs shown in the Pending group', async () => {
+        const { service, commands } = serviceWithPendingRows([
+            '700_[0-3]|Priority', '701|Resources', '702|DependencyNeverSatisfied',
+        ].join('\n'));
+        const result = await service.holdAllPendingJobs(['700_[0-3]', '701']);
+        assert.equal(result.success, true);
+        assert.equal(result.message, 'Held 5 pending jobs.');
+        assert.equal(commands[1], "scontrol hold '700_[0-3]' '701'");
+    });
+
     it('intersects the displayed selection with the current held indices after Slurm regroups rows', async () => {
         const { service, commands } = serviceWithPendingRows('700_2|JobHeldUser\n700_[4-7%2]|JobHeldUser\n700_3|Priority');
         assert.equal((await service.releaseAllPendingJobs(['700_[2-5%4]'])).message, 'Released 3 held jobs.');

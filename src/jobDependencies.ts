@@ -1,5 +1,6 @@
 import { cleanJobIdForScontrol, extractBaseJobId, SlurmJob } from './slurmService';
 import { countJobs } from './jobCount';
+import { arrayTaskIndices, includesArrayTask, parseArrayTaskRanges, readArrayTaskList } from './jobArrayTasks';
 
 /**
  * Dependencies between the user's queued jobs, read from the `Dependency`
@@ -104,6 +105,48 @@ function taskListIncludes(tasks: string, task: number): boolean {
     });
 }
 
+/** The task indices of an array row (`123_4`, `123_[0-3,7]`), or none for a job that isn't one. */
+function rowTaskIndices(jobId: string): number[] {
+    const tasks = readArrayTaskList(jobId);
+    if (tasks === undefined) {
+        return [];
+    }
+    try {
+        return Array.from(arrayTaskIndices(parseArrayTaskRanges(tasks)));
+    } catch {
+        return [];
+    }
+}
+
+/** Whether array row `jobId` holds task `index`, also inside a compressed range (`200_[0-3]` holds 1). */
+function rowHasTask(jobId: string, index: number): boolean {
+    const tasks = readArrayTaskList(jobId);
+    if (tasks === undefined) {
+        return false;
+    }
+    try {
+        return includesArrayTask(parseArrayTaskRanges(tasks), index);
+    } catch {
+        return false;
+    }
+}
+
+/** Whether cancelling `target` cancels all of `row`, so that the job is over. */
+function coversRow(target: CancelTarget, row: SlurmJob): boolean {
+    if (target.base !== extractBaseJobId(row.jobId)) {
+        return false;
+    }
+    if (target.whole) {
+        return true;
+    }
+    if (target.tasks === undefined) {
+        return row.state === 'PD';
+    }
+    const tasks = target.tasks;
+    const indices = rowTaskIndices(row.jobId);
+    return indices.length > 0 && indices.every((index) => taskListIncludes(tasks, index));
+}
+
 /** How many stranded jobs the cancel dialog names before counting the rest. */
 const MAX_LISTED_STRANDED_JOBS = 10;
 
@@ -206,8 +249,7 @@ export class QueueDependencies {
         while (changed) {
             changed = false;
             for (const job of this.pending) {
-                const base = extractBaseJobId(job.jobId);
-                if (targets.some((cancelled) => cancelled.base === base)) {
+                if (targets.some((cancelled) => coversRow(cancelled, job))) {
                     continue;
                 }
                 const parsed = parseDependency(job.dependency);
@@ -217,18 +259,55 @@ export class QueueDependencies {
                 const outcomes = this.outcomes(job, parsed, targets);
                 // An already broken dependency does not trigger cancellation.
                 if (isNeverMet(parsed.anyOf, outcomes) && outcomes.includes('brokenByCancel')) {
-                    // The offered cancellation covers every pending row of a dependent array.
-                    for (const row of this.byBase.get(base) ?? []) {
-                        if (row.state === 'PD') {
-                            result.push(row);
-                        }
-                    }
-                    targets.push({ base, whole: true });
+                    // Only this row: other tasks of its array may not depend on the cancelled job
+                    result.push(job);
+                    targets.push(readCancelTarget(job.jobId));
                     changed = true;
                 }
             }
         }
         return result.sort((a, b) => Number(extractBaseJobId(a.jobId)) - Number(extractBaseJobId(b.jobId)));
+    }
+
+    /**
+     * Which of `rows`, jobs that can never start, to cancel: those that would
+     * still never start once the others are cancelled. A job that only waits
+     * for one of them to end (`afterany`) is left, since cancelling that one
+     * lets it run; the rest of the rows are `freed`.
+     */
+    neverRunCancelPlan(rows: readonly SlurmJob[]): { cancel: SlurmJob[]; freed: SlurmJob[] } {
+        const kept = new Set(rows.map((row) => row.jobId));
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const row of rows) {
+                if (!kept.has(row.jobId)) {
+                    continue;
+                }
+                const parsed = parseDependency(row.dependency);
+                if (!parsed) {
+                    continue; // Only Slurm's word that it never runs, which a cancel here doesn't change
+                }
+                const freed = new Set(rows.filter((other) => !kept.has(other.jobId)).map((other) => other.jobId));
+                const targets = rows
+                    .filter((other) => other !== row && kept.has(other.jobId))
+                    .map((other) => readCancelTarget(other.jobId));
+                if (isNeverMet(parsed.anyOf, this.outcomes(row, parsed, targets, freed))) {
+                    continue;
+                }
+                // Slurm's own verdict stands when no cancel here is what decides it
+                if (row.pendingReason === 'DependencyNeverSatisfied'
+                    && !isNeverMet(parsed.anyOf, this.outcomes(row, parsed, [], new Set()))) {
+                    continue;
+                }
+                kept.delete(row.jobId);
+                changed = true;
+            }
+        }
+        return {
+            cancel: rows.filter((row) => kept.has(row.jobId)),
+            freed: rows.filter((row) => !kept.has(row.jobId)),
+        };
     }
 
     /**
@@ -267,11 +346,12 @@ export class QueueDependencies {
     }
 
     /** How each of `job`'s conditions stands, given the jobs about to be cancelled. */
-    private outcomes(job: SlurmJob, parsed: ParsedDependency, targets: readonly CancelTarget[]): Outcome[] {
-        return parsed.conditions.map((condition) => this.outcome(job, condition, targets));
+    private outcomes(job: SlurmJob, parsed: ParsedDependency, targets: readonly CancelTarget[], freed?: ReadonlySet<string>): Outcome[] {
+        return parsed.conditions.map((condition) => this.outcome(job, condition, targets, freed));
     }
 
-    private outcome(job: SlurmJob, condition: DependencyCondition, targets: readonly CancelTarget[]): Outcome {
+    /** `freed`: stranded rows that the cancel lets run after all. */
+    private outcome(job: SlurmJob, condition: DependencyCondition, targets: readonly CancelTarget[], freed?: ReadonlySet<string>): Outcome {
         if (condition.failed) {
             return 'broken';
         }
@@ -282,12 +362,28 @@ export class QueueDependencies {
                 return 'brokenByCancel';
             }
         }
+        const cancelled = (parent: SlurmJob) => targets.some((target) => coversRow(target, parent));
+        const ownTasks = condition.type === 'aftercorr' && !condition.jobId?.includes('_') ? rowTaskIndices(job.jobId) : [];
+        // aftercorr needs each task's own partner to succeed, so cancelling the
+        // partners of all of a row's tasks fails it. A task whose partner has
+        // left the queue has none here, and runs or has failed already
+        if (ownTasks.length > 0 && targets.length > 0) {
+            const partners = this.jobsFor(job, condition);
+            if (ownTasks.every((index) => partners.some((parent) => rowHasTask(parent.jobId, index) && cancelled(parent)))) {
+                return 'brokenByCancel';
+            }
+        }
         // A cancel ends the job, which is all that after, afterany, afternotok and
-        // singleton wait for (afternotok counts a cancel as a failure). aftercorr
-        // is let through too, as breaksOnCancel explains
-        const cancelled = (parent: SlurmJob) => targets.some((target) => target.base === extractBaseJobId(parent.jobId));
+        // singleton wait for (afternotok counts a cancel as a failure)
         const parents = this.jobsFor(job, condition).filter((parent) => !cancelled(parent));
-        return parents.some((parent) => this.stranded.has(parent.jobId)) ? 'broken' : 'open';
+        const stuck = (parent: SlurmJob) => this.stranded.has(parent.jobId) && !freed?.has(parent.jobId);
+        if (ownTasks.length > 1) {
+            // A compressed row of tasks: never, only if every task's own partner never starts
+            return ownTasks.every((index) => parents.some((parent) => rowHasTask(parent.jobId, index) && stuck(parent)))
+                ? 'broken'
+                : 'open';
+        }
+        return parents.some(stuck) ? 'broken' : 'open';
     }
 
     /**
@@ -304,13 +400,16 @@ export class QueueDependencies {
         const [base, task] = condition.jobId.split('_');
         const rows = this.byBase.get(base) ?? [];
         if (task && task !== '*') {
-            return rows.filter((row) => row.jobId === condition.jobId);
+            // The task's own row, or the compressed row it is still part of (`200_[0-3]` for 200_1)
+            return rows.filter((row) => row.jobId === condition.jobId || rowHasTask(row.jobId, Number(task)));
         }
-        // aftercorr pairs task with task: a task waits only for the one with its own index
-        const partner = condition.type === 'aftercorr'
-            ? rows.filter((row) => row.jobId === `${base}_${job.jobId.split('_')[1]}`)
-            : [];
-        return partner.length > 0 ? partner : rows;
+        // aftercorr pairs task with task: a task waits only for the one with its own
+        // index. One no longer in the queue has ended, so there is nothing to wait for
+        const ownTasks = condition.type === 'aftercorr' ? rowTaskIndices(job.jobId) : [];
+        if (ownTasks.length > 0) {
+            return rows.filter((row) => ownTasks.some((index) => rowHasTask(row.jobId, index)));
+        }
+        return rows;
     }
 
     /**
@@ -336,10 +435,8 @@ export class QueueDependencies {
  * on the whole array or on a cancelled task with a `row` of its own in the
  * queue. A task cancelled while still inside its array's pending row
  * (`123_[4-9]`) has no job record, so Slurm drops a dependency on it rather
- * than failing it, and the job runs. `aftercorr` needs success too, task by
- * task, but is left out: a dependent task whose partner already succeeded
- * still runs, and a dependent array's pending tasks are cancelled together, so
- * offering it could cancel ones that would have run.
+ * than failing it, and the job runs. `aftercorr` is worked out task by task
+ * in `outcome` instead.
  */
 function breaksOnCancel(condition: DependencyCondition, target: CancelTarget, row: SlurmJob | undefined): boolean {
     if (condition.type !== 'afterok') {

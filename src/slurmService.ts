@@ -2990,7 +2990,9 @@ export class SlurmService {
     // Only these ambiguous rows need a second, per-task queue snapshot.
     private async getMixedArrayRows(rows: QueueHoldRow[]): Promise<Map<string, QueueHoldRow[]>> {
         const mixed = rows.filter(({ jobId, pendingReason }) => jobId.includes('[')
-            && pendingReason?.includes(',') && isJobHeld(pendingReason));
+            && pendingReason?.includes(',')
+            // A hold, or tasks that will never run, must not hide inside a row with another reason
+            && (isJobHeld(pendingReason) || pendingReason.includes('DependencyNeverSatisfied')));
         const result = new Map<string, QueueHoldRow[]>();
         if (!mixed.length) {
             return result;
@@ -3097,23 +3099,71 @@ export class SlurmService {
     }
 
     /**
-     * Hold all pending jobs of the user
+     * The rows of `rows` to act on: all of them, or only those shown in a tree
+     * group (`jobIds`). Mock jobs take `mockReason` as their new pending reason.
      */
-    async holdAllPendingJobs(): Promise<{ success: boolean; message: string }> {
+    private selectShownRows(rows: QueueHoldRow[], jobIds: readonly string[] | undefined, mockReason: string): string[] {
+        const selected = jobIds === undefined ? undefined : new Set(jobIds);
+        const selectedTasks = new Map<string, ArrayTaskRange[]>();
+        for (const id of selected ?? []) {
+            const tasks = readArrayTaskList(id);
+            if (tasks !== undefined) {
+                const base = extractBaseJobId(id);
+                const ranges = selectedTasks.get(base) ?? [];
+                for (const range of parseArrayTaskRanges(tasks)) {
+                    ranges.push(range);
+                }
+                selectedTasks.set(base, ranges);
+            }
+        }
+
+        const targets: string[] = [];
+        for (const job of rows) {
+            if (!selected || selected.has(job.jobId)) {
+                targets.push(job.jobId);
+                if (this.isMockMode()) {
+                    job.pendingReason = mockReason;
+                }
+                continue;
+            }
+            // A regroup or throttle change between display and confirmation can
+            // change the row ID. Act on the intersection with the shown tasks.
+            const base = extractBaseJobId(job.jobId);
+            const selection = selectedTasks.get(base);
+            const tasks = readArrayTaskList(job.jobId);
+            if (!selection || tasks === undefined) {
+                continue;
+            }
+            const current = parseArrayTaskRanges(tasks);
+            const indices = Array.from(arrayTaskIndices(current)).filter(index => includesArrayTask(selection, index));
+            if (indices.length) {
+                const list = formatArrayTaskList(indices);
+                targets.push(arrayTaskJobId(base, list));
+                if (this.isMockMode()) {
+                    this.updateMockArrayTaskHold(base, new Map([[job.jobId, current]]), parseArrayTaskRanges(list), mockReason);
+                }
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * Hold the user's pending jobs, optionally limited to rows shown in a tree group.
+     */
+    async holdAllPendingJobs(jobIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
         try {
-            const jobs = await this.getPendingJobsByHold(false);
-            if (jobs.length === 0) {
+            const ids = this.selectShownRows(await this.getPendingJobsByHold(false), jobIds, 'JobHeldUser');
+            if (ids.length === 0) {
                 return { success: true, message: 'No pending jobs to hold.' };
             }
 
-            const ids = jobs.map(job => job.jobId);
             const count = countJobs(ids);
+            const done = jobIds ? `Held ${count} pending job${count === 1 ? '' : 's'}` : `Successfully held all pending jobs (${count} jobs)`;
             if (this.isMockMode()) {
-                jobs.forEach(job => { job.pendingReason = 'JobHeldUser'; });
-                return { success: true, message: `Successfully held all pending jobs (${count} jobs) (Mock).` };
+                return { success: true, message: `${done} (Mock).` };
             }
             await this.runJobHoldAction(ids, 'hold');
-            return { success: true, message: `Successfully held all pending jobs (${count} jobs).` };
+            return { success: true, message: `${done}.` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('Failed to hold all pending jobs:', error);
@@ -3125,52 +3175,11 @@ export class SlurmService {
      * Release the user's held jobs, optionally limited to rows shown in a tree group.
      */
     async releaseAllPendingJobs(jobIds?: readonly string[]): Promise<{ success: boolean; message: string }> {
-        const selected = jobIds === undefined ? undefined : new Set(jobIds);
-        const successMessage = (count: number) => selected
+        const successMessage = (count: number) => jobIds
             ? `Released ${count} held job${count === 1 ? '' : 's'}`
             : `Successfully released all held jobs (${count} jobs)`;
         try {
-            const held = await this.getPendingJobsByHold(true);
-            const selectedTasks = new Map<string, ArrayTaskRange[]>();
-            for (const id of selected ?? []) {
-                const tasks = readArrayTaskList(id);
-                if (tasks !== undefined) {
-                    const base = extractBaseJobId(id);
-                    const ranges = selectedTasks.get(base) ?? [];
-                    for (const range of parseArrayTaskRanges(tasks)) {
-                        ranges.push(range);
-                    }
-                    selectedTasks.set(base, ranges);
-                }
-            }
-
-            const targets: string[] = [];
-            for (const job of held) {
-                if (!selected || selected.has(job.jobId)) {
-                    targets.push(job.jobId);
-                    if (this.isMockMode()) {
-                        job.pendingReason = 'Priority';
-                    }
-                    continue;
-                }
-                // A regroup or throttle change between display and confirmation can
-                // change the row ID. Release the intersection with the shown tasks.
-                const base = extractBaseJobId(job.jobId);
-                const selection = selectedTasks.get(base);
-                const tasks = readArrayTaskList(job.jobId);
-                if (!selection || tasks === undefined) {
-                    continue;
-                }
-                const current = parseArrayTaskRanges(tasks);
-                const indices = Array.from(arrayTaskIndices(current)).filter(index => includesArrayTask(selection, index));
-                if (indices.length) {
-                    const list = formatArrayTaskList(indices);
-                    targets.push(arrayTaskJobId(base, list));
-                    if (this.isMockMode()) {
-                        this.updateMockArrayTaskHold(base, new Map([[job.jobId, current]]), parseArrayTaskRanges(list), 'Priority');
-                    }
-                }
-            }
+            const targets = this.selectShownRows(await this.getPendingJobsByHold(true), jobIds, 'Priority');
             if (targets.length === 0) {
                 return { success: true, message: 'No held jobs to release.' };
             }
