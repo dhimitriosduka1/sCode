@@ -2373,7 +2373,7 @@ export class SlurmService {
         }
 
         try {
-            await this.commandRunner(`scancel ${quoteForShell(formatJobTaskTarget(jobId))}`);
+            await this.runForJobTargets('scancel', [jobId]);
             return { success: true, message: `Job ${jobId} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2409,8 +2409,8 @@ export class SlurmService {
     }
 
     /**
-     * Cancel what is still pending of several jobs or arrays, in one scancel:
-     * a running task of one of the arrays, or a job that has started since,
+     * Cancel what is still pending of several jobs or arrays, in as few
+     * scancel commands as fit the shell's limit: a running task of one of the arrays, or a job that has started since,
      * keeps running.
      * @param jobIds Whole job/array IDs or explicit task IDs and ranges
      */
@@ -2424,8 +2424,7 @@ export class SlurmService {
         }
 
         try {
-            const targets = jobIds.map(jobId => quoteForShell(formatJobTaskTarget(jobId)));
-            await this.commandRunner(`scancel --state=PENDING ${targets.join(' ')}`);
+            await this.runForJobTargets('scancel --state=PENDING', jobIds);
             return { success: true, message: `Pending jobs in ${listed} cancelled successfully` };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -3059,9 +3058,15 @@ export class SlurmService {
     }
 
     private async runJobHoldAction(jobIds: readonly string[], action: 'hold' | 'release'): Promise<void> {
-        // The local or remote shell receives the command as a single argument.
-        // A large stepped mask alone can exceed its argument size limit.
-        const prefix = `scontrol ${action}`;
+        await this.runForJobTargets(`scontrol ${action}`, jobIds);
+    }
+
+    /**
+     * Runs `prefix` on every job or task in `jobIds`, as few commands as fit.
+     * The local or remote shell receives each command as a single argument,
+     * and a large stepped mask alone, or many rows, can exceed its size limit.
+     */
+    private async runForJobTargets(prefix: string, jobIds: readonly string[]): Promise<void> {
         const maxLength = 32 * 1024;
         let command = prefix;
         for (const jobId of jobIds) {

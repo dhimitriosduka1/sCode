@@ -1,3 +1,4 @@
+import { countJobs } from '../jobCount';
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmCommandRunner, SlurmService } from '../slurmService';
@@ -75,6 +76,45 @@ describe('SlurmService cancellation commands', () => {
 
         assert.equal(result.success, true);
         assert.deepEqual(commands, ["scancel --state=PENDING '456_[1,3,5,9]'"]);
+    });
+
+    it('splits a long list of jobs across scancel commands that fit the shell', async () => {
+        const commands: string[] = [];
+        const service = new SlurmService(undefined, undefined, async command => {
+            commands.push(command);
+            return { stdout: '', stderr: '' };
+        });
+        const ids = Array.from({ length: 5000 }, (_unused, index) => `${100000 + index}_${index}`);
+
+        assert.equal((await service.cancelPendingJobs(ids)).success, true);
+
+        assert.ok(commands.length > 1);
+        const sent: string[] = [];
+        for (const command of commands) {
+            assert.ok(command.length <= 32 * 1024, `${command.length}`);
+            assert.ok(command.startsWith('scancel --state=PENDING '));
+            sent.push(...Array.from(command.matchAll(/'([^']+)'/g), match => match[1]));
+        }
+        assert.deepEqual(sent, ids);
+    });
+
+    it('splits one huge stepped mask across scancel commands', async () => {
+        const commands: string[] = [];
+        const service = new SlurmService(undefined, undefined, async command => {
+            commands.push(command);
+            return { stdout: '', stderr: '' };
+        });
+
+        assert.equal((await service.cancelJob('700_[0-80000:2]')).success, true);
+
+        assert.ok(commands.length > 1);
+        let tasks = 0;
+        for (const command of commands) {
+            assert.ok(command.length <= 32 * 1024);
+            assert.ok(command.startsWith('scancel '));
+            tasks += countJobs(Array.from(command.matchAll(/'([^']+)'/g), match => match[1]));
+        }
+        assert.equal(tasks, 40001);
     });
 
     it('reports failures when cancelling the pending part of jobs fails', async () => {
