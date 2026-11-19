@@ -77,7 +77,7 @@ The top of the view shows how many GPUs your running jobs hold, by type, for exa
 - **Inspect details:** Expand a job for its partition, resources, time limit, dependencies, and available logs.
 - **Find jobs:** Search by name, job ID, or pending reason.
 - **Cancel jobs:** Cancel one job, checked jobs, all active jobs, or just the running or pending group. When cancelling a job would leave pending jobs that need it to succeed unable to run, the confirmation lists them and offers to cancel them too.
-- **Hold and release:** Pause pending jobs or make them eligible to run again, individually or in bulk.
+- **Hold and release:** Pause pending jobs or make them eligible to run again, individually or in bulk, including one row or chosen tasks of a job array.
 - **Update dependencies:** Change or clear a pending job’s dependency.
 - **Copy IDs:** Copy a job ID; for arrays, the action copies the base array ID.
 - **Review scripts:** Open the current submit script and, when available, a copy saved when the extension first reads it for that job. The copy preserves the file at that point; it may differ from the version originally submitted to Slurm.
