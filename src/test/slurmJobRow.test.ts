@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { getActiveJobCategory, getCategoryGroupState, getSlurmJobRowParts } from '../slurmJobRow';
+import { getActiveJobCategory, getCategoryGroupState, getGroupCancelRows, getSlurmJobRowParts } from '../slurmJobRow';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -191,5 +191,19 @@ describe('getCategoryGroupState', () => {
         assert.equal(getCategoryGroupState('held', 1).id, getCategoryGroupState('held', 5).id);
         assert.equal(getCategoryGroupState('held', 1).expanded, false);
         assert.equal(getCategoryGroupState('running', 2).expanded, true);
+    });
+});
+
+describe('getGroupCancelRows', () => {
+    it('leaves out an unsplit array row whose tasks are partly held and partly waiting', () => {
+        const mixed = job({ jobId: '700_[0-9]', state: 'PD', pendingReason: 'Priority,JobHeldUser' });
+        const held = job({ jobId: '701', state: 'PD', pendingReason: 'JobHeldUser' });
+        const twoHolds = job({ jobId: '702_[0-3]', state: 'PD', pendingReason: 'JobHeldUser,JobHeldAdmin' });
+        assert.deepEqual(getGroupCancelRows([mixed, held, twoHolds]), { cancel: [held, twoHolds], skipped: [mixed] });
+    });
+
+    it('keeps rows whose reasons are all of one kind', () => {
+        const waiting = job({ jobId: '703_[0-3]', state: 'PD', pendingReason: 'Priority,Resources' });
+        assert.deepEqual(getGroupCancelRows([waiting]), { cancel: [waiting], skipped: [] });
     });
 });

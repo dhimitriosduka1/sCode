@@ -32,6 +32,21 @@ export function getCategoryGroupState(category: ActiveJobCategory, jobCount: num
         : { id, expanded: category !== 'held' };
 }
 
+/**
+ * Which of a group's rows its Cancel All may cancel. When Active Jobs could not
+ * split an array row per task, the row keeps squeue's joined reasons
+ * (`Priority,JobHeldUser`): some of its tasks are held and some only wait, and
+ * which is which isn't known, so cancelling it from either group would cancel
+ * tasks that group doesn't hold. Such rows are `skipped`.
+ */
+export function getGroupCancelRows<T extends Pick<SlurmJob, 'pendingReason'>>(jobs: readonly T[]): { cancel: T[]; skipped: T[] } {
+    const mixed = (job: T) => {
+        const held = (job.pendingReason ?? '').split(',').map(reason => isJobHeld(reason.trim()));
+        return held.includes(true) && held.includes(false);
+    };
+    return { cancel: jobs.filter(job => !mixed(job)), skipped: jobs.filter(mixed) };
+}
+
 /** `dependency` is what the rest of the queue says about the job's dependency, as for its row. */
 export function getActiveJobCategory(
     job: Pick<SlurmJob, 'jobId' | 'state' | 'pendingReason'>,

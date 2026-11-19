@@ -26,6 +26,7 @@ import { RemoteFileError } from './sshConnection';
 import { SshHostsProvider } from './sshHostsProvider';
 import { describeStrandedJobs, readCancelTarget } from './jobDependencies';
 import { countJobs } from './jobCount';
+import { getGroupCancelRows } from './slurmJobRow';
 import { arrayTaskJobId, readArrayTaskList, validateArrayTaskSelection } from './jobArrayTasks';
 
 import * as fs from 'fs';
@@ -1195,13 +1196,20 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     async function cancelQueuedJobs(item?: StatusCategoryItem): Promise<void> {
-        const targets = item?.dependencies?.pendingRowCancelIds(item.jobs);
+        // An array row that couldn't be split per task mixes held and waiting tasks: leave it
+        const rows = item ? getGroupCancelRows(item.jobs) : undefined;
+        const targets = rows && item?.dependencies?.pendingRowCancelIds(rows.cancel);
+        if (rows?.skipped.length) {
+            vscode.window.showWarningMessage(
+                `Left ${rows.skipped.map(job => job.jobId).join(', ')}: some of its tasks are held and some are not. Refresh and try again.`,
+            );
+        }
         if (item && !targets?.length) {
             return;
         }
 
         const group = item?.category === 'held' ? 'Held' : 'Pending';
-        const count = item?.jobCount ?? 0;
+        const count = rows ? countJobs(rows.cancel.map(job => job.jobId)) : 0;
         const jobs = `${count} job${count === 1 ? '' : 's'}`;
         const confirmLabel = `Cancel ${group} Jobs`;
         const confirmation = await vscode.window.showWarningMessage(
