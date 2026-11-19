@@ -14,14 +14,22 @@ import {
 
 import type { DependencyStatus } from './jobDependencies';
 
-export type ActiveJobCategory = 'running' | 'pending' | 'held' | 'completing' | 'other';
+export type ActiveJobCategory = 'running' | 'pending' | 'held' | 'neverRuns' | 'completing' | 'other';
 
-export function getActiveJobCategory(job: Pick<SlurmJob, 'jobId' | 'state' | 'pendingReason'>): ActiveJobCategory | undefined {
+/** `dependency` is what the rest of the queue says about the job's dependency, as for its row. */
+export function getActiveJobCategory(
+    job: Pick<SlurmJob, 'jobId' | 'state' | 'pendingReason'>,
+    dependency?: DependencyStatus,
+): ActiveJobCategory | undefined {
     switch (job.state) {
         case 'R':
         case 'CF':
             return 'running';
         case 'PD':
+            // Before Held: releasing a job that can never start would not help
+            if (dependency?.kind === 'never') {
+                return 'neverRuns';
+            }
             // A held array row (`123_[4-9]`, or a task like `123_4`) goes to Held
             // too: holding some tasks splits them into a row of their own
             return isJobHeld(job.pendingReason) ? 'held' : 'pending';
@@ -73,14 +81,6 @@ export function getSlurmJobRowParts(job: SlurmJob, dependency?: DependencyStatus
         label: job.name,
         description: createStandardJobDescription(job, dependency),
     };
-}
-
-/** What a group header says about its jobs that can never run. */
-export function describeNeverRunCount(count: number): string | undefined {
-    if (count === 0) {
-        return undefined;
-    }
-    return count === 1 ? '1 never runs' : `${count} never run`;
 }
 
 function createStandardJobDescription(job: SlurmJob, dependency: DependencyStatus | undefined): string {

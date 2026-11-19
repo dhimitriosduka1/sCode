@@ -11,7 +11,7 @@ import {
     getFairShareSummary,
     rankJobAccounts,
 } from './fairShareRanking';
-import { ActiveJobCategory, describeNeverRunCount, getActiveJobCategory, getSlurmJobRowParts } from './slurmJobRow';
+import { ActiveJobCategory, getActiveJobCategory, getSlurmJobRowParts } from './slurmJobRow';
 import { DependencyStatus, QueueDependencies } from './jobDependencies';
 import { createMaintenanceWarningItem } from './maintenanceWarningItem';
 import { RefreshGate } from './refreshGate';
@@ -35,6 +35,10 @@ const CATEGORIES: Record<ActiveJobCategory, { label: string; icon: vscode.ThemeI
     held: {
         label: 'Held',
         icon: new vscode.ThemeIcon('lock', new vscode.ThemeColor('charts.orange')),
+    },
+    neverRuns: {
+        label: 'Will Never Run',
+        icon: new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red')),
     },
     completing: {
         label: 'Completing',
@@ -69,9 +73,6 @@ export const neverRunsDecorationProvider: vscode.FileDecorationProvider = {
  */
 export class StatusCategoryItem extends vscode.TreeItem {
     public readonly jobCount: number;
-    /** The group's jobs that can never start, which its header counts and offers to cancel. */
-    public readonly neverRunJobs: SlurmJob[];
-    public readonly neverRunJobCount: number;
 
     constructor(
         public readonly category: ActiveJobCategory,
@@ -95,19 +96,17 @@ export class StatusCategoryItem extends vscode.TreeItem {
         this.id = `slurmJobs.category.${category}`;
         this.jobCount = jobCount;
         this.iconPath = info.icon;
-        this.neverRunJobs = jobs.filter(job => dependencies?.describe(job)?.kind === 'never');
-        this.neverRunJobCount = countJobs(this.neverRunJobs.map(job => job.jobId));
-        this.description = describeNeverRunCount(this.neverRunJobCount);
-        const neverRun = this.neverRunJobCount > 0 ? 'HasNeverRun' : '';
         if (jobs.length === 0) {
             // No group actions apply to an empty group
             this.contextValue = 'statusCategoryEmpty';
         } else if (category === 'pending') {
             const hasNonHeld = jobs.some(job => !isJobHeld(job.pendingReason));
             const hasHeld = jobs.some(job => isJobHeld(job.pendingReason));
-            this.contextValue = `statusCategoryPending${hasNonHeld ? 'HasNonHeld' : ''}${hasHeld ? 'HasHeld' : ''}${neverRun}`;
+            this.contextValue = `statusCategoryPending${hasNonHeld ? 'HasNonHeld' : ''}${hasHeld ? 'HasHeld' : ''}`;
         } else if (category === 'held') {
-            this.contextValue = `statusCategoryHeld${neverRun}`;
+            this.contextValue = 'statusCategoryHeld';
+        } else if (category === 'neverRuns') {
+            this.contextValue = 'statusCategoryNeverRuns';
         } else if (category === 'running') {
             this.contextValue = 'statusCategoryRunning';
         } else {
@@ -643,7 +642,7 @@ export class SlurmJobProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
             const jobsByCategory = new Map<ActiveJobCategory, SlurmJob[]>();
             for (const job of filteredJobs) {
-                const category = getActiveJobCategory(job);
+                const category = getActiveJobCategory(job, this.cachedDependencies?.describe(job));
                 if (!category) {
                     continue;
                 }

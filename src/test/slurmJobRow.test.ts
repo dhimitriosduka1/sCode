@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { SlurmJob } from '../slurmService';
-import { describeNeverRunCount, getActiveJobCategory, getSlurmJobRowParts } from '../slurmJobRow';
+import { getActiveJobCategory, getSlurmJobRowParts } from '../slurmJobRow';
 import type { DependencyStatus } from '../jobDependencies';
 
 function job(overrides: Partial<SlurmJob>): SlurmJob {
@@ -37,6 +37,20 @@ describe('Active Jobs groups', () => {
             assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'JobHeldUser' })), 'held');
             assert.equal(getActiveJobCategory(job({ jobId, state: 'PD', pendingReason: 'BeginTime' })), 'pending');
         }
+    });
+
+    it('puts jobs that can never start in Will Never Run, held or not', () => {
+        const never: DependencyStatus = { kind: 'never', failed: ['998'], succeeded: [], waitsOn: [] };
+        for (const pendingReason of ['DependencyNeverSatisfied', 'Dependency', 'JobHeldUser']) {
+            assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason }), never), 'neverRuns');
+        }
+        assert.equal(getActiveJobCategory(job({ jobId: '91004_[2-5]', state: 'PD', pendingReason: 'Dependency' }), never), 'neverRuns');
+    });
+
+    it('leaves jobs whose dependency can still be met in Pending or Held', () => {
+        const waiting: DependencyStatus = { kind: 'waiting', jobs: ['train (998)'], anyOf: false };
+        assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason: 'Dependency' }), waiting), 'pending');
+        assert.equal(getActiveJobCategory(job({ state: 'PD', pendingReason: 'JobHeldUser' }), waiting), 'held');
     });
 
     it('groups a running or completing job by state even if its last reason was a hold', () => {
@@ -163,13 +177,3 @@ describe('Slurm job row dependencies', () => {
     });
 });
 
-describe('Pending group summary', () => {
-    it('counts the pending jobs that never run', () => {
-        assert.equal(describeNeverRunCount(3), '3 never run');
-        assert.equal(describeNeverRunCount(1), '1 never runs');
-    });
-
-    it('says nothing when every pending job can still run', () => {
-        assert.equal(describeNeverRunCount(0), undefined);
-    });
-});

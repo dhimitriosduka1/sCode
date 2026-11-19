@@ -225,7 +225,7 @@
       },
       {
         "command": "slurmJobs.cancelNeverRunJobs",
-        "title": "Cancel Jobs That Will Never Run",
+        "title": "Cancel All Jobs That Will Never Run",
         "icon": "$(circle-slash)"
       },
       {
@@ -602,12 +602,12 @@
         },
         {
           "command": "slurmJobs.cancelNeverRunJobs",
-          "when": "view == slurmJobs && viewItem =~ /^statusCategory(Pending|Held).*HasNeverRun$/",
+          "when": "view == slurmJobs && viewItem == statusCategoryNeverRuns",
           "group": "inline@4"
         },
         {
           "command": "slurmJobs.cancelNeverRunJobs",
-          "when": "view == slurmJobs && viewItem =~ /^statusCategory(Pending|Held).*HasNeverRun$/",
+          "when": "view == slurmJobs && viewItem == statusCategoryNeverRuns",
           "group": "actions@4"
         }
       ]

@@ -1241,13 +1241,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Cancels the jobs that the Pending or Held header counts as never running.
+    // Cancels the jobs in the Will Never Run group: nothing else clears them,
+    // since they would wait in the queue indefinitely
     const cancelNeverRunJobsCommand = vscode.commands.registerCommand('slurmJobs.cancelNeverRunJobs', async (item?: StatusCategoryItem) => {
-        if (!item?.dependencies || item.neverRunJobCount === 0) {
+        if (item?.category !== 'neverRuns' || !item.dependencies || item.jobCount === 0) {
             return;
         }
 
-        const count = item.neverRunJobCount;
+        const count = item.jobCount;
         const confirmLabel = count === 1 ? 'Cancel Job' : `Cancel ${count} Jobs`;
         const confirmation = await vscode.window.showWarningMessage(
             count === 1
@@ -1261,7 +1262,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const result = await slurmService.cancelPendingJobs(item.dependencies.pendingRowCancelIds(item.neverRunJobs));
+        const result = await slurmService.cancelPendingJobs(item.dependencies.pendingRowCancelIds(item.jobs));
         // After a failure too: scancel still cancels the rest when one of the jobs is already gone
         slurmJobProvider.refresh();
         jobHistoryProvider.refresh();
